@@ -1,0 +1,181 @@
+using System.Diagnostics;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using GhostSlacking.Core;
+
+namespace GhostSlacking.Platform;
+
+public sealed class Win32WindowApi : IWindowApi
+{
+    public bool IsWindow(nint hwnd) => hwnd != 0 && Win32NativeMethods.IsWindow(hwnd);
+
+    public WindowObservation? Observe(nint hwnd)
+    {
+        if (!IsWindow(hwnd) || !Win32NativeMethods.GetWindowRect(hwnd, out var rect))
+        {
+            return null;
+        }
+
+        Win32NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
+        return new WindowObservation
+        {
+            Hwnd = hwnd,
+            ProcessId = pid,
+            ScreenBounds = ToRectangle(rect),
+            IsVisible = Win32NativeMethods.IsWindowVisible(hwnd),
+            IsMinimized = Win32NativeMethods.IsIconic(hwnd),
+            ProcessName = TryGetProcessName(pid)
+        };
+    }
+
+    public OperationResult<WindowSnapshot> CaptureSnapshot(TargetWindow target)
+    {
+        if (!IsWindow(target.Hwnd) || !Win32NativeMethods.GetWindowRect(target.Hwnd, out var rect))
+        {
+            return OperationResult<WindowSnapshot>.Failed("Target window disappeared while taking its snapshot.", Win32NativeMethods.LastError);
+        }
+
+        Win32NativeMethods.GetWindowThreadProcessId(target.Hwnd, out var processId);
+        if (processId == 0 || processId != target.ProcessId)
+        {
+            return OperationResult<WindowSnapshot>.Failed("Target process identity changed before snapshot.");
+        }
+
+        var region = CaptureRegion(target.Hwnd, out var regionError);
+        if (regionError is not null)
+        {
+            return OperationResult<WindowSnapshot>.Failed(regionError, Win32NativeMethods.LastError);
+        }
+
+        return OperationResult<WindowSnapshot>.Ok(new WindowSnapshot
+        {
+            Hwnd = target.Hwnd,
+            ProcessId = processId,
+            ProcessName = TryGetProcessName(processId) ?? target.ProcessName,
+            ProcessStartIdentity = TryGetProcessStartIdentity(processId),
+            ScreenBounds = ToRectangle(rect),
+            WasVisible = Win32NativeMethods.IsWindowVisible(target.Hwnd),
+            WasMinimized = Win32NativeMethods.IsIconic(target.Hwnd),
+            OriginalRegionData = region,
+            OriginalSystemBackdropType = TryGetSystemBackdropType(target.Hwnd),
+            OriginalNonClientRenderingPolicy = TryGetNonClientRenderingPolicy(target.Hwnd),
+            OriginalWindowCornerPreference = TryGetDwmAttribute(target.Hwnd, Win32NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE),
+            OriginalBorderColor = TryGetDwmAttribute(target.Hwnd, Win32NativeMethods.DWMWA_BORDER_COLOR),
+            Styles = new WindowStyleSnapshot(
+                Win32NativeMethods.GetWindowLongPtr(target.Hwnd, Win32NativeMethods.GWL_STYLE),
+                Win32NativeMethods.GetWindowLongPtr(target.Hwnd, Win32NativeMethods.GWL_EXSTYLE)),
+            CapturedAt = DateTimeOffset.UtcNow
+        });
+    }
+
+    public bool IsSameIdentity(WindowSnapshot snapshot, WindowObservation observation)
+    {
+        if (snapshot.Hwnd != observation.Hwnd || snapshot.ProcessId != observation.ProcessId)
+        {
+            return false;
+        }
+
+        var currentStart = TryGetProcessStartIdentity(observation.ProcessId);
+        return snapshot.ProcessStartIdentity is null || currentStart is null || snapshot.ProcessStartIdentity == currentStart;
+    }
+
+    public Point GetCursorPosition()
+    {
+        return Win32NativeMethods.GetCursorPos(out var point) ? new Point(point.X, point.Y) : Point.Empty;
+    }
+
+    public bool IsKeyDown(int virtualKey) => (Win32NativeMethods.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
+    private static byte[]? CaptureRegion(nint hwnd, out string? error)
+    {
+        error = null;
+        var region = Win32NativeMethods.CreateRectRgn(0, 0, 0, 0);
+        if (region == 0)
+        {
+            error = "CreateRectRgn failed while capturing the original region.";
+            return null;
+        }
+
+        try
+        {
+            var result = Win32NativeMethods.GetWindowRgn(hwnd, region);
+            if (result == 0)
+            {
+                return null;
+            }
+
+            var size = Win32NativeMethods.GetRegionData(region, 0, 0);
+            if (size == 0)
+            {
+                error = "GetRegionData failed while capturing the original region.";
+                return null;
+            }
+
+            var data = new byte[size];
+            var handle = Marshal.AllocHGlobal((int)size);
+            try
+            {
+                if (Win32NativeMethods.GetRegionData(region, (uint)size, handle) == 0)
+                {
+                    error = "GetRegionData failed while copying the original region.";
+                    return null;
+                }
+
+                Marshal.Copy(handle, data, 0, data.Length);
+                return data;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(handle);
+            }
+        }
+        finally
+        {
+            Win32NativeMethods.DeleteObject(region);
+        }
+    }
+
+    private static Rectangle ToRectangle(Win32NativeMethods.RECT rect) =>
+        Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+
+    private static string? TryGetProcessName(uint pid)
+    {
+        try
+        {
+            return Process.GetProcessById((int)pid).ProcessName;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    private static string? TryGetProcessStartIdentity(uint pid)
+    {
+        try
+        {
+            return Process.GetProcessById((int)pid).StartTime.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static int? TryGetSystemBackdropType(nint hwnd)
+    {
+        return Win32NativeMethods.DwmGetWindowAttribute(
+            hwnd, Win32NativeMethods.DWMWA_SYSTEMBACKDROP_TYPE, out var value, sizeof(int)) == 0 ? value : null;
+    }
+
+    private static int? TryGetNonClientRenderingPolicy(nint hwnd)
+    {
+        return Win32NativeMethods.DwmGetWindowAttribute(
+            hwnd, Win32NativeMethods.DWMWA_NCRENDERING_POLICY, out var value, sizeof(int)) == 0 ? value : null;
+    }
+
+    private static int? TryGetDwmAttribute(nint hwnd, uint attribute)
+    {
+        return Win32NativeMethods.DwmGetWindowAttribute(hwnd, attribute, out var value, sizeof(int)) == 0 ? value : null;
+    }
+}
