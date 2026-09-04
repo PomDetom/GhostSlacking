@@ -46,6 +46,80 @@ public sealed class CoordinatorTests
         Assert.Equal(0, backend.RestoreCalls);
     }
 
+    [Fact]
+    public void Window_visibility_hotkey_toggles_without_forgetting_the_profile()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        api.Observation = api.Observation with { IsVisible = false };
+
+        Assert.True(coordinator.ToggleWindowVisibility("test"));
+        Assert.Equal(GhostState.Visible, coordinator.State);
+        Assert.NotNull(coordinator.CurrentProfile);
+        Assert.Equal(1, backend.RestoreCalls);
+
+        Assert.True(coordinator.ToggleWindowVisibility("test"));
+        Assert.Equal(GhostState.Ghost, coordinator.State);
+        Assert.Equal(2, backend.GhostCalls);
+        Assert.True(coordinator.RestoreCurrent("test"));
+        Assert.Null(coordinator.CurrentProfile);
+    }
+
+    [Fact]
+    public void Window_visibility_action_without_a_target_does_not_enter_window_picking()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+
+        Assert.False(coordinator.ToggleWindowVisibility("test"));
+        Assert.Equal(GhostState.Idle, coordinator.State);
+        Assert.Null(coordinator.CurrentProfile);
+        Assert.Equal(0, backend.GhostCalls);
+        Assert.Equal(0, backend.RestoreCalls);
+    }
+
+    [Fact]
+    public void Cancelling_window_picking_preserves_a_visible_target_state()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        Assert.True(coordinator.ToggleWindowVisibility("test"));
+        Assert.Equal(GhostState.Visible, coordinator.State);
+
+        coordinator.BeginPicking();
+        coordinator.CancelPicking();
+
+        Assert.Equal(GhostState.Visible, coordinator.State);
+        Assert.NotNull(coordinator.CurrentProfile);
+    }
+
+    [Fact]
+    public void Cancelling_window_picking_preserves_an_active_reveal_state()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        coordinator.UpdatePeek(new Point(200, 200), true);
+        Assert.Equal(GhostState.Reveal, coordinator.State);
+
+        coordinator.BeginPicking();
+        coordinator.CancelPicking();
+
+        Assert.Equal(GhostState.Reveal, coordinator.State);
+        Assert.Equal(1, backend.RevealCalls);
+    }
+
     private sealed class FakeWindowApi : IWindowApi
     {
         public TargetWindow Target { get; } = new()
@@ -96,8 +170,9 @@ public sealed class CoordinatorTests
     private sealed class FakeVisibilityBackend : IVisibilityBackend
     {
         public int RevealCalls { get; private set; }
+        public int GhostCalls { get; private set; }
         public int RestoreCalls { get; private set; }
-        public NativeResult ApplyGhost(nint hwnd) => NativeResult.Ok("Ghost");
+        public NativeResult ApplyGhost(nint hwnd) { GhostCalls++; return NativeResult.Ok("Ghost"); }
         public NativeResult ApplyReveal(nint hwnd, CircleRegion region) { RevealCalls++; return NativeResult.Ok("Reveal"); }
         public NativeResult Restore(nint hwnd, WindowSnapshot snapshot) { RestoreCalls++; return NativeResult.Ok("Restore"); }
     }

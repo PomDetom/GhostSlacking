@@ -5,15 +5,19 @@ namespace GhostSlacking.App;
 
 internal sealed class GhostApplicationContext : ApplicationContext
 {
-    private const int PickOrToggleHotkey = 1;
+    private const int WindowVisibilityHotkey = 1;
     private const int RestoreHotkey = 2;
     private const int EmergencyRestoreHotkey = 3;
-    private const int QuitHotkey = 4;
+    private const int SettingsHotkey = 4;
+    private const int QuitHotkey = 5;
+    private const int PickHotkey = 6;
 
     private readonly FileLogger _logger;
     private readonly SettingsStore _settingsStore;
     private readonly Win32WindowApi _windows;
+    private readonly RecoveryManager _recovery;
     private readonly GhostCoordinator _coordinator;
+    private readonly IWatchdogClient? _watchdog;
     private readonly Win32WindowPicker _picker;
     private readonly MessageWindow _messageWindow;
     private readonly Win32HotkeyManager _hotkeys;
@@ -31,6 +35,8 @@ internal sealed class GhostApplicationContext : ApplicationContext
     private bool _pickerActive;
     private bool _peekDown;
     private bool _isExiting;
+    private readonly PeekStateTracker _peekState = new();
+    private SettingsForm? _settingsForm;
 
     public GhostApplicationContext()
     {
@@ -39,9 +45,9 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _logger = new FileLogger(_settings);
         _windows = new Win32WindowApi();
         var backend = new Win32VisibilityBackend(_logger);
-        var recovery = new RecoveryManager(_windows, backend, _logger);
+        _recovery = new RecoveryManager(_windows, backend, _logger);
         var visibility = new VisibilityEngine(backend, _logger);
-        _coordinator = new GhostCoordinator(_windows, recovery, visibility, _logger);
+        _coordinator = new GhostCoordinator(_windows, _recovery, visibility, _logger);
         _messageWindow = new MessageWindow();
         _messageWindow.HotkeyPressed += OnHotkeyPressed;
         _hotkeys = new Win32HotkeyManager(_messageWindow.Handle);
@@ -56,7 +62,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
         _pickItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "pick"), null, (_, _) => BeginPicking());
-        _toggleItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "toggle"), null, (_, _) => ToggleGhostOrPick());
+        _toggleItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "toggle"), null, (_, _) => ToggleWindowVisibility());
         _settingsItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "settings"), null, (_, _) => OpenSettings());
         _exitItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "exit"), null, (_, _) => ExitApplication());
         menu.Items.Add(_pickItem);
@@ -69,7 +75,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
         _notifyIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = AppIcon.Instance,
             Text = $"GhostSlacking - {UiText.State(_settings.Language, GhostState.Idle)}",
             Visible = true,
             ContextMenuStrip = menu
@@ -79,11 +85,14 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _coordinator.StateChanged += (_, _) => UpdateTrayStatus();
         _coordinator.UserError += (_, message) => ShowError(message);
         _coordinator.TargetClosed += (_, _) => UpdateTrayStatus();
+        _watchdog = TryStartWatchdog();
+        _recovery.ProfilesChanged += OnRecoveryProfilesChanged;
+        PublishRecoveryManifest();
 
         _timer = new System.Windows.Forms.Timer { Interval = 33 };
         _timer.Tick += (_, _) =>
         {
-            _peekDown = _windows.IsKeyDown(_settings.PeekVirtualKey);
+            _peekDown = _peekState.Update(_windows.IsKeyDown(_settings.PeekVirtualKey), _settings.PeekTrigger);
             _coordinator.UpdatePeek(_windows.GetCursorPosition(), _peekDown);
         };
         _timer.Start();
@@ -95,10 +104,58 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
     private void RegisterHotkeys()
     {
-        Register(PickOrToggleHotkey, HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.NoRepeat, 0x47, "Ctrl+Alt+G");
-        Register(RestoreHotkey, HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.NoRepeat, 0x52, "Ctrl+Alt+R");
-        Register(EmergencyRestoreHotkey, HotkeyModifiers.Control | HotkeyModifiers.Shift | HotkeyModifiers.Alt | HotkeyModifiers.NoRepeat, 0x52, "Ctrl+Shift+Alt+R");
-        Register(QuitHotkey, HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.NoRepeat, 0x51, "Ctrl+Alt+Q");
+        (int Id, HotkeyBinding Binding)[] shortcuts =
+        [
+            (PickHotkey, _settings.PickHotkey),
+            (WindowVisibilityHotkey, _settings.WindowToggleHotkey),
+            (RestoreHotkey, _settings.RestoreHotkey),
+            (EmergencyRestoreHotkey, _settings.RestoreAllHotkey),
+            (SettingsHotkey, _settings.SettingsHotkey),
+            (QuitHotkey, _settings.ExitHotkey)
+        ];
+        var duplicates = shortcuts
+            .Where(shortcut => !shortcut.Binding.IsDisabled)
+            .GroupBy(shortcut => shortcut.Binding)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToHashSet();
+
+        foreach (var shortcut in shortcuts)
+        {
+            if (shortcut.Binding.IsDisabled)
+            {
+                continue;
+            }
+
+            if (duplicates.Contains(shortcut.Binding))
+            {
+                _logger.Log(LogLevel.Warning, $"Duplicate hotkey was not registered: {UiText.ShortcutName(_settings.Language, shortcut.Binding)}");
+                continue;
+            }
+
+            RegisterShortcut(shortcut.Id, shortcut.Binding);
+        }
+    }
+
+    private void RegisterShortcut(int id, HotkeyBinding binding)
+    {
+        var modifiers = HotkeyModifiers.NoRepeat;
+        if (binding.Modifiers.HasFlag(ShortcutModifiers.Control))
+        {
+            modifiers |= HotkeyModifiers.Control;
+        }
+
+        if (binding.Modifiers.HasFlag(ShortcutModifiers.Alt))
+        {
+            modifiers |= HotkeyModifiers.Alt;
+        }
+
+        if (binding.Modifiers.HasFlag(ShortcutModifiers.Shift))
+        {
+            modifiers |= HotkeyModifiers.Shift;
+        }
+
+        Register(id, modifiers, binding.VirtualKey, UiText.ShortcutName(_settings.Language, binding));
     }
 
     private void Register(int id, HotkeyModifiers modifiers, int key, string display)
@@ -113,14 +170,20 @@ internal sealed class GhostApplicationContext : ApplicationContext
     {
         switch (id)
         {
-            case PickOrToggleHotkey:
-                ToggleGhostOrPick();
+            case PickHotkey:
+                BeginPicking();
+                break;
+            case WindowVisibilityHotkey:
+                ToggleWindowVisibility();
                 break;
             case RestoreHotkey:
                 RestoreCurrent("hotkey");
                 break;
             case EmergencyRestoreHotkey:
                 RestoreAll("emergency hotkey");
+                break;
+            case SettingsHotkey:
+                OpenSettings();
                 break;
             case QuitHotkey:
                 ExitApplication();
@@ -173,7 +236,8 @@ internal sealed class GhostApplicationContext : ApplicationContext
         var settings = new RevealSettings
         {
             DiameterPx = _settings.RevealDiameterPx,
-            Shape = _settings.RevealShape
+            Shape = _settings.RevealShape,
+            Trigger = _settings.PeekTrigger
         };
         if (!_coordinator.SelectWindow(target, settings))
         {
@@ -183,16 +247,15 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _notifyIcon.ShowBalloonTip(1200, "GhostSlacking", string.Format(UiText.Text(_settings.Language, "windowSelected"), target.ProcessName ?? (UiText.IsChinese(_settings.Language) ? "窗口" : "window"), UiText.PeekKeyName(_settings.Language, _settings.PeekVirtualKey)), ToolTipIcon.Info);
     }
 
-    private void ToggleGhostOrPick()
+    private void ToggleWindowVisibility()
     {
         if (_coordinator.CurrentProfile is null)
         {
-            BeginPicking();
+            ShowError(UiText.Text(_settings.Language, "selectWindowFirst"));
+            return;
         }
-        else
-        {
-            _coordinator.ToggleGhost("toggle hotkey");
-        }
+
+        _coordinator.ToggleWindowVisibility("window visibility hotkey");
     }
 
     private void RestoreCurrent(string reason)
@@ -213,19 +276,51 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
     private void OpenSettings()
     {
-        using var form = new SettingsForm(_settings);
-        if (form.ShowDialog() != DialogResult.OK)
+        if (_settingsForm is not null && !_settingsForm.IsDisposed)
         {
+            if (_settingsForm.WindowState == FormWindowState.Minimized)
+            {
+                _settingsForm.WindowState = FormWindowState.Normal;
+            }
+
+            _settingsForm.Activate();
+            _settingsForm.BringToFront();
             return;
         }
 
-        _settings = form.GetSettings(_settings).Normalize();
-        _settingsStore.Save(_settings);
-        if (!StartupManager.Apply(_settings.StartWithWindows))
+        _hotkeys.UnregisterAll();
+        try
         {
-            _logger.Log(LogLevel.Warning, "Could not update the Windows startup registration.");
+            using var form = new SettingsForm(_settings);
+            _settingsForm = form;
+            if (form.ShowDialog() != DialogResult.OK)
+            {
+                return;
+            }
+
+            var previousKey = _settings.PeekVirtualKey;
+            var previousTrigger = _settings.PeekTrigger;
+            _settings = form.GetSettings(_settings).Normalize();
+            if (previousKey != _settings.PeekVirtualKey || previousTrigger != _settings.PeekTrigger)
+            {
+                _peekState.Reset(_windows.IsKeyDown(_settings.PeekVirtualKey));
+                _peekDown = false;
+            }
+            _settingsStore.Save(_settings);
+            if (!StartupManager.Apply(_settings.StartWithWindows))
+            {
+                _logger.Log(LogLevel.Warning, "Could not update the Windows startup registration.");
+            }
+            UpdateTrayStatus();
         }
-        UpdateTrayStatus();
+        finally
+        {
+            _settingsForm = null;
+            if (!_isExiting)
+            {
+                RegisterHotkeys();
+            }
+        }
     }
 
     private void UpdateTrayStatus()
@@ -242,6 +337,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _exitItem.Text = UiText.Text(_settings.Language, "exit");
         _restoreItem.Enabled = profile is not null;
         _restoreAllItem.Enabled = profile is not null;
+        _toggleItem.Enabled = profile is not null;
         _notifyIcon.Text = $"GhostSlacking - {UiText.State(_settings.Language, _coordinator.State)}";
     }
 
@@ -268,10 +364,21 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
     private void OnApplicationExit(object? sender, EventArgs args)
     {
+        RestoreReport? restoreReport = null;
         if (_settings.RestoreOnExit)
         {
-            _coordinator.RestoreAll("application exit");
+            restoreReport = _coordinator.RestoreAll("application exit");
         }
+
+        // A failed restore is intentionally not acknowledged as clean. Closing
+        // the pipe leaves the last manifest for the watchdog timeout path.
+        if (restoreReport is null || !restoreReport.HasFailures)
+        {
+            _watchdog?.CompleteShutdown();
+        }
+
+        _recovery.ProfilesChanged -= OnRecoveryProfilesChanged;
+        _watchdog?.Dispose();
 
         _mouseHook.Dispose();
         _hotkeys.Dispose();
@@ -282,6 +389,46 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _logger.Log(LogLevel.Info, "Application exited.");
         _logger.Dispose();
         Application.ApplicationExit -= OnApplicationExit;
+    }
+
+    private IWatchdogClient? TryStartWatchdog()
+    {
+        var executable = Path.Combine(AppContext.BaseDirectory, "GhostSlacking.Watchdog.exe");
+        var client = new NamedPipeWatchdogClient(executable, _logger);
+        try
+        {
+            client.Start();
+            return client;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            client.Dispose();
+            _logger.Log(LogLevel.Error, "Watchdog could not be started; crash recovery is unavailable.", exception);
+            return null;
+        }
+    }
+
+    private void OnRecoveryProfilesChanged(object? sender, EventArgs args) => PublishRecoveryManifest();
+
+    private void PublishRecoveryManifest()
+    {
+        if (_watchdog is null || !_watchdog.IsConnected)
+        {
+            return;
+        }
+
+        var manifest = RecoveryManifest.FromProfiles(
+            _watchdog.SessionId,
+            _recovery.Profiles,
+            DateTimeOffset.UtcNow);
+        try
+        {
+            _watchdog.PublishManifest(manifest);
+        }
+        catch (IOException exception)
+        {
+            _logger.Log(LogLevel.Error, "Watchdog recovery manifest could not be published.", exception);
+        }
     }
 
     private sealed class MessageWindow : NativeWindow, IDisposable

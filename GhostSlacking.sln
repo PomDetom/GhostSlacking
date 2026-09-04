@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GhostSlacking.App", "src\Gh
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GhostSlacking.Core.Tests", "tests\GhostSlacking.Core.Tests\GhostSlacking.Core.Tests.csproj", "{E9DBD143-2B4A-428F-9C97-4FCB4A93D3B2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GhostSlacking.Watchdog", "src\GhostSlacking.Watchdog\GhostSlacking.Watchdog.csproj", "{D5F7B8F7-7C3D-4F8B-9621-78D2EA2A50BA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,5 +34,9 @@ Global
 		{E9DBD143-2B4A-428F-9C97-4FCB4A93D3B2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E9DBD143-2B4A-428F-9C97-4FCB4A93D3B2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E9DBD143-2B4A-428F-9C97-4FCB4A93D3B2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D5F7B8F7-7C3D-4F8B-9621-78D2EA2A50BA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5F7B8F7-7C3D-4F8B-9621-78D2EA2A50BA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5F7B8F7-7C3D-4F8B-9621-78D2EA2A50BA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5F7B8F7-7C3D-4F8B-9621-78D2EA2A50BA}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

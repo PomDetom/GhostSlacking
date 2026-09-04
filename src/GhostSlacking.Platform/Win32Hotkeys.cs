@@ -33,13 +33,25 @@ public sealed class Win32HotkeyManager : IDisposable
         return false;
     }
 
-    public void Dispose()
+    public bool Unregister(int id)
     {
-        foreach (var id in _registered)
+        var success = Win32NativeMethods.UnregisterHotKey(_window, id);
+        _registered.Remove(id);
+        return success;
+    }
+
+    public void UnregisterAll()
+    {
+        foreach (var id in _registered.ToArray())
         {
             Win32NativeMethods.UnregisterHotKey(_window, id);
         }
 
         _registered.Clear();
+    }
+
+    public void Dispose()
+    {
+        UnregisterAll();
     }
 }

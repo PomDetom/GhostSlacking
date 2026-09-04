@@ -77,7 +77,7 @@ V0.1 不包含：
                                                             └─────────────────────┘
 
         ┌──────────────────────┐
-        │ 可选 Watchdog 进程    │ ← 心跳/恢复协议 → GhostSlacking.exe
+        │ Phase 2 Watchdog 进程 │ ← 心跳/恢复协议 → GhostSlacking.exe
         └──────────────────────┘
 ```
 
@@ -85,14 +85,14 @@ V0.1 不包含：
 
 ## 5. 运行时结构
 
-建议采用一个主项目和一个后续可选的 Watchdog 项目：
+当前采用三个主应用分层项目和一个独立 Watchdog 项目：
 
 ```text
 src/
   GhostSlacking.App/          WinForms 托盘、设置、消息循环
   GhostSlacking.Core/         状态机、领域模型、服务接口
   GhostSlacking.Platform/     Win32 P/Invoke 和 Windows 适配器
-  GhostSlacking.Watchdog/     Phase 2 后加入的最小恢复进程
+  GhostSlacking.Watchdog/     Phase 2 最小异常恢复进程
 tests/
   GhostSlacking.Core.Tests/
   GhostSlacking.Platform.Tests/
@@ -138,7 +138,7 @@ RevealSettings
 {
     int DiameterPx;       // 以物理屏幕像素表达
     RevealShape Shape;    // Circle / Rectangle / RoundedRectangle
-    PeekTrigger Trigger;  // V0.1 主要为 Hold
+    PeekTrigger Trigger;  // Hold 或 Toggle
 }
 ```
 
@@ -262,11 +262,11 @@ Settings
 Exit
 ```
 
-设置窗口保持 WinForms 原生控件，V0.1 只暴露 Peek Key、Reveal Diameter、开机启动、退出时恢复和日志级别。主业务状态不应存放在窗体控件中。
+设置窗口保持 WinForms 原生控件，暴露 Peek Key、Reveal Diameter、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。主业务状态不应存放在窗体控件中。
 
 ### 7.8 `Watchdog`
 
-Watchdog 不属于 Phase 0/Phase 1 的核心闭环。Phase 2 再实现为最小独立进程：
+Watchdog 不属于 Phase 0/Phase 1 的核心闭环。Phase 2 的首个增量将其实现为最小独立进程：
 
 ```text
 GhostSlacking.exe ── heartbeat + recovery manifest ──► Watchdog.exe
@@ -405,11 +405,13 @@ Tracker 维护一个 `TrackedWindow`，包含最后一次有效 rect、PID、最
 默认建议沿用产品设计：
 
 ```text
-Ctrl + Alt + G   进入 Picker / 切换 Ghost
-Alt              Hold-to-Peek（可配置）
-Ctrl + Alt + R   Restore 当前窗口
-Ctrl + Shift + Alt + R  Emergency Restore All
-Ctrl + Alt + Q   退出
+Ctrl + Alt + P   进入 Picker（可配置）
+Ctrl + Alt + G   切换窗口隐藏与完整显示；无目标时进入 Picker（可配置）
+Peek Key         Hold-to-Peek 或按下切换（可配置）
+Ctrl + Alt + R   Restore 当前窗口（可配置）
+Ctrl + Shift + Alt + R  Emergency Restore All（可配置）
+Ctrl + Alt + S   打开设置（可配置）
+Ctrl + Alt + Q   退出（可配置）
 ```
 
 具体默认键位可以在 Phase 0 通过实验调整，但必须避免与常用系统快捷键冲突，并对注册失败提供明确反馈。
@@ -481,7 +483,17 @@ RestoreAll()
 
 ### 14.2 Watchdog 恢复协议
 
-Phase 2 的 Watchdog 使用本地命名管道或受保护的本地 IPC 接收：启动握手、心跳、恢复清单和正常关闭消息。协议应包含版本号、随机会话 ID 和目标进程身份。
+Phase 2 的 Watchdog v1 使用仅限当前用户的本地命名管道和逐行 JSON 消息。主进程每次启动生成随机会话 ID，并按以下顺序发送：
+
+```text
+Hello(protocolVersion, sessionId, main PID/start identity)
+  ↓ HelloAcknowledged
+RecoveryManifest(schemaVersion, manifestId, targets[])
+  ↕ Heartbeat
+ShutdownCompleted
+```
+
+每个 envelope 都携带协议版本、会话 ID、消息类型和发送时间。Watchdog 拒绝版本不兼容、会话不匹配、握手前消息、清单 schema 不兼容和正常关闭后的追加消息。恢复清单只包含恢复窗口原状所需的元数据：HWND、PID、进程启动标识、快照版本、region 数据、style/ex-style、可见/最小化状态和相关 DWM 属性，不包含窗口内容。
 
 心跳超时后，Watchdog：
 
@@ -491,7 +503,7 @@ Phase 2 的 Watchdog 使用本地命名管道或受保护的本地 IPC 接收：
 4. 记录成功、失败和跳过原因；
 5. 清理清单，避免重复处理旧目标。
 
-如果验证失败，宁可跳过并提示用户，不要根据窗口标题或旧 HWND 猜测目标。
+同一 `(sessionId, manifestId)` 只执行一次；超时取出清单后立即从会话状态移除，正常关闭也清空最后清单。如果验证失败，宁可逐项跳过并记录明确原因，不根据窗口标题或旧 HWND 猜测目标。当前增量的清单由独立 Watchdog 进程保存在内存中，不写入磁盘；Watchdog 日志写入本地日志目录。
 
 ## 15. DPI 与多显示器
 

@@ -47,12 +47,19 @@ public sealed class Win32WindowApi : IWindowApi
             return OperationResult<WindowSnapshot>.Failed(regionError, Win32NativeMethods.LastError);
         }
 
+        var processStartIdentity = TryGetProcessStartIdentity(processId);
+        if (processStartIdentity is null)
+        {
+            return OperationResult<WindowSnapshot>.Failed(
+                "Could not capture the target process start identity. The window was not modified.");
+        }
+
         return OperationResult<WindowSnapshot>.Ok(new WindowSnapshot
         {
             Hwnd = target.Hwnd,
             ProcessId = processId,
             ProcessName = TryGetProcessName(processId) ?? target.ProcessName,
-            ProcessStartIdentity = TryGetProcessStartIdentity(processId),
+            ProcessStartIdentity = processStartIdentity,
             ScreenBounds = ToRectangle(rect),
             WasVisible = Win32NativeMethods.IsWindowVisible(target.Hwnd),
             WasMinimized = Win32NativeMethods.IsIconic(target.Hwnd),
@@ -76,7 +83,7 @@ public sealed class Win32WindowApi : IWindowApi
         }
 
         var currentStart = TryGetProcessStartIdentity(observation.ProcessId);
-        return snapshot.ProcessStartIdentity is null || currentStart is null || snapshot.ProcessStartIdentity == currentStart;
+        return currentStart is not null && snapshot.ProcessStartIdentity == currentStart;
     }
 
     public Point GetCursorPosition()

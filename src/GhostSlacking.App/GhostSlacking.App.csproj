@@ -9,7 +9,15 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="AntdUI" Version="2.4.8" />
     <ProjectReference Include="..\GhostSlacking.Core\GhostSlacking.Core.csproj" />
     <ProjectReference Include="..\GhostSlacking.Platform\GhostSlacking.Platform.csproj" />
+    <ProjectReference Include="..\GhostSlacking.Watchdog\GhostSlacking.Watchdog.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <Target Name="CopyWatchdogArtifacts" AfterTargets="Build">
+    <ItemGroup>
+      <WatchdogArtifact Include="..\GhostSlacking.Watchdog\bin\$(Configuration)\net8.0-windows\GhostSlacking.Watchdog.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WatchdogArtifact)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

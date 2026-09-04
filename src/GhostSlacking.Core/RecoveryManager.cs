@@ -15,6 +15,7 @@ public sealed class RecoveryManager
     }
 
     public IReadOnlyCollection<GhostWindowProfile> Profiles => _profiles.Values;
+    public event EventHandler? ProfilesChanged;
 
     public OperationResult<GhostWindowProfile> CaptureAndRegister(TargetWindow target, RevealSettings reveal)
     {
@@ -32,13 +33,20 @@ public sealed class RecoveryManager
 
         var profile = new GhostWindowProfile(captured.Value, reveal);
         _profiles[target.Hwnd] = profile;
+        ProfilesChanged?.Invoke(this, EventArgs.Empty);
         _logger.Log(LogLevel.Info, $"SnapshotSaved hwnd={target.Hwnd} pid={target.ProcessId}");
         return OperationResult<GhostWindowProfile>.Ok(profile);
     }
 
-    public void Forget(nint hwnd) => _profiles.Remove(hwnd);
+    public void Forget(nint hwnd)
+    {
+        if (_profiles.Remove(hwnd))
+        {
+            ProfilesChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
 
-    public RestoreItemResult RestoreWindow(nint hwnd, string reason)
+    public RestoreItemResult RestoreWindow(nint hwnd, string reason, bool forgetOnSuccess = true)
     {
         if (!_profiles.TryGetValue(hwnd, out var profile))
         {
@@ -50,6 +58,7 @@ public sealed class RecoveryManager
         if (observation is null)
         {
             _profiles.Remove(hwnd);
+            ProfilesChanged?.Invoke(this, EventArgs.Empty);
             _logger.Log(LogLevel.Warning, $"TargetClosed hwnd={hwnd}");
             return new RestoreItemResult(hwnd, true, true, "Target window no longer exists.");
         }
@@ -57,13 +66,18 @@ public sealed class RecoveryManager
         if (!_windows.IsSameIdentity(profile.Original, observation))
         {
             _profiles.Remove(hwnd);
+            ProfilesChanged?.Invoke(this, EventArgs.Empty);
             return new RestoreItemResult(hwnd, false, true, "Target identity no longer matches the snapshot.");
         }
 
         var result = _visibility.Restore(hwnd, profile.Original);
         if (result.Success)
         {
-            _profiles.Remove(hwnd);
+            if (forgetOnSuccess)
+            {
+                _profiles.Remove(hwnd);
+                ProfilesChanged?.Invoke(this, EventArgs.Empty);
+            }
             _logger.Log(LogLevel.Info, $"RestoreCompleted hwnd={hwnd}");
             return new RestoreItemResult(hwnd, true, false, "Restored.");
         }

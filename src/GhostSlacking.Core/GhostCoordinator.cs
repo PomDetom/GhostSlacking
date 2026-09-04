@@ -10,6 +10,7 @@ public sealed class GhostCoordinator
     private readonly ILogger _logger;
     private GhostWindowProfile? _current;
     private GhostState _state = GhostState.Idle;
+    private GhostState _stateBeforePicking = GhostState.Idle;
     private Point? _lastCursor;
     private Rectangle? _lastBounds;
     private CircleRegion? _lastReveal;
@@ -28,7 +29,16 @@ public sealed class GhostCoordinator
     public event EventHandler<string>? UserError;
     public event EventHandler? TargetClosed;
 
-    public void BeginPicking() => SetState(GhostState.Picking);
+    public void BeginPicking()
+    {
+        if (_state == GhostState.Picking)
+        {
+            return;
+        }
+
+        _stateBeforePicking = _state;
+        SetState(GhostState.Picking);
+    }
 
     public void CancelPicking()
     {
@@ -37,7 +47,8 @@ public sealed class GhostCoordinator
             return;
         }
 
-        SetState(_current is null ? GhostState.Idle : GhostState.Ghost);
+        SetState(_current is null ? GhostState.Idle : _stateBeforePicking);
+        _stateBeforePicking = GhostState.Idle;
     }
 
     public bool SelectWindow(TargetWindow target, RevealSettings settings)
@@ -52,6 +63,7 @@ public sealed class GhostCoordinator
         }
 
         SetState(GhostState.Preparing);
+        _stateBeforePicking = GhostState.Idle;
         var registered = _recovery.CaptureAndRegister(target, settings);
         if (!registered.Success || registered.Value is null)
         {
@@ -81,7 +93,7 @@ public sealed class GhostCoordinator
 
     public void UpdatePeek(Point cursorScreen, bool peekDown)
     {
-        if (_current is null || _state is GhostState.Idle or GhostState.Picking or GhostState.Preparing or GhostState.Restoring)
+        if (_current is null || _state is GhostState.Idle or GhostState.Picking or GhostState.Preparing or GhostState.Visible or GhostState.Restoring)
         {
             return;
         }
@@ -188,6 +200,47 @@ public sealed class GhostCoordinator
     public bool ToggleGhost(string reason)
     {
         return _current is null || _state == GhostState.Idle ? false : RestoreCurrent(reason);
+    }
+
+    public bool ToggleWindowVisibility(string reason)
+    {
+        if (_current is null)
+        {
+            return false;
+        }
+
+        if (_state == GhostState.Visible)
+        {
+            var ghosted = _visibility.ApplyGhost(_current);
+            if (ghosted.Success)
+            {
+                _lastReveal = null;
+                SetState(GhostState.Ghost);
+                return true;
+            }
+
+            Fail(ghosted.ErrorMessage ?? "Could not hide the target window.");
+            return false;
+        }
+
+        if (_state is not GhostState.Ghost and not GhostState.Reveal)
+        {
+            return false;
+        }
+
+        SetState(GhostState.Restoring);
+        var restored = _recovery.RestoreWindow(_current.Hwnd, reason, forgetOnSuccess: false);
+        if (restored.Success)
+        {
+            _lastReveal = null;
+            _lastBounds = _current.Original.ScreenBounds;
+            SetState(GhostState.Visible);
+            return true;
+        }
+
+        Fail($"Restore failed: {restored.Reason}");
+        SetState(GhostState.RecoveryError);
+        return false;
     }
 
     private void Fail(string message)
