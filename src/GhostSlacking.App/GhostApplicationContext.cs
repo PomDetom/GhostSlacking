@@ -293,25 +293,8 @@ internal sealed class GhostApplicationContext : ApplicationContext
         {
             using var form = new SettingsForm(_settings);
             _settingsForm = form;
-            if (form.ShowDialog() != DialogResult.OK)
-            {
-                return;
-            }
-
-            var previousKey = _settings.PeekVirtualKey;
-            var previousTrigger = _settings.PeekTrigger;
-            _settings = form.GetSettings(_settings).Normalize();
-            if (previousKey != _settings.PeekVirtualKey || previousTrigger != _settings.PeekTrigger)
-            {
-                _peekState.Reset(_windows.IsKeyDown(_settings.PeekVirtualKey));
-                _peekDown = false;
-            }
-            _settingsStore.Save(_settings);
-            if (!StartupManager.Apply(_settings.StartWithWindows))
-            {
-                _logger.Log(LogLevel.Warning, "Could not update the Windows startup registration.");
-            }
-            UpdateTrayStatus();
+            form.SaveRequested += () => SaveSettings(form);
+            form.ShowDialog();
         }
         finally
         {
@@ -321,6 +304,25 @@ internal sealed class GhostApplicationContext : ApplicationContext
                 RegisterHotkeys();
             }
         }
+    }
+
+    private bool SaveSettings(SettingsForm form)
+    {
+        var previousKey = _settings.PeekVirtualKey;
+        var previousTrigger = _settings.PeekTrigger;
+        _settings = form.GetSettings(_settings).Normalize();
+        if (previousKey != _settings.PeekVirtualKey || previousTrigger != _settings.PeekTrigger)
+        {
+            _peekState.Reset(_windows.IsKeyDown(_settings.PeekVirtualKey));
+            _peekDown = false;
+        }
+        var saved = _settingsStore.Save(_settings);
+        if (!StartupManager.Apply(_settings.StartWithWindows))
+        {
+            _logger.Log(LogLevel.Warning, "Could not update the Windows startup registration.");
+        }
+        UpdateTrayStatus();
+        return saved;
     }
 
     private void UpdateTrayStatus()

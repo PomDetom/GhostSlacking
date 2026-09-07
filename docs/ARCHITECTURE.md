@@ -44,7 +44,7 @@ V0.1 不包含：
 - “防录屏”“防监控”或安全级别的隐私保证；
 - 通过注入、Hook 目标进程或修改目标应用业务逻辑来实现功能。
 
-## 3. 设计原则
+## 3. 设计原则1
 
 ### 3.1 单一修改入口
 
@@ -307,14 +307,14 @@ Restoring ── success ──► Idle
 
 ### 8.2 状态不变量
 
-| 状态 | 目标窗口要求 | 允许的修改 | 退出条件 |
-|---|---|---|---|
-| `Idle` | 无活动目标或已恢复 | 无 | Pick |
-| `Picking` | 不修改目标 | Picker 高亮层可见 | 选择/取消 |
-| `Preparing` | 快照已开始 | 只允许一次性应用 | 成功/失败 |
-| `Ghost` | HWND 有效，默认不可见 | 可更新检测信息 | Peek/Restore |
-| `Reveal` | HWND 有效 | 更新圆形 region | Release/离开/失效 |
-| `Restoring` | 允许目标已关闭 | 恢复原始状态 | 完成/失败 |
+| 状态          | 目标窗口要求        | 允许的修改        | 退出条件          |
+| ----------- | ------------- | ------------ | ------------- |
+| `Idle`      | 无活动目标或已恢复     | 无            | Pick          |
+| `Picking`   | 不修改目标         | Picker 高亮层可见 | 选择/取消         |
+| `Preparing` | 快照已开始         | 只允许一次性应用     | 成功/失败         |
+| `Ghost`     | HWND 有效，默认不可见 | 可更新检测信息      | Peek/Restore  |
+| `Reveal`    | HWND 有效       | 更新圆形 region  | Release/离开/失效 |
+| `Restoring` | 允许目标已关闭       | 恢复原始状态       | 完成/失败         |
 
 禁止并发执行 `ApplyGhost`、`ApplyReveal` 和 `Restore`。所有窗口修改在同一协调上下文串行执行，避免光标更新与恢复交叉覆盖。
 
@@ -324,23 +324,23 @@ Restoring ── success ──► Idle
 
 V0.1 预计使用：
 
-| API/消息 | 用途 |
-|---|---|
-| `WindowFromPoint` | 根据屏幕点获取窗口 |
-| `GetAncestor` | 获取顶层窗口 |
-| `GetWindowRect` | 获取屏幕坐标矩形 |
-| `GetClientRect` | 辅助检查客户区尺寸 |
-| `IsWindow` / `IsWindowVisible` | 生命周期和可见性检查 |
-| `IsIconic` | 判断最小化 |
-| `GetWindowThreadProcessId` | 绑定进程身份 |
-| `GetCursorPos` | 获取鼠标屏幕坐标 |
-| `SetWindowRgn` | 应用/清除窗口区域 |
-| `GetWindowRgn` | 读取原始区域信息 |
-| `RegisterHotKey` | 注册全局组合快捷键 |
-| `UnregisterHotKey` | 注销快捷键 |
+| API/消息                                  | 用途            |
+| --------------------------------------- | ------------- |
+| `WindowFromPoint`                       | 根据屏幕点获取窗口     |
+| `GetAncestor`                           | 获取顶层窗口        |
+| `GetWindowRect`                         | 获取屏幕坐标矩形      |
+| `GetClientRect`                         | 辅助检查客户区尺寸     |
+| `IsWindow` / `IsWindowVisible`          | 生命周期和可见性检查    |
+| `IsIconic`                              | 判断最小化         |
+| `GetWindowThreadProcessId`              | 绑定进程身份        |
+| `GetCursorPos`                          | 获取鼠标屏幕坐标      |
+| `SetWindowRgn`                          | 应用/清除窗口区域     |
+| `GetWindowRgn`                          | 读取原始区域信息      |
+| `RegisterHotKey`                        | 注册全局组合快捷键     |
+| `UnregisterHotKey`                      | 注销快捷键         |
 | `GetWindowLongPtr` / `SetWindowLongPtr` | 读取/恢复必要 style |
-| `ShowWindow` | 必要时隐藏/恢复显示状态 |
-| `GetLastError` | 获取失败原因 |
+| `ShowWindow`                            | 必要时隐藏/恢复显示状态  |
+| `GetLastError`                          | 获取失败原因        |
 
 消息循环通过 WinForms 主线程承载 `WM_HOTKEY` 和定时器回调。P/Invoke 声明应集中在 `Win32NativeMethods`，返回值统一封装为可诊断的结果类型。
 
@@ -551,14 +551,14 @@ GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。
 
 目标值：
 
-| 项目 | V0.1 目标 |
-|---|---:|
-| 空闲 CPU | 接近 0% |
-| Ghost 状态 CPU | 通常低于 1% |
-| Reveal 状态 CPU | 通常低于 3% |
-| 内存 | 小于 100 MB |
-| 启动时间 | 通常小于 1 秒 |
-| 光标响应 | 30–60 Hz，有效更新时刷新 |
+| 项目            | V0.1 目标          |
+| ------------- | ----------------:|
+| 空闲 CPU        | 接近 0%            |
+| Ghost 状态 CPU  | 通常低于 1%          |
+| Reveal 状态 CPU | 通常低于 3%          |
+| 内存            | 小于 100 MB        |
+| 启动时间          | 通常小于 1 秒         |
+| 光标响应          | 30–60 Hz，有效更新时刷新 |
 
 性能原则：
 

@@ -21,12 +21,14 @@ internal sealed class SettingsForm : Form
     private static readonly Color Border = Color.FromArgb(225, 230, 237);
     private static readonly Color PrimaryText = Color.FromArgb(28, 36, 49);
     private static readonly Color SecondaryText = Color.FromArgb(103, 113, 128);
+    private static readonly Color Conflict = Color.FromArgb(214, 58, 72);
+    private static readonly Color ConflictSurface = Color.FromArgb(255, 246, 247);
+    private static readonly AppSettings DefaultSettings = new();
 
     private readonly UiLanguage _initialLanguage;
     private readonly AntInputNumber _diameter;
     private readonly AntSelect _shape;
-    private readonly AntInput _peekKeyDisplay;
-    private readonly AntButton _capturePeekKey;
+    private readonly KeyDisplay _peekKeyDisplay;
     private readonly HotkeyEditor _pickHotkey;
     private readonly HotkeyEditor _windowToggleHotkey;
     private readonly HotkeyEditor _restoreHotkey;
@@ -42,6 +44,8 @@ internal sealed class SettingsForm : Form
     private readonly Label _pageDescription;
     private readonly Panel _pageHost;
     private readonly List<NavButton> _navigation = [];
+    private readonly Dictionary<Control, string> _localizedTextKeys = [];
+    private readonly Dictionary<Control, string> _localizedToolTipKeys = [];
     private TableLayoutPanel? _rootLayout;
     private TableLayoutPanel? _sidebarPanel;
     private Panel? _brandPanel;
@@ -53,6 +57,8 @@ internal sealed class SettingsForm : Form
     private int _peekVirtualKey;
     private bool _capturingPeekKey;
     private HotkeyEditor? _activeHotkeyEditor;
+
+    public event Func<bool>? SaveRequested;
 
     public SettingsForm(AppSettings settings)
     {
@@ -89,14 +95,14 @@ internal sealed class SettingsForm : Form
 
         _peekVirtualKey = settings.PeekVirtualKey;
         _peekKeyDisplay = CreateKeyDisplay(UiText.PeekKeyName(settings.Language, settings.PeekVirtualKey));
-        _capturePeekKey = CreateSecondaryButton(UiText.Text(settings.Language, "changeKey"));
-        _capturePeekKey.Click += (_, _) => BeginPeekKeyCapture(CurrentLanguage);
-        _pickHotkey = CreateHotkeyEditor(settings.PickHotkey, settings.Language);
-        _windowToggleHotkey = CreateHotkeyEditor(settings.WindowToggleHotkey, settings.Language);
-        _restoreHotkey = CreateHotkeyEditor(settings.RestoreHotkey, settings.Language);
-        _restoreAllHotkey = CreateHotkeyEditor(settings.RestoreAllHotkey, settings.Language);
-        _settingsHotkey = CreateHotkeyEditor(settings.SettingsHotkey, settings.Language);
-        _exitHotkey = CreateHotkeyEditor(settings.ExitHotkey, settings.Language);
+        _peekKeyDisplay.EditRequested += (_, _) => BeginPeekKeyCapture(CurrentLanguage);
+        _pickHotkey = CreateHotkeyEditor(settings.PickHotkey, DefaultSettings.PickHotkey, settings.Language);
+        _windowToggleHotkey = CreateHotkeyEditor(settings.WindowToggleHotkey, DefaultSettings.WindowToggleHotkey, settings.Language);
+        _restoreHotkey = CreateHotkeyEditor(settings.RestoreHotkey, DefaultSettings.RestoreHotkey, settings.Language);
+        _restoreAllHotkey = CreateHotkeyEditor(settings.RestoreAllHotkey, DefaultSettings.RestoreAllHotkey, settings.Language);
+        _settingsHotkey = CreateHotkeyEditor(settings.SettingsHotkey, DefaultSettings.SettingsHotkey, settings.Language);
+        _exitHotkey = CreateHotkeyEditor(settings.ExitHotkey, DefaultSettings.ExitHotkey, settings.Language);
+        UpdateHotkeyConflicts();
 
         _restoreOnExit = CreateCheckBox(settings.RestoreOnExit);
         _startWithWindows = CreateCheckBox(settings.StartWithWindows);
@@ -114,6 +120,7 @@ internal sealed class SettingsForm : Form
         _pageHost = new Panel { Dock = DockStyle.Fill, BackColor = Canvas };
 
         BuildLayout(settings.Language);
+        _language.SelectedIndexChanged += (_, _) => ApplyLanguage(CurrentLanguage);
         KeyDown += OnKeyDown;
         FormClosed += (_, _) =>
         {
@@ -181,10 +188,10 @@ internal sealed class SettingsForm : Form
         var hotkeysPage = CreateHotkeysPage(language);
         var generalPage = CreateGeneralPage(language);
         _pageHost.Controls.AddRange([revealPage, hotkeysPage, generalPage]);
-        ConfigureNavigation(_navigation[0], revealPage, language, "revealSettings", "revealSettingsDescription");
-        ConfigureNavigation(_navigation[1], hotkeysPage, language, "hotkeySettings", "hotkeySettingsDescription");
-        ConfigureNavigation(_navigation[2], generalPage, language, "generalSettings", "generalSettingsDescription");
-        ShowPage(_navigation[0], revealPage, UiText.Text(language, "revealSettings"), UiText.Text(language, "revealSettingsDescription"));
+        ConfigureNavigation(_navigation[0], revealPage, "revealSettings", "revealSettingsDescription");
+        ConfigureNavigation(_navigation[1], hotkeysPage, "hotkeySettings", "hotkeySettingsDescription");
+        ConfigureNavigation(_navigation[2], generalPage, "generalSettings", "generalSettingsDescription");
+        ShowPage(_navigation[0], revealPage, language);
         SetSidebarCollapsed(false, language);
     }
 
@@ -212,6 +219,7 @@ internal sealed class SettingsForm : Form
             Font = new Font(Font.FontFamily, 11F, FontStyle.Bold), ForeColor = PrimaryText,
             TextAlign = ContentAlignment.MiddleLeft, Location = new Point(46, 0), Size = new Size(90, 36)
         };
+        _localizedTextKeys[_brandName] = "settings";
         _brandPanel.Controls.AddRange([_brandIcon, _brandName]);
 
         var nav = new FlowLayoutPanel
@@ -219,9 +227,9 @@ internal sealed class SettingsForm : Form
             Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false,
             Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Sidebar
         };
-        AddNavigationButton(nav, UiText.Text(language, "revealSettings"), NavGlyph.Reveal);
-        AddNavigationButton(nav, UiText.Text(language, "hotkeySettings"), NavGlyph.Keyboard);
-        AddNavigationButton(nav, UiText.Text(language, "generalSettings"), NavGlyph.General);
+        AddNavigationButton(nav, language, "revealSettings", NavGlyph.Reveal);
+        AddNavigationButton(nav, language, "hotkeySettings", NavGlyph.Keyboard);
+        AddNavigationButton(nav, language, "generalSettings", NavGlyph.General);
 
         _collapseButton = new AntButton
         {
@@ -275,56 +283,59 @@ internal sealed class SettingsForm : Form
             WrapContents = false, Margin = Padding.Empty, Padding = Padding.Empty
         };
         var save = CreatePrimaryButton(UiText.Text(language, "save"));
-        save.DialogResult = DialogResult.OK;
-        save.Click += (_, _) => ValidateUniqueHotkeys();
+        _localizedTextKeys[save] = "save";
+        save.Click += (_, _) => RequestSave();
         var cancel = CreateSecondaryButton(UiText.Text(language, "cancel"));
+        _localizedTextKeys[cancel] = "cancel";
         cancel.DialogResult = DialogResult.Cancel;
         buttons.Controls.Add(save);
         buttons.Controls.Add(cancel);
         footer.Controls.Add(buttons);
         AcceptButton = save;
-        CancelButton = cancel;
         return footer;
     }
 
-    private void ValidateUniqueHotkeys()
+    private void RequestSave()
     {
-        HotkeyEditor[] editors =
-        [
-            _pickHotkey,
-            _windowToggleHotkey,
-            _restoreHotkey,
-            _restoreAllHotkey,
-            _settingsHotkey,
-            _exitHotkey
-        ];
+        if (ValidateUniqueHotkeys() && SaveRequested?.Invoke() == true)
+        {
+            AntdUI.Message.success(this, UiText.Text(CurrentLanguage, "saveSucceeded"));
+        }
+    }
+
+    private bool ValidateUniqueHotkeys()
+    {
+        var editors = GetHotkeyEditors();
+        UpdateHotkeyConflicts();
         var duplicate = editors
             .Where(editor => !editor.Binding.IsDisabled)
             .GroupBy(editor => editor.Binding)
             .FirstOrDefault(group => group.Count() > 1);
         if (duplicate is null)
         {
-            return;
+            return true;
         }
 
-        DialogResult = DialogResult.None;
         MessageBox.Show(
             this,
             string.Format(UiText.Text(CurrentLanguage, "duplicateHotkey"), UiText.ShortcutName(CurrentLanguage, duplicate.Key)),
             UiText.Text(CurrentLanguage, "title"),
             MessageBoxButtons.OK,
             MessageBoxIcon.Warning);
+        return false;
     }
 
     private Control CreateRevealPage(UiLanguage language)
     {
         return CreatePage([
             CreateSection(language, "revealAppearance", [
-                CreateSettingRow(UiText.Text(language, "diameter"), UiText.Text(language, "diameterDescription"), _diameter),
-                CreateSettingRow(UiText.Text(language, "shape"), UiText.Text(language, "shapeDescription"), _shape)]),
+                CreateSettingRow(language, "diameter", "diameterDescription", _diameter),
+                CreateSettingRow(language, "shape", "shapeDescription", _shape)]),
             CreateSection(language, "peekBehavior", [
-                CreateSettingRow(UiText.Text(language, "peekMode"), UiText.Text(language, "peekModeDescription"), _peekMode),
-                CreateSettingRow(UiText.Text(language, "peekKey"), UiText.Text(language, "peekKeyDescription"), CreateKeyEditorPanel(_peekKeyDisplay, _capturePeekKey))])]);
+                CreateSettingRow(language, "peekMode", "peekModeDescription", _peekMode),
+                CreateSettingRow(language, "peekKey", "peekKeyDescription", CreateKeyEditorPanel(
+                    _peekKeyDisplay,
+                    () => ResetPeekKey(CurrentLanguage)))])]);
     }
 
     private Control CreateHotkeysPage(UiLanguage language) => CreatePage([
@@ -338,15 +349,58 @@ internal sealed class SettingsForm : Form
             ShortcutRow(language, "exitHotkey", "exitHotkeyDescription", _exitHotkey)])]);
 
     private Control ShortcutRow(UiLanguage language, string titleKey, string descriptionKey, HotkeyEditor editor) =>
-        CreateSettingRow(UiText.Text(language, titleKey), UiText.Text(language, descriptionKey), CreateKeyEditorPanel(editor.Display, editor.CaptureButton, editor.ClearButton));
+        CreateSettingRow(language, titleKey, descriptionKey, CreateKeyEditorPanel(
+            editor.Display,
+            () => ResetHotkey(editor, CurrentLanguage)));
+
+    private Control CreateKeyEditorPanel(KeyDisplay display, Action reset)
+    {
+        var panel = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Surface
+        };
+        var resetButton = new AntButton
+        {
+            Text = "↺",
+            Size = new Size(30, 30),
+            Radius = 6,
+            BorderWidth = 0,
+            BackColor = Color.Transparent,
+            DefaultBack = Color.Transparent,
+            BackHover = Color.FromArgb(229, 237, 240),
+            BackActive = Color.FromArgb(216, 229, 231),
+            ForeColor = SecondaryText,
+            ForeHover = Color.FromArgb(18, 126, 116),
+            ForeActive = Color.FromArgb(15, 105, 97),
+            Font = new Font("Segoe UI Symbol", 12F, FontStyle.Regular),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Cursor = Cursors.Hand,
+            Margin = new Padding(8, 4, 0, 4),
+            TabStop = true
+        };
+        resetButton.Click += (_, _) => reset();
+        _localizedToolTipKeys[resetButton] = "resetHotkey";
+        var resetText = UiText.Text(CurrentLanguage, "resetHotkey");
+        resetButton.AccessibleName = resetText;
+        _toolTip?.SetToolTip(resetButton, resetText);
+        panel.Controls.Add(display);
+        panel.Controls.Add(resetButton);
+        return panel;
+    }
 
     private Control CreateGeneralPage(UiLanguage language) => CreatePage([
         CreateSection(language, "startupAndSafety", [
-            CreateSettingRow(UiText.Text(language, "startWindows"), UiText.Text(language, "startWindowsDescription"), _startWithWindows),
-            CreateSettingRow(UiText.Text(language, "restoreOnExit"), UiText.Text(language, "restoreOnExitDescription"), _restoreOnExit)]),
+            CreateSettingRow(language, "startWindows", "startWindowsDescription", _startWithWindows),
+            CreateSettingRow(language, "restoreOnExit", "restoreOnExitDescription", _restoreOnExit)]),
         CreateSection(language, "languageAndDiagnostics", [
-            CreateSettingRow(UiText.Text(language, "interfaceLanguage"), UiText.Text(language, "languageDescription"), _language),
-            CreateSettingRow(UiText.Text(language, "logLevel"), UiText.Text(language, "logLevelDescription"), _logLevel)])]);
+            CreateSettingRow(language, "interfaceLanguage", "languageDescription", _language),
+            CreateSettingRow(language, "logLevel", "logLevelDescription", _logLevel)])]);
 
     private static Control CreatePage(Control[] sections)
     {
@@ -370,7 +424,7 @@ internal sealed class SettingsForm : Form
     {
         var section = new TableLayoutPanel
         {
-            Width = 560, Height = 29 + (rows.Length * 90),
+            Width = 560, Height = 29 + (rows.Length * 84),
             ColumnCount = 1, RowCount = 2,
             Margin = new Padding(0, 0, 0, 20), Padding = Padding.Empty, BackColor = Canvas
         };
@@ -382,68 +436,101 @@ internal sealed class SettingsForm : Form
             Font = new Font(Font.FontFamily, 9F, FontStyle.Bold), ForeColor = SecondaryText,
             Margin = new Padding(2, 0, 0, 0), Anchor = AnchorStyles.Left
         };
+        _localizedTextKeys[heading] = titleKey;
         var card = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown, WrapContents = false,
             Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Canvas
         };
-        foreach (var row in rows) card.Controls.Add(row);
+        card.Controls.AddRange(rows);
         card.Resize += (_, _) =>
         {
-            foreach (Control row in card.Controls) row.Width = Math.Max(478, card.ClientSize.Width);
+            foreach (Control row in card.Controls)
+            {
+                row.Width = Math.Max(478, card.ClientSize.Width);
+            }
         };
         section.Controls.Add(heading, 0, 0);
         section.Controls.Add(card, 0, 1);
         return section;
     }
 
-    private Control CreateSettingRow(string title, string description, Control editor)
+    private Control CreateSettingRow(UiLanguage language, string titleKey, string descriptionKey, Control editor)
     {
         var surface = new AntPanel
         {
-            Height = 82, Width = 560, Radius = 8, BorderWidth = 0,
+            Height = 76, Width = 560, Radius = 8, BorderWidth = 0,
             Margin = new Padding(0, 0, 0, 8), Padding = Padding.Empty,
             Back = Surface, BackColor = Surface
         };
         var layout = new TableLayoutPanel
         {
             ColumnCount = 2, RowCount = 1, Dock = DockStyle.Fill,
-            Margin = Padding.Empty, Padding = new Padding(18, 10, 18, 10), BackColor = Color.Transparent
+            Margin = Padding.Empty, Padding = new Padding(20, 8, 12, 8), BackColor = Color.Transparent
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 380F));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         var copy = new TableLayoutPanel
         {
             ColumnCount = 1, RowCount = 2, Dock = DockStyle.Fill,
             Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Color.Transparent
         };
-        copy.RowStyles.Add(new RowStyle(SizeType.Absolute, 25F));
-        copy.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        copy.Controls.Add(new Label
+        copy.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+        copy.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+        var title = new Label
         {
-            Text = title, AutoSize = false, Dock = DockStyle.Fill,
+            Text = UiText.Text(language, titleKey), AutoSize = false, Dock = DockStyle.Fill,
             Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold), ForeColor = PrimaryText,
             TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Margin = Padding.Empty
-        }, 0, 0);
-        copy.Controls.Add(new Label
+        };
+        var description = new Label
         {
-            Text = description, AutoSize = false, Dock = DockStyle.Fill,
+            Text = UiText.Text(language, descriptionKey), AutoSize = false, Dock = DockStyle.Fill,
             Font = new Font(Font.FontFamily, 8.5F), ForeColor = SecondaryText,
-            TextAlign = ContentAlignment.TopLeft, AutoEllipsis = true, Margin = new Padding(0, 3, 12, 0)
-        }, 0, 1);
-        editor.Anchor = AnchorStyles.Right;
+            TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Margin = new Padding(0, 0, 12, 0)
+        };
+        _localizedTextKeys[title] = titleKey;
+        _localizedTextKeys[description] = descriptionKey;
+        copy.Controls.Add(title, 0, 0);
+        copy.Controls.Add(description, 0, 1);
+
+        var editorHost = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Surface,
+            TabStop = false
+        };
+        editor.Anchor = AnchorStyles.None;
+        editorHost.Controls.Add(editor);
+        editorHost.Layout += (_, _) => CenterEditor(editorHost, editor);
+        editor.SizeChanged += (_, _) => editorHost.PerformLayout();
         layout.Controls.Add(copy, 0, 0);
-        layout.Controls.Add(editor, 1, 0);
+        layout.Controls.Add(editorHost, 1, 0);
         surface.Controls.Add(layout);
         return surface;
     }
 
-    private void AddNavigationButton(Control parent, string text, NavGlyph glyph)
+    private static void CenterEditor(Control host, Control editor)
     {
+        var location = new Point(
+            Math.Max(0, (host.ClientSize.Width - editor.Width) / 2),
+            Math.Max(0, (host.ClientSize.Height - editor.Height) / 2));
+        if (editor.Location != location)
+        {
+            editor.Location = location;
+        }
+    }
+
+    private void AddNavigationButton(Control parent, UiLanguage language, string textKey, NavGlyph glyph)
+    {
+        var text = UiText.Text(language, textKey);
         var button = new NavButton
         {
-            LabelText = text, Glyph = glyph, AccessibleName = text,
+            TextKey = textKey, LabelText = text, Glyph = glyph, AccessibleName = text,
             Width = 144, Height = 44, Margin = new Padding(0, 0, 0, 6),
             Font = new Font(Font.FontFamily, 9F, FontStyle.Bold)
         };
@@ -451,17 +538,115 @@ internal sealed class SettingsForm : Form
         parent.Controls.Add(button);
     }
 
-    private void ConfigureNavigation(NavButton button, Control page, UiLanguage language, string titleKey, string descriptionKey) =>
-        button.Click += (_, _) => ShowPage(button, page, UiText.Text(language, titleKey), UiText.Text(language, descriptionKey));
+    private void ConfigureNavigation(NavButton button, Control page, string titleKey, string descriptionKey)
+    {
+        button.PageTitleKey = titleKey;
+        button.PageDescriptionKey = descriptionKey;
+        button.Click += (_, _) => ShowPage(button, page, CurrentLanguage);
+    }
 
-    private void ShowPage(NavButton selected, Control page, string title, string description)
+    private void ShowPage(NavButton selected, Control page, UiLanguage language)
     {
         CancelKeyCapture();
         foreach (Control candidate in _pageHost.Controls) candidate.Visible = ReferenceEquals(candidate, page);
         foreach (var button in _navigation) button.Selected = ReferenceEquals(button, selected);
         page.BringToFront();
-        _pageTitle.Text = title;
-        _pageDescription.Text = description;
+        _pageTitle.Text = UiText.Text(language, selected.PageTitleKey);
+        _pageDescription.Text = UiText.Text(language, selected.PageDescriptionKey);
+    }
+
+    private void ApplyLanguage(UiLanguage language)
+    {
+        CancelKeyCapture();
+        Text = UiText.Text(language, "title");
+
+        foreach (var (control, key) in _localizedTextKeys)
+        {
+            var text = UiText.Text(language, key);
+            if (control is AntButton button)
+            {
+                SetButtonText(button, text);
+            }
+            else
+            {
+                control.Text = text;
+            }
+        }
+
+        foreach (var button in _navigation)
+        {
+            button.LabelText = UiText.Text(language, button.TextKey);
+            button.AccessibleName = button.LabelText;
+            _toolTip?.SetToolTip(button, _sidebarCollapsed ? button.LabelText : string.Empty);
+            button.Invalidate();
+        }
+
+        foreach (var (control, key) in _localizedToolTipKeys)
+        {
+            var text = UiText.Text(language, key);
+            control.AccessibleName = text;
+            _toolTip?.SetToolTip(control, text);
+        }
+
+        var selected = _navigation.FirstOrDefault(button => button.Selected);
+        if (selected is not null)
+        {
+            _pageTitle.Text = UiText.Text(language, selected.PageTitleKey);
+            _pageDescription.Text = UiText.Text(language, selected.PageDescriptionKey);
+        }
+
+        RefreshChoiceText(language);
+        SetKeyDisplayText(_peekKeyDisplay, UiText.PeekKeyName(language, _peekVirtualKey));
+        foreach (var editor in GetHotkeyEditors())
+        {
+            editor.ApplyLanguage(language);
+        }
+
+        if (_collapseButton is not null)
+        {
+            _toolTip?.SetToolTip(_collapseButton, UiText.Text(language, _sidebarCollapsed ? "expandSidebar" : "collapseSidebar"));
+        }
+
+        PerformLayout();
+    }
+
+    private void RefreshChoiceText(UiLanguage language)
+    {
+        var shape = _shape.SelectedValue is ShapeChoice shapeChoice ? shapeChoice.Shape : RevealShape.Circle;
+        _shape.Items.Clear();
+        _shape.Items.AddRange([
+            new ShapeChoice(RevealShape.Circle, UiText.Text(language, "circle")),
+            new ShapeChoice(RevealShape.Rectangle, UiText.Text(language, "rectangle")),
+            new ShapeChoice(RevealShape.RoundedRectangle, UiText.Text(language, "roundedRectangle"))]);
+        SelectShape(shape);
+        FitSelectWidth(_shape);
+
+        var trigger = _peekMode.SelectedValue is TriggerChoice triggerChoice ? triggerChoice.Trigger : PeekTrigger.Hold;
+        _peekMode.Items.Clear();
+        _peekMode.Items.AddRange([
+            new TriggerChoice(PeekTrigger.Hold, UiText.Text(language, "holdPeek")),
+            new TriggerChoice(PeekTrigger.Toggle, UiText.Text(language, "togglePeek"))]);
+        SelectPeekMode(trigger);
+        FitSelectWidth(_peekMode);
+    }
+
+    private HotkeyEditor[] GetHotkeyEditors() =>
+        [_pickHotkey, _windowToggleHotkey, _restoreHotkey, _restoreAllHotkey, _settingsHotkey, _exitHotkey];
+
+    private void UpdateHotkeyConflicts()
+    {
+        var editors = GetHotkeyEditors();
+        var conflicts = editors
+            .Where(editor => !editor.Binding.IsDisabled)
+            .GroupBy(editor => editor.Binding)
+            .Where(group => group.Count() > 1)
+            .SelectMany(group => group)
+            .ToHashSet();
+
+        foreach (var editor in editors)
+        {
+            editor.Display.SetConflict(conflicts.Contains(editor));
+        }
     }
 
     private void SetSidebarCollapsed(bool collapsed, UiLanguage language)
@@ -497,7 +682,7 @@ internal sealed class SettingsForm : Form
         }
         if (_capturingPeekKey)
         {
-            SetButtonText(_capturePeekKey, UiText.Text(CurrentLanguage, "changeKey"));
+            SetKeyDisplayText(_peekKeyDisplay, UiText.PeekKeyName(CurrentLanguage, _peekVirtualKey));
             _capturingPeekKey = false;
         }
     }
@@ -506,45 +691,74 @@ internal sealed class SettingsForm : Form
     {
         CancelKeyCapture();
         _capturingPeekKey = true;
-        SetButtonText(_capturePeekKey, UiText.Text(language, "pressKey"));
-        _capturePeekKey.Focus();
+        SetKeyDisplayText(_peekKeyDisplay, UiText.Text(language, "pressKey"));
+        _peekKeyDisplay.Focus();
     }
 
-    private HotkeyEditor CreateHotkeyEditor(HotkeyBinding binding, UiLanguage language)
+    private void ResetPeekKey(UiLanguage language)
     {
-        var editor = new HotkeyEditor(binding, language);
-        editor.CaptureButton.Click += (_, _) =>
+        CancelKeyCapture();
+        _peekVirtualKey = DefaultSettings.PeekVirtualKey;
+        SetKeyDisplayText(_peekKeyDisplay, UiText.PeekKeyName(language, _peekVirtualKey));
+    }
+
+    private void ResetHotkey(HotkeyEditor editor, UiLanguage language)
+    {
+        CancelKeyCapture();
+        editor.Reset(language);
+        UpdateHotkeyConflicts();
+    }
+
+    private HotkeyEditor CreateHotkeyEditor(
+        HotkeyBinding binding,
+        HotkeyBinding defaultBinding,
+        UiLanguage language)
+    {
+        var editor = new HotkeyEditor(binding, defaultBinding, language);
+        editor.Display.EditRequested += (_, _) =>
         {
             CancelKeyCapture();
             _activeHotkeyEditor = editor;
             editor.BeginCapture(CurrentLanguage);
         };
-        editor.ClearButton.Click += (_, _) =>
+        editor.Display.ClearRequested += (_, _) =>
         {
             CancelKeyCapture();
             editor.Clear(CurrentLanguage);
+            UpdateHotkeyConflicts();
         };
         return editor;
     }
 
-    private static Control CreateKeyEditorPanel(params Control[] controls)
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        var panel = new FlowLayoutPanel
+        if ((keyData & Keys.KeyCode) == Keys.Escape &&
+            (_activeHotkeyEditor is not null || _capturingPeekKey))
         {
-            AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false,
-            Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Card
-        };
-        panel.Controls.AddRange(controls);
-        return panel;
+            CancelKeyCapture();
+            return true;
+        }
+
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.KeyCode == Keys.Escape &&
+            (_activeHotkeyEditor is not null || _capturingPeekKey))
+        {
+            CancelKeyCapture();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+
         if (_activeHotkeyEditor is not null)
         {
             if (_activeHotkeyEditor.TryCapture(e, CurrentLanguage))
             {
                 _activeHotkeyEditor = null;
+                UpdateHotkeyConflicts();
                 e.Handled = true;
                 e.SuppressKeyPress = true;
             }
@@ -553,7 +767,6 @@ internal sealed class SettingsForm : Form
         if (!_capturingPeekKey || e.KeyValue is < 1 or > 255) return;
         _peekVirtualKey = e.KeyValue;
         SetKeyDisplayText(_peekKeyDisplay, UiText.PeekKeyName(CurrentLanguage, _peekVirtualKey));
-        SetButtonText(_capturePeekKey, UiText.Text(CurrentLanguage, "changeKey"));
         _capturingPeekKey = false;
         e.Handled = true;
         e.SuppressKeyPress = true;
@@ -606,7 +819,8 @@ internal sealed class SettingsForm : Form
         BorderColor = Border, BorderHover = Accent, BorderActive = Accent,
         BackColor = Color.White, ForeColor = PrimaryText, Margin = Padding.Empty,
         Font = new Font("Microsoft YaHei UI", 9F), TextAlign = HorizontalAlignment.Center,
-        DropDownTextAlign = AntdUI.TAlign.None, ListAutoWidth = true
+        DropDownTextAlign = AntdUI.TAlign.None, ListAutoWidth = true,
+        CaretVisible = false
     };
 
     private static AntInputNumber CreateNumericInput(int value) => new()
@@ -618,15 +832,18 @@ internal sealed class SettingsForm : Form
         BackColor = Color.White, ForeColor = PrimaryText, Margin = Padding.Empty
     };
 
-    private static AntInput CreateKeyDisplay(string text)
+    private static KeyDisplay CreateKeyDisplay(string text)
     {
         var font = new Font("Microsoft YaHei UI", 9F);
-        return new AntInput
+        return new KeyDisplay
         {
-            ReadOnly = true, Text = text, Width = MeasureOptionWidth(text, font, 72, 170), Height = 38, TabStop = false,
+            ReadOnly = false, CaretVisible = false, AllowClear = false,
+            UseContextMenu = false, ImeMode = ImeMode.Disable,
+            Text = text, Width = MeasureOptionWidth(text, font, 72, 170), Height = 38, TabStop = false,
             TextAlign = HorizontalAlignment.Center, Radius = 6, BorderWidth = 1F,
-            BorderColor = Border, BackColor = Color.FromArgb(248, 250, 252),
-            ForeColor = PrimaryText, Font = font, Margin = Padding.Empty
+            BorderColor = Border, BorderHover = Accent, BorderActive = Accent,
+            BackColor = Color.FromArgb(248, 250, 252), ForeColor = PrimaryText,
+            Font = font, Margin = Padding.Empty, Cursor = Cursors.Hand
         };
     }
 
@@ -692,7 +909,7 @@ internal sealed class SettingsForm : Form
     private static void SetHotkeyDisplayText(AntInput input, string text)
     {
         input.Text = text;
-        input.Width = MeasureOptionWidth(text, input.Font, 72, 140);
+        input.Width = MeasureOptionWidth(text, input.Font, 112, 190);
     }
 
     private static void SetButtonText(AntButton button, string text)
@@ -705,36 +922,84 @@ internal sealed class SettingsForm : Form
     private sealed record TriggerChoice(PeekTrigger Trigger, string Name) { public override string ToString() => Name; }
     private sealed record LanguageChoice(UiLanguage Language, string Name) { public override string ToString() => Name; }
 
+    private sealed class KeyDisplay : AntInput
+    {
+        private bool _clearHandled;
+        public event EventHandler? EditRequested;
+        public event EventHandler? ClearRequested;
+
+        public void SetConflict(bool conflict)
+        {
+            BorderColor = conflict ? Conflict : Border;
+            BorderHover = conflict ? Conflict : Accent;
+            BorderActive = conflict ? Conflict : Accent;
+            BackColor = conflict ? ConflictSurface : Color.FromArgb(248, 250, 252);
+            Invalidate();
+        }
+
+        protected override void OnClickContent(MouseEventArgs e)
+        {
+            _clearHandled = false;
+            base.OnClickContent(e);
+            if (!_clearHandled)
+            {
+                EditRequested?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        protected override void OnClearValue()
+        {
+            _clearHandled = true;
+            ClearRequested?.Invoke(this, EventArgs.Empty);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+
+        protected override void OnKeyPress(KeyPressEventArgs e)
+        {
+            e.Handled = true;
+        }
+    }
+
     private sealed class HotkeyEditor
     {
         private bool _capturing;
+        private readonly HotkeyBinding _defaultBinding;
         public HotkeyBinding Binding { get; private set; }
-        public AntInput Display { get; }
-        public AntButton CaptureButton { get; }
-        public AntButton ClearButton { get; }
+        public KeyDisplay Display { get; }
 
-        public HotkeyEditor(HotkeyBinding binding, UiLanguage language)
+        public HotkeyEditor(HotkeyBinding binding, HotkeyBinding defaultBinding, UiLanguage language)
         {
             Binding = binding;
+            _defaultBinding = defaultBinding;
             Display = CreateKeyDisplay(UiText.ShortcutName(language, binding));
-            Display.Width = Math.Min(Display.Width, 140);
-            CaptureButton = CreateSecondaryButton(UiText.Text(language, "changeKey"));
-            ClearButton = CreateSecondaryButton(UiText.Text(language, "clearHotkey"));
-            ClearButton.Width = 64;
-            ClearButton.Enabled = !binding.IsDisabled;
+            SetHotkeyDisplayText(Display, UiText.ShortcutName(language, binding));
+            Display.AllowClear = !binding.IsDisabled;
         }
 
         public void BeginCapture(UiLanguage language)
         {
             _capturing = true;
-            SetButtonText(CaptureButton, UiText.Text(language, "pressShortcut"));
-            CaptureButton.Focus();
+            Display.AllowClear = false;
+            SetHotkeyDisplayText(Display, UiText.Text(language, "pressShortcut"));
+            Display.Focus();
         }
 
         public void CancelCapture(UiLanguage language)
         {
             _capturing = false;
-            SetButtonText(CaptureButton, UiText.Text(language, "changeKey"));
+            SetHotkeyDisplayText(Display, UiText.ShortcutName(language, Binding));
+            Display.AllowClear = !Binding.IsDisabled;
         }
 
         public void Clear(UiLanguage language)
@@ -742,8 +1007,15 @@ internal sealed class SettingsForm : Form
             _capturing = false;
             Binding = HotkeyBinding.Disabled;
             SetHotkeyDisplayText(Display, UiText.ShortcutName(language, Binding));
-            SetButtonText(CaptureButton, UiText.Text(language, "changeKey"));
-            ClearButton.Enabled = false;
+            Display.AllowClear = false;
+        }
+
+        public void Reset(UiLanguage language)
+        {
+            _capturing = false;
+            Binding = _defaultBinding;
+            SetHotkeyDisplayText(Display, UiText.ShortcutName(language, Binding));
+            Display.AllowClear = true;
         }
 
         public bool TryCapture(KeyEventArgs e, UiLanguage language)
@@ -756,11 +1028,18 @@ internal sealed class SettingsForm : Form
             if (e.Modifiers.HasFlag(Keys.Shift)) modifiers |= ShortcutModifiers.Shift;
             Binding = new HotkeyBinding(e.KeyValue, modifiers);
             SetHotkeyDisplayText(Display, UiText.ShortcutName(language, Binding));
-            SetButtonText(CaptureButton, UiText.Text(language, "changeKey"));
-            ClearButton.Enabled = true;
+            Display.AllowClear = true;
             _capturing = false;
             return true;
         }
+
+        public void ApplyLanguage(UiLanguage language)
+        {
+            _capturing = false;
+            SetHotkeyDisplayText(Display, UiText.ShortcutName(language, Binding));
+            Display.AllowClear = !Binding.IsDisabled;
+        }
+
     }
 
     private enum NavGlyph
@@ -774,7 +1053,10 @@ internal sealed class SettingsForm : Form
     {
         private bool _selected;
         private bool _compact;
-        public string LabelText { get; init; } = string.Empty;
+        public string TextKey { get; init; } = string.Empty;
+        public string PageTitleKey { get; set; } = string.Empty;
+        public string PageDescriptionKey { get; set; } = string.Empty;
+        public string LabelText { get; set; } = string.Empty;
         public NavGlyph Glyph { get; init; }
         public bool Compact
         {
