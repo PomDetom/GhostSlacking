@@ -46,4 +46,21 @@
     </ItemGroup>
     <Copy SourceFiles="@(WatchdogArtifact)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
+  <Target Name="PublishWatchdogArtifacts" AfterTargets="Publish">
+    <PropertyGroup>
+      <WatchdogPublishDirectory>$(IntermediateOutputPath)watchdog-publish\</WatchdogPublishDirectory>
+    </PropertyGroup>
+    <MSBuild
+      Projects="..\GhostSlacking.Watchdog\GhostSlacking.Watchdog.csproj"
+      Targets="Publish"
+      BuildInParallel="false"
+      Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(WatchdogPublishDirectory);DebugSymbols=$(DebugSymbols);DebugType=$(DebugType)" />
+    <ItemGroup>
+      <WatchdogPublishArtifact Include="$(WatchdogPublishDirectory)**\*" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(WatchdogPublishArtifact)"
+      DestinationFiles="@(WatchdogPublishArtifact->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+  </Target>
 </Project>

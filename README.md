@@ -14,6 +14,29 @@ dotnet test GhostSlacking.sln --configuration Debug
 dotnet run --project src/GhostSlacking.App --configuration Debug
 ```
 
+## 发布打包
+
+推荐生成无需预装 .NET 8 Desktop Runtime 的 Windows x64 自包含包：
+
+```powershell
+dotnet publish src/GhostSlacking.App/GhostSlacking.App.csproj `
+  --configuration Release `
+  --runtime win-x64 `
+  --self-contained true `
+  --artifacts-path artifacts/publish-work `
+  --output artifacts/publish/win-x64-self-contained `
+  -p:PublishTrimmed=false `
+  -p:DebugSymbols=false `
+  -p:DebugType=None
+
+Compress-Archive `
+  -Path artifacts/publish/win-x64-self-contained/* `
+  -DestinationPath artifacts/GhostSlacking-win-x64.zip `
+  -Force
+```
+
+如目标机器已经安装 .NET 8 Desktop Runtime，可将 `--self-contained true` 改为 `false` 以减小体积。请分发整个发布目录或 ZIP，不要只复制 `GhostSlacking.App.exe`；Avalonia、Windows App SDK 和 `GhostSlacking.Watchdog` 的运行文件也必须保留。
+
 默认快捷键（全部可在设置中修改）：
 
 - `Ctrl+Alt+G`：没有目标时开始拾取；有目标时切换当前窗口的隐藏/显示状态
