@@ -41,13 +41,15 @@ internal sealed class GhostApplicationContext : ApplicationContext
     private bool _peekDown;
     private bool _isExiting;
     private readonly PeekStateTracker _peekState = new();
-    private SettingsForm? _settingsForm;
+    private readonly SettingsWindowHost _settingsHost;
+    private bool _settingsOpen;
 
     public GhostApplicationContext()
     {
         _settingsStore = new SettingsStore();
         _settings = _settingsStore.Load();
         _logger = new FileLogger(_settings);
+        _settingsHost = new SettingsWindowHost(_logger);
         _windows = new Win32WindowApi();
         _revealOverlay = new RevealEdgeOverlay(_logger);
         var backend = new Win32VisibilityBackend(_logger);
@@ -338,44 +340,45 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
     private void OpenSettings()
     {
-        if (_settingsForm is not null && !_settingsForm.IsDisposed)
+        if (_settingsOpen)
         {
-            if (_settingsForm.WindowState == FormWindowState.Minimized)
-            {
-                _settingsForm.WindowState = FormWindowState.Normal;
-            }
-
-            _settingsForm.Activate();
-            _settingsForm.BringToFront();
+            _settingsHost.Activate();
             return;
         }
 
         _hotkeys.UnregisterAll();
-        try
+        _settingsOpen = true;
+        if (!_settingsHost.Show(
+                _settings,
+                updated => _messageWindow.Invoke(() => SaveSettings(updated)),
+                exception => _messageWindow.Post(() => OnSettingsClosed(exception))))
         {
-            using var form = new SettingsForm(_settings);
-            _settingsForm = form;
-            form.SaveRequested += () => SaveSettings(form);
-            form.ShowDialog();
-        }
-        finally
-        {
-            _settingsForm = null;
-            if (!_isExiting)
-            {
-                RegisterHotkeys();
-            }
+            OnSettingsClosed(new InvalidOperationException("The Avalonia settings host could not be started."));
         }
     }
 
-    private bool SaveSettings(SettingsForm form)
+    private void OnSettingsClosed(Exception? exception)
+    {
+        _settingsOpen = false;
+        if (exception is not null)
+        {
+            _logger.Log(LogLevel.Error, "The Avalonia settings window closed unexpectedly.", exception);
+            ShowError(string.Format(UiText.Text(_settings.Language, "unexpected"), exception.Message));
+        }
+
+        if (!_isExiting)
+        {
+            RegisterHotkeys();
+        }
+    }
+
+    private bool SaveSettings(AppSettings updated)
     {
         var previousKey = _settings.PeekVirtualKey;
         var previousTrigger = _settings.PeekTrigger;
-        var updated = form.GetSettings(_settings).Normalize();
+        updated = updated.Normalize();
         if (!_settingsStore.Save(updated))
         {
-            form.ShowSaveError();
             return false;
         }
 
@@ -497,6 +500,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _hotkeys.Dispose();
         _timer.Stop();
         _revealOverlay.Dispose();
+        _settingsHost.Dispose();
         _notifications.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
@@ -563,6 +567,16 @@ internal sealed class GhostApplicationContext : ApplicationContext
             {
                 _invoker.BeginInvoke(action);
             }
+        }
+
+        public T Invoke<T>(Func<T> action)
+        {
+            if (!_invoker.IsHandleCreated)
+            {
+                throw new ObjectDisposedException(nameof(MessageWindow));
+            }
+
+            return (T)_invoker.Invoke(action);
         }
 
         protected override void WndProc(ref Message m)

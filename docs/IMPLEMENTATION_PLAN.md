@@ -2,7 +2,7 @@
 
 > 目标版本：GhostSlacking V0.1  
 > 平台：Windows 10/11  x64  
-> 主路线：C# + .NET + WinForms + Win32 P/Invoke  
+> 主路线：C# + .NET + WinForms 托盘宿主 + Avalonia 设置 UI + Win32 P/Invoke
 > 首个可用渲染方案：`SetWindowRgn`
 
 ## 1. 实施策略
@@ -232,7 +232,7 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 ### 6.2 任务拆解
 
 - 完善托盘菜单、状态文字和错误 Toast；
-- 增加 WinForms 设置页：Peek Key、Reveal Diameter、开机启动、退出恢复、日志级别；
+- 增加 Avalonia + FluentAvalonia 设置页：Peek Key、Reveal Diameter、开机启动、退出恢复、日志级别；
 - 使用带 schema version 的 JSON 配置，并对损坏配置提供回退；
 - 增加启动单实例互斥，避免多个主进程同时修改同一窗口；
 - 完善 Emergency Restore 快捷键和托盘入口；

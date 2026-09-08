@@ -6,7 +6,7 @@
 
 - `GhostSlacking.Core`: platform-neutral domain models, geometry, state coordination, settings, and recovery logic.
 - `GhostSlacking.Platform`: Windows/Win32 adapters for window selection, hooks, hotkeys, and visibility.
-- `GhostSlacking.App`: the WinForms tray application, settings UI, startup integration, and logging.
+- `GhostSlacking.App`: the WinForms tray host, Avalonia/FluentAvalonia settings UI, startup integration, and logging.
 
 Automated tests live in `tests/GhostSlacking.Core.Tests`. Architecture decisions, implementation phases, and the manual compatibility matrix are in `docs/`. Generated output belongs in `bin/`, `obj/`, or `artifacts/`; do not commit it.
 

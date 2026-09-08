@@ -2,7 +2,7 @@
 
 > 版本：V0.1 设计基线  
 > 平台：Windows 10/11  x64  
-> 技术路线：C# + .NET + WinForms + Win32 P/Invoke  
+> 技术路线：C# + .NET + WinForms 托盘宿主 + Avalonia 设置 UI + Win32 P/Invoke
 > 渲染路线：`SetWindowRgn` 内容裁剪 + 非抓屏 Windows Composition 外扩羽化
 
 ## 1. 文档目的
@@ -89,7 +89,7 @@ V0.1 不包含：
 
 ```text
 src/
-  GhostSlacking.App/          WinForms 托盘、设置、消息循环
+  GhostSlacking.App/          WinForms 托盘/消息循环、Avalonia 设置 UI
   GhostSlacking.Core/         状态机、领域模型、服务接口
   GhostSlacking.Platform/     Win32 P/Invoke 和 Windows 适配器
   GhostSlacking.Watchdog/     Phase 2 最小异常恢复进程
@@ -264,7 +264,7 @@ Settings
 Exit
 ```
 
-设置窗口保持 WinForms 原生控件，暴露 Peek Key、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。主业务状态不应存放在窗体控件中。
+设置窗口使用 Avalonia + FluentAvalonia 控件，暴露 Peek Key、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。Avalonia 在独立 STA UI 线程运行，设置保存同步封送回 WinForms 托盘线程；主业务状态不存放在窗口控件中。
 
 ### 7.8 `Watchdog`
 
