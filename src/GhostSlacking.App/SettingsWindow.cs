@@ -174,17 +174,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private static WindowIcon? CreateWindowIcon()
     {
-        try
-        {
-            using var stream = new MemoryStream();
-            AppIcon.Instance.Save(stream);
-            stream.Position = 0;
-            return new WindowIcon(stream);
-        }
-        catch
-        {
-            return null;
-        }
+        return AppIcon.Instance;
     }
 
     private Control CreateContentShell(UiLanguage language)

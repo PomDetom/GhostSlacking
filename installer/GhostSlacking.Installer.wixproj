@@ -9,4 +9,7 @@
     <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer-obj\$(Configuration)</IntermediateOutputPath>
     <DebugType>none</DebugType>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Netfx.wixext" Version="5.0.2" />
+  </ItemGroup>
 </Project>

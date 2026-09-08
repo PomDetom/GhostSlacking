@@ -1,7 +1,9 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Drawing.Drawing2D;
+using System.Drawing;
+using Avalonia.Threading;
 using GhostSlacking.Core;
+using GhostSlacking.Platform;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Effects;
 using Microsoft.Graphics.Canvas.UI.Composition;
@@ -20,23 +22,12 @@ using WinColor = Windows.UI.Color;
 
 namespace GhostSlacking.App;
 
-internal sealed class RevealEdgeOverlay : Form, IRevealVisualHost
+internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
 {
-    private const int WsExTransparent = 0x00000020;
-    private const int WsExToolWindow = 0x00000080;
-    private const int WsExNoRedirectionBitmap = 0x00200000;
-    private const int WsExNoActivate = 0x08000000;
-    private const int WmEraseBackground = 0x0014;
-    private const int WmNcHitTest = 0x0084;
-    private const int HtTransparent = -1;
     private const byte NeutralMistAlpha = 10;
-    private const uint SwpNoSize = 0x0001;
-    private const uint SwpNoMove = 0x0002;
-    private const uint SwpNoActivate = 0x0010;
-    private const uint SwpShowWindow = 0x0040;
-    private static readonly nint HwndTopmost = -1;
 
     private readonly ILogger _logger;
+    private readonly Win32OverlayWindow _window;
     private readonly bool _operatingSystemSupported;
     private DispatcherQueueController? _dispatcherQueueController;
     private Compositor? _compositor;
@@ -58,31 +49,16 @@ internal sealed class RevealEdgeOverlay : Form, IRevealVisualHost
     private bool _initialized;
     private volatile bool _failed;
     private bool _failureLogged;
+    private bool _disposed;
 
     public RevealEdgeOverlay(ILogger logger)
     {
         _logger = logger;
+        _window = new Win32OverlayWindow();
         _operatingSystemSupported = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041);
-        AutoScaleMode = AutoScaleMode.None;
-        FormBorderStyle = FormBorderStyle.None;
-        ShowInTaskbar = false;
-        StartPosition = FormStartPosition.Manual;
-        TopMost = true;
     }
 
     public bool IsAvailable => _operatingSystemSupported && !_failed;
-
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            var parameters = base.CreateParams;
-            parameters.ExStyle |= WsExTransparent | WsExToolWindow | WsExNoRedirectionBitmap | WsExNoActivate;
-            return parameters;
-        }
-    }
 
     public NativeResult Prepare(RevealVisualState visual)
     {
@@ -113,100 +89,63 @@ internal sealed class RevealEdgeOverlay : Form, IRevealVisualHost
 
     public NativeResult Present()
     {
-        if (!_initialized || _failed || !IsHandleCreated)
+        if (!_initialized || _failed || _window.Handle == 0)
         {
             return NativeResult.Failed("SetWindowPos(RevealFeather)", 0, "The Reveal compositor is unavailable.");
         }
 
-        return SetWindowPos(
-            Handle,
-            HwndTopmost,
-            0,
-            0,
-            0,
-            0,
-            SwpNoSize | SwpNoMove | SwpNoActivate | SwpShowWindow)
-            ? NativeResult.Ok("SetWindowPos(RevealFeather)")
-            : NativeResult.Failed(
-                "SetWindowPos(RevealFeather)",
-                Marshal.GetLastWin32Error(),
-                "Could not keep the Reveal feather above the target window.");
+        return _window.ShowTopmostNoActivate();
     }
 
     void IRevealVisualHost.Hide() => HideVisual();
 
     public void HideVisual()
     {
-        if (Visible)
+        _window.Hide();
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
         {
-            Hide();
-        }
-    }
-
-    protected override void OnPaintBackground(PaintEventArgs e)
-    {
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-    }
-
-    protected override void WndProc(ref Message message)
-    {
-        if (message.Msg == WmNcHitTest)
-        {
-            message.Result = HtTransparent;
             return;
         }
 
-        if (message.Msg == WmEraseBackground)
+        _disposed = true;
+        HideVisual();
+        ReleaseVisualResources();
+        if (_root is not null)
         {
-            message.Result = 1;
-            return;
+            _root.Children.RemoveAll();
+            _root.Dispose();
+            _root = null;
         }
 
-        base.WndProc(ref message);
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
+        _compositionTarget?.Dispose();
+        _compositionTarget = null;
+        _graphicsDevice?.Dispose();
+        _graphicsDevice = null;
+        if (_canvasDevice is not null)
         {
-            HideVisual();
-            ReleaseVisualResources();
-            if (_root is not null)
-            {
-                _root.Children.RemoveAll();
-                _root.Dispose();
-                _root = null;
-            }
-
-            _compositionTarget?.Dispose();
-            _compositionTarget = null;
-            _graphicsDevice?.Dispose();
-            _graphicsDevice = null;
-            if (_canvasDevice is not null)
-            {
-                _canvasDevice.DeviceLost -= OnCanvasDeviceLost;
-                _canvasDevice.Dispose();
-                _canvasDevice = null;
-            }
-
-            _compositor?.Dispose();
-            _compositor = null;
-            try
-            {
-                _dispatcherQueueController?.ShutdownQueueAsync();
-            }
-            catch (Exception exception)
-            {
-                _logger.Log(LogLevel.Warning, "Could not shut down the Reveal composition queue cleanly.", exception);
-            }
-
-            _dispatcherQueueController = null;
+            _canvasDevice.DeviceLost -= OnCanvasDeviceLost;
+            _canvasDevice.Dispose();
+            _canvasDevice = null;
         }
 
-        base.Dispose(disposing);
+        _compositor?.Dispose();
+        _compositor = null;
+        try
+        {
+            _dispatcherQueueController?.ShutdownQueueAsync();
+        }
+        catch (Exception exception)
+        {
+            _logger.Log(LogLevel.Warning, "Could not shut down the Reveal composition queue cleanly.", exception);
+        }
+
+        _dispatcherQueueController = null;
+        _window.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     private void InitializeComposition()
@@ -218,7 +157,7 @@ internal sealed class RevealEdgeOverlay : Form, IRevealVisualHost
 
         _dispatcherQueueController = EnsureDispatcherQueue();
         _compositor = new Compositor();
-        _compositionTarget = CreateCompositionTarget(_compositor, Handle);
+        _compositionTarget = CreateCompositionTarget(_compositor, _window.Handle);
         _root = _compositor.CreateContainerVisual();
         _compositionTarget.Root = _root;
         _canvasDevice = CanvasDevice.GetSharedDevice();
@@ -259,14 +198,10 @@ internal sealed class RevealEdgeOverlay : Form, IRevealVisualHost
             _lastMask = maskKey;
         }
 
-        if (Bounds != hostBounds)
+        var boundsResult = _window.SetBounds(hostBounds);
+        if (!boundsResult.Success)
         {
-            Bounds = hostBounds;
-        }
-
-        if (!Visible)
-        {
-            Show();
+            return boundsResult;
         }
 
         return NativeResult.Ok("CompositionBackdropBrush");
@@ -300,54 +235,15 @@ internal sealed class RevealEdgeOverlay : Form, IRevealVisualHost
 
         _root.Size = size;
         _root.Children.InsertAtTop(_mistVisual);
-        ApplyInputRegion(visual, hostBounds);
-    }
-
-    private void ApplyInputRegion(RevealVisualState visual, Rectangle hostBounds)
-    {
-        var clientBounds = new Rectangle(Point.Empty, hostBounds.Size);
-        using var outerPath = CreateRegionPath(
+        var regionResult = _window.SetRingRegion(
             RevealGeometry.Expand(visual.CoreRegion, visual.FeatherWidthPx),
+            visual.CoreRegion,
             visual.WindowBounds,
             hostBounds);
-        using var corePath = CreateRegionPath(visual.CoreRegion, visual.WindowBounds, hostBounds);
-        var inputRegion = new Region(clientBounds);
-        inputRegion.Intersect(outerPath);
-        inputRegion.Exclude(corePath);
-
-        var previousRegion = Region;
-        Region = inputRegion;
-        previousRegion?.Dispose();
-    }
-
-    private static GraphicsPath CreateRegionPath(
-        CircleRegion region,
-        Rectangle windowBounds,
-        Rectangle hostBounds)
-    {
-        var bounds = RevealGeometry.GetBounds(region);
-        bounds.Offset(windowBounds.Left - hostBounds.Left, windowBounds.Top - hostBounds.Top);
-        var path = new GraphicsPath();
-        if (region.Shape == RevealShape.Circle)
+        if (!regionResult.Success)
         {
-            path.AddEllipse(bounds);
-            return path;
+            throw new ExternalException(regionResult.ErrorMessage ?? regionResult.Operation, regionResult.ErrorCode);
         }
-
-        if (region.Shape == RevealShape.Rectangle || region.CornerRadius <= 0)
-        {
-            path.AddRectangle(bounds);
-            return path;
-        }
-
-        var radius = Math.Min(region.CornerRadius, Math.Min(bounds.Width, bounds.Height) / 2);
-        var diameter = radius * 2;
-        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
-        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
-        path.CloseFigure();
-        return path;
     }
 
     private CompositionDrawingSurface CreateMaskSurface(byte[] pixels, Size size)
@@ -495,9 +391,9 @@ internal sealed class RevealEdgeOverlay : Form, IRevealVisualHost
             _failureLogged = true;
         }
 
-        if (IsHandleCreated && InvokeRequired)
+        if (!Dispatcher.UIThread.CheckAccess())
         {
-            BeginInvoke(HideVisual);
+            Dispatcher.UIThread.Post(HideVisual);
         }
         else
         {
@@ -600,17 +496,6 @@ internal sealed class RevealEdgeOverlay : Form, IRevealVisualHost
     private static extern int CreateDispatcherQueueController(
         DispatcherQueueOptions options,
         out nint dispatcherQueueController);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetWindowPos(
-        nint hwnd,
-        nint insertAfter,
-        int x,
-        int y,
-        int width,
-        int height,
-        uint flags);
 
     private sealed record MaskKey(
         Size HostSize,

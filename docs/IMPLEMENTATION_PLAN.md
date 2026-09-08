@@ -2,7 +2,7 @@
 
 > 目标版本：GhostSlacking V0.1  
 > 平台：Windows 10/11  x64  
-> 主路线：C# + .NET + WinForms 托盘宿主 + Avalonia 设置 UI + Win32 P/Invoke
+> 主路线：C# + .NET + Avalonia/FluentAvalonia UI + Win32 P/Invoke
 > 首个可用渲染方案：`SetWindowRgn`
 
 ## 1. 实施策略
@@ -26,7 +26,7 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 ### 2.1 基线
 
 - Windows-only；
-- C#、现代 .NET LTS、WinForms；
+- C#、现代 .NET LTS、Avalonia/FluentAvalonia；
 - Win32 API 集中封装在 Platform 层；
 - 单目标窗口优先；
 - 不注入、不截图、不依赖目标应用 SDK；
@@ -65,7 +65,7 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 
 | 编号 | 任务 | 依赖 | 产出 |
 |---|---|---|---|
-| 0.1 | 创建最小 .NET WinForms 实验项目 | .NET SDK | 可启动实验程序 |
+| 0.1 | 创建最小 .NET Avalonia 实验项目 | .NET SDK | 可启动实验程序 |
 | 0.2 | 封装 `WindowFromPoint`、`GetAncestor`、`GetWindowRect`、PID 查询 | 0.1 | 基础 HWND 工具 |
 | 0.3 | 封装 `CreateEllipticRgn`、`SetWindowRgn`、`DeleteObject` | 0.1 | region 实验器 |
 | 0.4 | 实现鼠标轮询和屏幕坐标到窗口本地坐标转换 | 0.2 | 圆形跟随 |
@@ -141,7 +141,7 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 
 #### 4.2.6 最小托盘体验
 
-- 创建 `NotifyIcon` 和最小托盘菜单；
+- 创建 Avalonia `TrayIcon` 和最小原生托盘菜单；
 - 显示当前目标及 Ghost/Reveal 状态；
 - 提供 Pick、Restore、Restore All、Exit；
 - 退出时先进入恢复流程，再结束消息循环。
@@ -184,7 +184,7 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 
 #### 5.2.2 异常与进程生命周期
 
-- 覆盖 WinForms 线程异常、AppDomain 未处理异常和正常退出；
+- 覆盖 Avalonia 调度线程异常、AppDomain 未处理异常和正常退出；
 - 捕获注销/关机通知，尽力提前恢复；
 - 发生恢复失败时停用自动重试并显示明确操作入口；
 - 将最后一次恢复状态写入本地诊断日志。
@@ -364,7 +364,7 @@ Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可�
 如果只安排最短验证路径，按以下顺序执行：
 
 ```text
-1. 建立最小 WinForms 托盘/消息循环
+1. 建立最小 Avalonia 托盘/消息循环
 2. 选择 HWND 并读取 rect/PID
 3. 直接应用一个固定圆形 SetWindowRgn
 4. 用 GetCursorPos 更新窗口本地区域

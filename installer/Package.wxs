@@ -1,4 +1,6 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix
+  xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx">
   <Package
     Name="GhostSlacking"
     Manufacturer="GhostSlacking"
@@ -9,6 +11,16 @@
 
     <MajorUpgrade DowngradeErrorMessage="已安装更高版本的 GhostSlacking。" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <netfx:DotNetCompatibilityCheck
+      Property="DOTNETRUNTIMECHECK"
+      RuntimeType="core"
+      Platform="x64"
+      Version="8.0.0"
+      RollForward="latestPatch" />
+    <Launch
+      Condition="Installed OR DOTNETRUNTIMECHECK = 0"
+      Message="GhostSlacking 需要安装 .NET 8 Runtime x64（不是 Desktop Runtime）。请先访问 https://aka.ms/dotnet/8.0/runtime-win-x64.exe 安装后重试。" />
 
     <Icon Id="GhostSlacking.exe" SourceFile="$(PublishDirectory)\GhostSlacking.App.exe" />
     <Property Id="ARPPRODUCTICON" Value="GhostSlacking.exe" />

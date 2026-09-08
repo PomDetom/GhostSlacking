@@ -1,3 +1,5 @@
+using Avalonia;
+using Avalonia.Controls;
 using System.Threading;
 
 namespace GhostSlacking.App;
@@ -5,7 +7,7 @@ namespace GhostSlacking.App;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         using var mutex = new Mutex(true, "Local\\GhostSlacking.SingleInstance", out var created);
         if (!created)
@@ -13,11 +15,6 @@ internal static class Program
             return;
         }
 
-        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        Application.ThreadException += (_, args) => MessageBox.Show(
-            $"发生未预期的界面错误：{args.Exception.Message}", "GhostSlacking", MessageBoxButtons.OK, MessageBoxIcon.Error);
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
         {
             if (args.ExceptionObject is Exception exception)
@@ -26,6 +23,11 @@ internal static class Program
             }
         };
 
-        Application.Run(new GhostApplicationContext());
+        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnExplicitShutdown);
     }
+
+    internal static AppBuilder BuildAvaloniaApp() =>
+        AppBuilder.Configure<GhostSlackingApplication>()
+            .UseWin32()
+            .UseSkia();
 }

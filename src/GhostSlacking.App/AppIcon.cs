@@ -1,46 +1,29 @@
-using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 
 namespace GhostSlacking.App;
 
 internal static class AppIcon
 {
-    public static Icon Instance { get; } = CreateIcon();
+    private static readonly Lazy<WindowIcon> Icon = new(CreateIcon);
 
-    private static Icon CreateIcon()
+    public static WindowIcon Instance => Icon.Value;
+
+    private static WindowIcon CreateIcon()
     {
-        using var bitmap = new Bitmap(64, 64);
-        using var graphics = Graphics.FromImage(bitmap);
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.Clear(Color.Transparent);
-
-        using var background = new SolidBrush(Color.FromArgb(28, 178, 165));
-        using var silhouette = new GraphicsPath();
-        silhouette.AddArc(8, 6, 48, 48, 180, 180);
-        silhouette.AddLine(56, 30, 56, 52);
-        silhouette.AddBezier(56, 52, 52, 58, 47, 50, 42, 54);
-        silhouette.AddBezier(42, 54, 37, 59, 32, 50, 27, 54);
-        silhouette.AddBezier(27, 54, 22, 59, 17, 50, 8, 54);
-        silhouette.CloseFigure();
-        graphics.FillPath(background, silhouette);
-
-        using var eye = new SolidBrush(Color.White);
-        graphics.FillEllipse(eye, 22, 25, 7, 9);
-        graphics.FillEllipse(eye, 38, 25, 7, 9);
-
-        var handle = bitmap.GetHicon();
-        try
+        var bitmap = new RenderTargetBitmap(new PixelSize(64, 64), new Vector(96, 96));
+        using (var drawing = bitmap.CreateDrawingContext())
         {
-            using var temporary = Icon.FromHandle(handle);
-            return (Icon)temporary.Clone();
+            var silhouette = Geometry.Parse(
+                "M 8,54 L 8,30 A 24,24 0 0 1 56,30 L 56,52 " +
+                "C 52,58 47,50 42,54 C 37,59 32,50 27,54 C 22,59 17,50 8,54 Z");
+            drawing.DrawGeometry(Brush.Parse("#1CB2A5"), null, silhouette);
+            drawing.DrawEllipse(Brushes.White, null, new Rect(22, 25, 7, 9));
+            drawing.DrawEllipse(Brushes.White, null, new Rect(38, 25, 7, 9));
         }
-        finally
-        {
-            DestroyIcon(handle);
-        }
+
+        return new WindowIcon(bitmap);
     }
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DestroyIcon(nint handle);
 }

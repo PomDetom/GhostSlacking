@@ -2,7 +2,7 @@
 
 > 版本：V0.1 设计基线  
 > 平台：Windows 10/11  x64  
-> 技术路线：C# + .NET + WinForms 托盘宿主 + Avalonia 设置 UI + Win32 P/Invoke
+> 技术路线：C# + .NET + Avalonia/FluentAvalonia UI + Win32 P/Invoke
 > 渲染路线：`SetWindowRgn` 内容裁剪 + 非抓屏 Windows Composition 外扩羽化
 
 ## 1. 文档目的
@@ -67,7 +67,7 @@ V0.1 不包含：
 ```text
 ┌──────────────────────┐       Win32 User/GDI/DWM API       ┌─────────────────────┐
 │   GhostSlacking.exe  │ ─────────────────────────────────> │ Windows 桌面窗口系统 │
-│  WinForms Tray Host  │                                    └─────────┬───────────┘
+│ Avalonia Tray Host   │                                    └─────────┬───────────┘
 └─────────┬────────────┘                                              │
           │                                                           │ HWND
           │ 用户输入                                                   ▼
@@ -89,7 +89,7 @@ V0.1 不包含：
 
 ```text
 src/
-  GhostSlacking.App/          WinForms 托盘/消息循环、Avalonia 设置 UI
+  GhostSlacking.App/          Avalonia 托盘、生命周期、设置和提示 UI
   GhostSlacking.Core/         状态机、领域模型、服务接口
   GhostSlacking.Platform/     Win32 P/Invoke 和 Windows 适配器
   GhostSlacking.Watchdog/     Phase 2 最小异常恢复进程
@@ -111,7 +111,7 @@ App ───────────────► Core ───────�
 Watchdog ───────────► Platform/Recovery 协议
 ```
 
-`Core` 不引用 WinForms；`Platform` 实现 `Core` 定义的接口；`App` 负责组合依赖、托盘菜单、消息循环和用户反馈。
+`Core` 不引用 UI 框架；`Platform` 实现 `Core` 定义的接口并承载无界面的 Win32 HWND；`App` 负责组合依赖、Avalonia 托盘菜单、消息循环和用户反馈。
 
 ## 6. 核心领域模型
 
@@ -253,7 +253,7 @@ SetWindowRgn(hwnd, region, true)
 
 ### 7.7 `TrayHost` 与设置 UI
 
-`NotifyIcon` 承载常驻入口。托盘菜单至少包含：
+Avalonia `TrayIcon` 承载常驻入口。托盘菜单至少包含：
 
 ```text
 Pick Window
@@ -264,7 +264,7 @@ Settings
 Exit
 ```
 
-设置窗口使用 Avalonia + FluentAvalonia 控件，暴露 Peek Key、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。Avalonia 在独立 STA UI 线程运行，设置保存同步封送回 WinForms 托盘线程；主业务状态不存放在窗口控件中。
+设置窗口使用 Avalonia + FluentAvalonia 控件，暴露 Peek Key、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。托盘、设置、提示浮层和主业务协调器运行在同一个 Avalonia STA UI 线程；主业务状态不存放在窗口控件中。
 
 ### 7.8 `Watchdog`
 
@@ -339,14 +339,14 @@ V0.1 预计使用：
 | `SetWindowRgn`                          | 应用/清除窗口区域                           |
 | `GetWindowRgn`                          | 读取原始区域信息                            |
 | `Windows.UI.Composition` / Win2D        | 绘制鼠标穿透的实时背景模糊和羽化遮罩                  |
-| `CreateDispatcherQueueController`       | 为 WinForms UI 线程建立 Composition 调度队列 |
+| `CreateDispatcherQueueController`       | 为 Avalonia UI 线程建立 Composition 调度队列 |
 | `RegisterHotKey`                        | 注册全局组合快捷键                           |
 | `UnregisterHotKey`                      | 注销快捷键                               |
 | `GetWindowLongPtr` / `SetWindowLongPtr` | 读取/恢复必要 style                       |
 | `ShowWindow`                            | 必要时隐藏/恢复显示状态                        |
 | `GetLastError`                          | 获取失败原因                              |
 
-消息循环通过 WinForms 主线程承载 `WM_HOTKEY` 和定时器回调。P/Invoke 声明应集中在 `Win32NativeMethods`，返回值统一封装为可诊断的结果类型。
+消息循环通过 Avalonia 主线程承载 `WM_HOTKEY` 和定时器回调。P/Invoke 声明应集中在 `Win32NativeMethods`，返回值统一封装为可诊断的结果类型。
 
 ### 9.2 GDI region API
 
@@ -484,10 +484,10 @@ RestoreAll()
   ↓
 写入退出日志
   ↓
-退出 WinForms 消息循环
+退出 Avalonia 消息循环
 ```
 
-`Application.ThreadException`、`AppDomain.UnhandledException`、进程退出事件只能作为尽力而为的最后防线，不能代替 Watchdog。
+`Dispatcher.UIThread.UnhandledException`、`AppDomain.UnhandledException`、进程退出事件只能作为尽力而为的最后防线，不能代替 Watchdog。
 
 ### 14.2 Watchdog 恢复协议
 
@@ -517,7 +517,7 @@ ShutdownCompleted
 
 ### 15.1 进程 DPI 设置
 
-进程应声明 `Per Monitor DPI Aware V2`，避免不同显示器缩放比例下出现虚拟化坐标。WinForms 窗体和 Win32 屏幕坐标的职责要分开。
+进程应声明 `Per Monitor DPI Aware V2`，避免不同显示器缩放比例下出现虚拟化坐标。Avalonia DIP 和 Win32 屏幕物理像素的职责要分开。
 
 ### 15.2 坐标约定
 
@@ -530,7 +530,7 @@ cursor - windowRect.TopLeft    目标窗口本地坐标
 CreateEllipticRgn()             region 本地坐标
 ```
 
-严禁在核心计算中混用 WinForms 的逻辑像素、WPF DIP 或未经标注的缩放值。
+严禁在核心计算中混用 Avalonia DIP、Win32 物理像素或未经标注的缩放值。
 
 ### 15.3 测试组合
 
@@ -665,7 +665,7 @@ V1.x  Windows Composition Backdrop  外扩实时模糊、透明羽化、硬边�
 架构在进入 Phase 1 前应满足：
 
 - 能用一个小型技术 Spike 验证目标窗口的 region 应用、跟随和恢复；
-- 核心状态机可以在不启动 WinForms 的情况下测试；
+- 核心状态机可以在不启动 Avalonia 的情况下测试；
 - 所有原生资源有明确的拥有者和释放路径；
 - 目标窗口身份至少绑定 HWND + PID，恢复流程可拒绝不匹配对象；
 - DPI、多显示器和权限边界已写入测试矩阵；

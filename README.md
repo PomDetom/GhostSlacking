@@ -22,7 +22,7 @@ dotnet run --project src/GhostSlacking.App --configuration Debug
 .\installer\build-installer.ps1
 ```
 
-输出文件为 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。安装时会显示标准 UAC 提示，默认安装到 `%ProgramFiles%\GhostSlacking`，并创建开始菜单快捷方式；应用启动后仍以普通用户权限运行。指定版本可运行 `.\installer\build-installer.ps1 -Version 0.2.0`；版本必须使用三段数字且升级时递增。
+输出文件为 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。安装包不包含 .NET；目标机器需要预先安装普通 [.NET 8 Runtime x64](https://aka.ms/dotnet/8.0/runtime-win-x64.exe)，不需要 Desktop Runtime。安装时会显示标准 UAC 提示，默认安装到 `%ProgramFiles%\GhostSlacking`，并创建开始菜单快捷方式；应用启动后仍以普通用户权限运行。指定版本可运行 `.\installer\build-installer.ps1 -Version 0.2.0`；版本必须使用三段数字且升级时递增。
 
 默认快捷键（全部可在设置中修改）：
 
@@ -40,4 +40,4 @@ dotnet run --project src/GhostSlacking.App --configuration Debug
 
 独立 `GhostSlacking.Watchdog` 进程通过当前用户本地命名管道接收版本化心跳和恢复清单。主进程意外停止心跳时，Watchdog 只恢复 HWND、PID 与进程启动身份均匹配的登记目标；正常退出会清除最后清单。
 
-选择窗口、选择成功和运行错误优先通过 Windows 系统通知反馈，无需打开设置窗口；管理员模式或运行环境不支持 App SDK 通知时回退到托盘气泡。设置保存提示仍显示在设置页内；用户或组策略明确禁用通知时只写入日志，不通过回退绕过系统设置。
+选择窗口、选择成功和运行错误通过 Avalonia 非激活提示浮层反馈，无需打开设置窗口；连续提示会替换上一条并在 2.5 秒后隐藏。设置保存结果仍通过 FluentAvalonia `InfoBar` 显示在设置页内。

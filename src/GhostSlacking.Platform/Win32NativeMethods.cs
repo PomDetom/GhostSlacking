@@ -26,6 +26,9 @@ internal static class Win32NativeMethods
     internal const int WH_KEYBOARD_LL = 13;
     internal const int WH_MOUSE_LL = 14;
     internal const int WM_HOTKEY = 0x0312;
+    internal const int WM_ERASEBKGND = 0x0014;
+    internal const int WM_NCHITTEST = 0x0084;
+    internal const int HTTRANSPARENT = -1;
     internal const int WM_LBUTTONDOWN = 0x0201;
     internal const int WM_KEYDOWN = 0x0100;
     internal const int WM_KEYUP = 0x0101;
@@ -37,6 +40,12 @@ internal static class Win32NativeMethods
     internal const uint RDW_FRAME = 0x0400;
     internal const int ERRORREGION = 0;
     internal const int NULLREGION = 1;
+    internal const int RGN_DIFF = 4;
+    internal const int ERROR_CLASS_ALREADY_EXISTS = 1410;
+    internal const uint WS_POPUP = 0x80000000;
+    internal const uint WS_EX_TRANSPARENT = 0x00000020;
+    internal const uint WS_EX_NOREDIRECTIONBITMAP = 0x00200000;
+    internal const uint WS_EX_NOACTIVATE = 0x08000000;
     internal const uint SWP_NOSIZE = 0x0001;
     internal const uint SWP_NOMOVE = 0x0002;
     internal const uint SWP_NOZORDER = 0x0004;
@@ -59,6 +68,7 @@ internal static class Win32NativeMethods
     internal const int DWM_COLOR_NONE = -2;
     internal static readonly nint HWND_TOPMOST = -1;
     internal static readonly nint HWND_NOTOPMOST = -2;
+    internal static readonly nint HWND_MESSAGE = -3;
     internal const int DWM_SYSTEMBACKDROP_AUTO = 0;
     internal const int DWM_SYSTEMBACKDROP_NONE = 1;
 
@@ -110,6 +120,24 @@ internal static class Win32NativeMethods
     }
 
     internal delegate nint HookProc(int nCode, nint wParam, nint lParam);
+    internal delegate nint WindowProc(nint hwnd, uint message, nint wParam, nint lParam);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct WNDCLASSEX
+    {
+        public uint Size;
+        public uint Style;
+        public WindowProc WindowProcedure;
+        public int ClassExtraBytes;
+        public int WindowExtraBytes;
+        public nint Instance;
+        public nint Icon;
+        public nint Cursor;
+        public nint BackgroundBrush;
+        public string? MenuName;
+        public string ClassName;
+        public nint SmallIcon;
+    }
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint WindowFromPoint(POINT point);
@@ -178,6 +206,9 @@ internal static class Win32NativeMethods
     internal static extern nint CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
 
     [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern int CombineRgn(nint destination, nint source1, nint source2, int mode);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
     internal static extern int GetRegionData(nint region, uint count, nint regionData);
 
     [DllImport("gdi32.dll", SetLastError = true)]
@@ -228,6 +259,31 @@ internal static class Win32NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern ushort RegisterClassEx(ref WNDCLASSEX windowClass);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint CreateWindowEx(
+        uint extendedStyle,
+        string className,
+        string windowName,
+        uint style,
+        int x,
+        int y,
+        int width,
+        int height,
+        nint parent,
+        nint menu,
+        nint instance,
+        nint parameter);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DestroyWindow(nint hwnd);
+
+    [DllImport("user32.dll")]
+    internal static extern nint DefWindowProc(nint hwnd, uint message, nint wParam, nint lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint SetWindowsHookEx(int idHook, HookProc callback, nint moduleHandle, uint threadId);

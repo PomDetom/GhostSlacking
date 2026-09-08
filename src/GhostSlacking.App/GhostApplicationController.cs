@@ -1,9 +1,13 @@
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
+using System.Drawing;
 using GhostSlacking.Core;
 using GhostSlacking.Platform;
 
 namespace GhostSlacking.App;
 
-internal sealed class GhostApplicationContext : ApplicationContext
+internal sealed class GhostApplicationController : IDisposable
 {
     private const int WindowVisibilityHotkey = 1;
     private const int RestoreHotkey = 2;
@@ -14,6 +18,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
     private const int DiameterIncreaseHotkey = 7;
     private const int DiameterDecreaseHotkey = 8;
     private readonly FileLogger _logger;
+    private readonly IClassicDesktopStyleApplicationLifetime _lifetime;
     private readonly IUserNotificationService _notifications;
     private readonly SettingsStore _settingsStore;
     private readonly Win32WindowApi _windows;
@@ -21,42 +26,43 @@ internal sealed class GhostApplicationContext : ApplicationContext
     private readonly GhostCoordinator _coordinator;
     private readonly IWatchdogClient? _watchdog;
     private readonly Win32WindowPicker _picker;
-    private readonly MessageWindow _messageWindow;
+    private readonly Win32MessageWindow _messageWindow;
     private readonly Win32HotkeyManager _hotkeys;
     private readonly LowLevelMouseHook _mouseHook;
     private readonly LowLevelKeyboardHook _keyboardHook;
-    private readonly System.Windows.Forms.Timer _timer;
-    private readonly NotifyIcon _notifyIcon;
+    private readonly DispatcherTimer _timer;
+    private readonly TrayIcon _trayIcon;
     private readonly RevealEdgeOverlay _revealOverlay;
-    private readonly ToolStripMenuItem _statusItem;
-    private readonly ToolStripMenuItem _pickItem;
-    private readonly ToolStripMenuItem _toggleItem;
-    private readonly ToolStripMenuItem _settingsItem;
-    private readonly ToolStripMenuItem _exitItem;
-    private readonly ToolStripMenuItem _restoreItem;
-    private readonly ToolStripMenuItem _restoreAllItem;
+    private readonly NativeMenuItem _statusItem;
+    private readonly NativeMenuItem _pickItem;
+    private readonly NativeMenuItem _toggleItem;
+    private readonly NativeMenuItem _settingsItem;
+    private readonly NativeMenuItem _exitItem;
+    private readonly NativeMenuItem _restoreItem;
+    private readonly NativeMenuItem _restoreAllItem;
     private AppSettings _settings;
     private bool _pickerActive;
     private readonly PickerEscapeGate _pickerEscapeGate = new();
     private bool _peekDown;
     private bool _isExiting;
     private readonly PeekStateTracker _peekState = new();
-    private readonly SettingsWindowHost _settingsHost;
-    private bool _settingsOpen;
+    private readonly TrayDoubleClickDetector _trayDoubleClick = new(TimeSpan.FromMilliseconds(500));
+    private SettingsWindow? _settingsWindow;
+    private bool _disposed;
 
-    public GhostApplicationContext()
+    public GhostApplicationController(IClassicDesktopStyleApplicationLifetime lifetime)
     {
+        _lifetime = lifetime;
         _settingsStore = new SettingsStore();
         _settings = _settingsStore.Load();
         _logger = new FileLogger(_settings);
-        _settingsHost = new SettingsWindowHost(_logger);
         _windows = new Win32WindowApi();
         _revealOverlay = new RevealEdgeOverlay(_logger);
         var backend = new Win32VisibilityBackend(_logger);
         _recovery = new RecoveryManager(_windows, backend, _logger);
         var visibility = new VisibilityEngine(backend, _logger);
         _coordinator = new GhostCoordinator(_windows, _recovery, visibility, _logger, _revealOverlay);
-        _messageWindow = new MessageWindow();
+        _messageWindow = new Win32MessageWindow();
         _messageWindow.HotkeyPressed += OnHotkeyPressed;
         _hotkeys = new Win32HotkeyManager(_messageWindow.Handle);
         _mouseHook = new LowLevelMouseHook();
@@ -65,33 +71,38 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _keyboardHook.KeyStateChanged += OnPickerKeyStateChanged;
         _picker = new Win32WindowPicker((uint)Environment.ProcessId, () => [_messageWindow.Handle]);
 
-        _statusItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "status")) { Enabled = false };
-        _restoreItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "restore"), null, (_, _) => RestoreCurrent("tray"));
-        _restoreAllItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "restoreAll"), null, (_, _) => RestoreAll("tray"));
-        var menu = new ContextMenuStrip();
-        menu.Items.Add(_statusItem);
-        menu.Items.Add(new ToolStripSeparator());
-        _pickItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "pick"), null, (_, _) => BeginPicking());
-        _toggleItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "toggle"), null, (_, _) => ToggleWindowVisibility());
-        _settingsItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "settings"), null, (_, _) => OpenSettings());
-        _exitItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "exit"), null, (_, _) => ExitApplication());
-        menu.Items.Add(_pickItem);
-        menu.Items.Add(_toggleItem);
-        menu.Items.Add(_restoreItem);
-        menu.Items.Add(_restoreAllItem);
-        menu.Items.Add(_settingsItem);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(_exitItem);
+        _statusItem = CreateMenuItem(UiText.Text(_settings.Language, "status"), null, false);
+        _restoreItem = CreateMenuItem(UiText.Text(_settings.Language, "restore"), () => RestoreCurrent("tray"));
+        _restoreAllItem = CreateMenuItem(UiText.Text(_settings.Language, "restoreAll"), () => RestoreAll("tray"));
+        _pickItem = CreateMenuItem(UiText.Text(_settings.Language, "pick"), BeginPicking);
+        _toggleItem = CreateMenuItem(UiText.Text(_settings.Language, "toggle"), ToggleWindowVisibility);
+        _settingsItem = CreateMenuItem(UiText.Text(_settings.Language, "settings"), OpenSettings);
+        _exitItem = CreateMenuItem(UiText.Text(_settings.Language, "exit"), ExitApplication);
+        var menu = new NativeMenu
+        {
+            Items =
+            {
+                _statusItem,
+                new NativeMenuItemSeparator(),
+                _pickItem,
+                _toggleItem,
+                _restoreItem,
+                _restoreAllItem,
+                _settingsItem,
+                new NativeMenuItemSeparator(),
+                _exitItem
+            }
+        };
 
-        _notifyIcon = new NotifyIcon
+        _trayIcon = new TrayIcon
         {
             Icon = AppIcon.Instance,
-            Text = $"GhostSlacking - {UiText.State(_settings.Language, GhostState.Idle)}",
-            Visible = true,
-            ContextMenuStrip = menu
+            ToolTipText = $"GhostSlacking - {UiText.State(_settings.Language, GhostState.Idle)}",
+            IsVisible = true,
+            Menu = menu
         };
-        _notifyIcon.DoubleClick += (_, _) => BeginPicking();
-        _notifications = WindowsAppNotificationService.Create(_notifyIcon, _logger);
+        _trayIcon.Clicked += OnTrayIconClicked;
+        _notifications = new AvaloniaNotificationService(_windows.GetCursorPosition, _logger);
 
         _coordinator.StateChanged += (_, _) => UpdateTrayStatus();
         _coordinator.UserError += (_, message) => ShowError(message);
@@ -100,7 +111,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _recovery.ProfilesChanged += OnRecoveryProfilesChanged;
         PublishRecoveryManifest();
 
-        _timer = new System.Windows.Forms.Timer { Interval = 33 };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _timer.Tick += (_, _) =>
         {
             _peekDown = _peekState.Update(_windows.IsKeyDown(_settings.PeekVirtualKey), _settings.PeekTrigger);
@@ -109,8 +120,26 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _timer.Start();
 
         RegisterHotkeys();
-        Application.ApplicationExit += OnApplicationExit;
         UpdateTrayStatus();
+    }
+
+    private static NativeMenuItem CreateMenuItem(string header, Action? action, bool enabled = true)
+    {
+        var item = new NativeMenuItem(header) { IsEnabled = enabled };
+        if (action is not null)
+        {
+            item.Click += (_, _) => action();
+        }
+
+        return item;
+    }
+
+    private void OnTrayIconClicked(object? sender, EventArgs args)
+    {
+        if (_trayDoubleClick.RegisterClick(DateTimeOffset.UtcNow))
+        {
+            BeginPicking();
+        }
     }
 
     private void RegisterHotkeys()
@@ -238,7 +267,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
     private void OnPickerClick(object? sender, MouseButtonEventArgs args)
     {
-        _messageWindow.Post(() => FinishPicking(args.ScreenPoint));
+        Dispatcher.UIThread.Post(() => FinishPicking(args.ScreenPoint));
     }
 
     private void OnPickerKeyStateChanged(object? sender, KeyStateChangedEventArgs args)
@@ -252,11 +281,11 @@ internal sealed class GhostApplicationContext : ApplicationContext
         args.Handled = true;
         if (decision.CancelPicking)
         {
-            _messageWindow.Post(() => CancelPicking(waitForEscapeRelease: true));
+            Dispatcher.UIThread.Post(() => CancelPicking(waitForEscapeRelease: true));
         }
         else if (decision.ReleaseKeyboardHook)
         {
-            _messageWindow.Post(_keyboardHook.Stop);
+            Dispatcher.UIThread.Post(_keyboardHook.Stop);
         }
     }
 
@@ -340,30 +369,44 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
     private void OpenSettings()
     {
-        if (_settingsOpen)
+        if (_settingsWindow is not null)
         {
-            _settingsHost.Activate();
+            if (_settingsWindow.WindowState == WindowState.Minimized)
+            {
+                _settingsWindow.WindowState = WindowState.Normal;
+            }
+
+            _settingsWindow.Activate();
             return;
         }
 
         _hotkeys.UnregisterAll();
-        _settingsOpen = true;
-        if (!_settingsHost.Show(
-                _settings,
-                updated => _messageWindow.Invoke(() => SaveSettings(updated)),
-                exception => _messageWindow.Post(() => OnSettingsClosed(exception))))
+        try
         {
-            OnSettingsClosed(new InvalidOperationException("The Avalonia settings host could not be started."));
+            var window = new SettingsWindow(_settings, SaveSettings);
+            _settingsWindow = window;
+            window.Closed += OnSettingsClosed;
+            window.Show();
+            window.Activate();
+        }
+        catch (Exception exception)
+        {
+            _settingsWindow = null;
+            _logger.Log(LogLevel.Error, "The Avalonia settings window could not be shown.", exception);
+            ShowError(string.Format(UiText.Text(_settings.Language, "unexpected"), exception.Message));
+            if (!_isExiting)
+            {
+                RegisterHotkeys();
+            }
         }
     }
 
-    private void OnSettingsClosed(Exception? exception)
+    private void OnSettingsClosed(object? sender, EventArgs args)
     {
-        _settingsOpen = false;
-        if (exception is not null)
+        if (_settingsWindow is not null)
         {
-            _logger.Log(LogLevel.Error, "The Avalonia settings window closed unexpectedly.", exception);
-            ShowError(string.Format(UiText.Text(_settings.Language, "unexpected"), exception.Message));
+            _settingsWindow.Closed -= OnSettingsClosed;
+            _settingsWindow = null;
         }
 
         if (!_isExiting)
@@ -432,17 +475,17 @@ internal sealed class GhostApplicationContext : ApplicationContext
         var profile = _coordinator.CurrentProfile;
         var target = profile?.Original.ProcessName ?? "none";
         var text = string.Format(UiText.Text(_settings.Language, "status"), UiText.State(_settings.Language, _coordinator.State), target);
-        _statusItem.Text = text;
-        _pickItem.Text = UiText.Text(_settings.Language, "pick");
-        _toggleItem.Text = UiText.Text(_settings.Language, "toggle");
-        _restoreItem.Text = UiText.Text(_settings.Language, "restore");
-        _restoreAllItem.Text = UiText.Text(_settings.Language, "restoreAll");
-        _settingsItem.Text = UiText.Text(_settings.Language, "settings");
-        _exitItem.Text = UiText.Text(_settings.Language, "exit");
-        _restoreItem.Enabled = profile is not null;
-        _restoreAllItem.Enabled = profile is not null;
-        _toggleItem.Enabled = profile is not null;
-        _notifyIcon.Text = $"GhostSlacking - {UiText.State(_settings.Language, _coordinator.State)}";
+        _statusItem.Header = text;
+        _pickItem.Header = UiText.Text(_settings.Language, "pick");
+        _toggleItem.Header = UiText.Text(_settings.Language, "toggle");
+        _restoreItem.Header = UiText.Text(_settings.Language, "restore");
+        _restoreAllItem.Header = UiText.Text(_settings.Language, "restoreAll");
+        _settingsItem.Header = UiText.Text(_settings.Language, "settings");
+        _exitItem.Header = UiText.Text(_settings.Language, "exit");
+        _restoreItem.IsEnabled = profile is not null;
+        _restoreAllItem.IsEnabled = profile is not null;
+        _toggleItem.IsEnabled = profile is not null;
+        _trayIcon.ToolTipText = $"GhostSlacking - {UiText.State(_settings.Language, _coordinator.State)}";
     }
 
     private void ShowError(string message)
@@ -465,6 +508,12 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _notifications.Show(message, UserNotificationSeverity.Info);
     }
 
+    internal void ReportUnhandledException(Exception exception)
+    {
+        _logger.Log(LogLevel.Error, "An unexpected Avalonia UI error occurred.", exception);
+        ShowError(string.Format(UiText.Text(_settings.Language, "unexpected"), exception.Message));
+    }
+
     private void ExitApplication()
     {
         if (_isExiting)
@@ -473,11 +522,19 @@ internal sealed class GhostApplicationContext : ApplicationContext
         }
 
         _isExiting = true;
-        ExitThread();
+        Dispose();
+        _lifetime.Shutdown();
     }
 
-    private void OnApplicationExit(object? sender, EventArgs args)
+    public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _isExiting = true;
         CancelPicking();
         RestoreReport? restoreReport = null;
         if (_settings.RestoreOnExit)
@@ -500,14 +557,21 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _hotkeys.Dispose();
         _timer.Stop();
         _revealOverlay.Dispose();
-        _settingsHost.Dispose();
+        if (_settingsWindow is not null)
+        {
+            _settingsWindow.Closed -= OnSettingsClosed;
+            _settingsWindow.Close();
+            _settingsWindow = null;
+        }
+
         _notifications.Dispose();
-        _notifyIcon.Visible = false;
-        _notifyIcon.Dispose();
+        _trayIcon.Clicked -= OnTrayIconClicked;
+        _trayIcon.IsVisible = false;
+        _trayIcon.Dispose();
         _messageWindow.Dispose();
         _logger.Log(LogLevel.Info, "Application exited.");
         _logger.Dispose();
-        Application.ApplicationExit -= OnApplicationExit;
+        GC.SuppressFinalize(this);
     }
 
     private IWatchdogClient? TryStartWatchdog()
@@ -550,50 +614,4 @@ internal sealed class GhostApplicationContext : ApplicationContext
         }
     }
 
-    private sealed class MessageWindow : NativeWindow, IDisposable
-    {
-        public MessageWindow()
-        {
-            _invoker.CreateControl();
-            CreateHandle(new CreateParams { Caption = "GhostSlacking.MessageWindow" });
-        }
-
-        private readonly Control _invoker = new();
-        public event Action<int>? HotkeyPressed;
-
-        public void Post(Action action)
-        {
-            if (_invoker.IsHandleCreated)
-            {
-                _invoker.BeginInvoke(action);
-            }
-        }
-
-        public T Invoke<T>(Func<T> action)
-        {
-            if (!_invoker.IsHandleCreated)
-            {
-                throw new ObjectDisposedException(nameof(MessageWindow));
-            }
-
-            return (T)_invoker.Invoke(action);
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            if (m.Msg == 0x0312)
-            {
-                HotkeyPressed?.Invoke(m.WParam.ToInt32());
-            }
-
-            base.WndProc(ref m);
-        }
-
-        public void Dispose()
-        {
-            DestroyHandle();
-            _invoker.Dispose();
-            GC.SuppressFinalize(this);
-        }
-    }
 }

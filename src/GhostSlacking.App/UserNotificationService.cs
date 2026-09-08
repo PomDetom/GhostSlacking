@@ -1,7 +1,10 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Media;
+using Avalonia.Threading;
+using FluentAvalonia.UI.Controls;
 using GhostSlacking.Core;
-using Microsoft.Windows.ApplicationModel.DynamicDependency;
-using Microsoft.Windows.AppNotifications;
-using Microsoft.Windows.AppNotifications.Builder;
+using DrawingPoint = System.Drawing.Point;
 
 namespace GhostSlacking.App;
 
@@ -11,72 +14,57 @@ internal enum UserNotificationSeverity
     Error
 }
 
-internal readonly record struct UserNotificationRequest(
-    string Message,
-    UserNotificationSeverity Severity,
-    string Tag,
-    string Group,
-    DateTimeOffset Expiration);
-
 internal interface IUserNotificationService : IDisposable
 {
     void Show(string message, UserNotificationSeverity severity);
 }
 
-internal interface IUserNotificationFallback
+internal readonly record struct TransientNotification(
+    string Message,
+    UserNotificationSeverity Severity,
+    DateTimeOffset ExpiresAt);
+
+internal sealed class TransientNotificationState(TimeSpan duration)
 {
-    void Show(string message, UserNotificationSeverity severity);
+    public TransientNotification? Current { get; private set; }
+
+    public void Show(string message, UserNotificationSeverity severity, DateTimeOffset now)
+    {
+        Current = new TransientNotification(message, severity, now.Add(duration));
+    }
+
+    public bool Expire(DateTimeOffset now)
+    {
+        if (Current is null || now < Current.Value.ExpiresAt)
+        {
+            return false;
+        }
+
+        Current = null;
+        return true;
+    }
 }
 
-internal interface IWindowsAppNotificationBackend : IDisposable
+internal sealed class AvaloniaNotificationService : IUserNotificationService
 {
-    bool TryInitialize(out string failureReason);
-    bool CanShow(out string setting);
-    void Show(UserNotificationRequest request);
-}
+    internal static readonly TimeSpan DisplayDuration = TimeSpan.FromMilliseconds(2500);
+    private const double WindowWidth = 360;
+    private const double WindowHeight = 116;
+    private const int ScreenMarginPx = 16;
 
-internal sealed class WindowsAppNotificationService : IUserNotificationService
-{
-    internal const string TransientTag = "ghostslacking-transient";
-    internal const string TransientGroup = "runtime";
-    internal static readonly TimeSpan Expiration = TimeSpan.FromSeconds(30);
-
-    private readonly IWindowsAppNotificationBackend _backend;
-    private readonly IUserNotificationFallback _fallback;
+    private readonly Func<DrawingPoint> _getCursorPosition;
     private readonly ILogger _logger;
-    private bool _initialized;
+    private readonly DispatcherTimer _timer;
+    private readonly TransientNotificationState _state = new(DisplayDuration);
+    private NotificationWindow? _window;
     private bool _disposed;
-    private string? _lastPrimaryFailure;
-    private string? _lastFallbackFailure;
 
-    private WindowsAppNotificationService(
-        IWindowsAppNotificationBackend backend,
-        IUserNotificationFallback fallback,
-        ILogger logger)
+    public AvaloniaNotificationService(Func<DrawingPoint> getCursorPosition, ILogger logger)
     {
-        _backend = backend;
-        _fallback = fallback;
+        _getCursorPosition = getCursorPosition;
         _logger = logger;
-    }
-
-    public static WindowsAppNotificationService Create(NotifyIcon notifyIcon, ILogger logger)
-    {
-        var service = new WindowsAppNotificationService(
-            new WindowsAppNotificationBackend(),
-            new NotifyIconNotificationFallback(notifyIcon),
-            logger);
-        service.Initialize();
-        return service;
-    }
-
-    internal static WindowsAppNotificationService CreateForTesting(
-        IWindowsAppNotificationBackend backend,
-        IUserNotificationFallback fallback,
-        ILogger logger)
-    {
-        var service = new WindowsAppNotificationService(backend, fallback, logger);
-        service.Initialize();
-        return service;
+        _timer = new DispatcherTimer { Interval = DisplayDuration };
+        _timer.Tick += OnTimerTick;
     }
 
     public void Show(string message, UserNotificationSeverity severity)
@@ -86,35 +74,57 @@ internal sealed class WindowsAppNotificationService : IUserNotificationService
             return;
         }
 
-        if (!_initialized)
+        if (!Dispatcher.UIThread.CheckAccess())
         {
-            ShowFallback(message, severity);
+            Dispatcher.UIThread.Post(() => Show(message, severity));
             return;
         }
 
         try
         {
-            if (!_backend.CanShow(out var setting))
+            var now = DateTimeOffset.UtcNow;
+            _state.Show(message, severity, now);
+            _window ??= new NotificationWindow();
+            _window.Update(message, severity);
+            PositionWindow(_window, _getCursorPosition());
+            if (!_window.IsVisible)
             {
-                LogPrimaryFailureOnce($"Windows app notifications are disabled: {setting}.");
-                return;
+                _window.Show();
             }
 
-            var request = new UserNotificationRequest(
-                message,
-                severity,
-                TransientTag,
-                TransientGroup,
-                DateTimeOffset.Now.Add(Expiration));
-            _backend.Show(request);
-            _lastPrimaryFailure = null;
-            _logger.Log(LogLevel.Debug, $"WindowsAppNotificationSent severity={severity}");
+            _timer.Stop();
+            _timer.Start();
         }
         catch (Exception exception)
         {
-            LogPrimaryFailureOnce("Windows app notification could not be sent.", exception);
-            ShowFallback(message, severity);
+            _logger.Log(LogLevel.Warning, "Avalonia notification could not be shown.", exception);
         }
+    }
+
+    private static void PositionWindow(Window window, DrawingPoint cursor)
+    {
+        var screen = window.Screens.ScreenFromPoint(new PixelPoint(cursor.X, cursor.Y)) ?? window.Screens.Primary;
+        if (screen is null)
+        {
+            return;
+        }
+
+        var width = (int)Math.Ceiling(WindowWidth * screen.Scaling);
+        var height = (int)Math.Ceiling(WindowHeight * screen.Scaling);
+        window.Position = new PixelPoint(
+            screen.WorkingArea.Right - width - ScreenMarginPx,
+            screen.WorkingArea.Bottom - height - ScreenMarginPx);
+    }
+
+    private void OnTimerTick(object? sender, EventArgs args)
+    {
+        if (!_state.Expire(DateTimeOffset.UtcNow))
+        {
+            return;
+        }
+
+        _timer.Stop();
+        _window?.Hide();
     }
 
     public void Dispose()
@@ -125,195 +135,45 @@ internal sealed class WindowsAppNotificationService : IUserNotificationService
         }
 
         _disposed = true;
-        try
-        {
-            _backend.Dispose();
-        }
-        catch (Exception exception)
-        {
-            _logger.Log(LogLevel.Warning, "Windows app notification resources could not be released cleanly.", exception);
-        }
+        _timer.Stop();
+        _timer.Tick -= OnTimerTick;
+        _window?.Close();
+        _window = null;
+        GC.SuppressFinalize(this);
     }
 
-    private void Initialize()
+    private sealed class NotificationWindow : Window
     {
-        try
+        private readonly InfoBar _infoBar;
+
+        public NotificationWindow()
         {
-            if (_backend.TryInitialize(out var failureReason))
+            Width = WindowWidth;
+            Height = WindowHeight;
+            CanResize = false;
+            ShowActivated = false;
+            ShowInTaskbar = false;
+            Topmost = true;
+            SystemDecorations = SystemDecorations.None;
+            Background = Brushes.Transparent;
+            TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
+            _infoBar = new InfoBar
             {
-                _initialized = true;
-                _logger.Log(LogLevel.Info, "Windows app notifications initialized.");
-                return;
-            }
-
-            LogPrimaryFailureOnce($"Windows app notifications are unavailable: {failureReason}.");
+                Title = "GhostSlacking",
+                IsOpen = true,
+                IsClosable = false,
+                Margin = new Thickness(8)
+            };
+            Content = _infoBar;
         }
-        catch (Exception exception)
+
+        public void Update(string message, UserNotificationSeverity severity)
         {
-            LogPrimaryFailureOnce("Windows app notifications could not be initialized.", exception);
+            _infoBar.Message = message;
+            _infoBar.Severity = severity == UserNotificationSeverity.Error
+                ? InfoBarSeverity.Error
+                : InfoBarSeverity.Informational;
+            _infoBar.IsOpen = true;
         }
-    }
-
-    private void LogPrimaryFailureOnce(string message, Exception? exception = null)
-    {
-        if (string.Equals(_lastPrimaryFailure, message, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        _lastPrimaryFailure = message;
-        _logger.Log(LogLevel.Warning, message, exception);
-    }
-
-    private void ShowFallback(string message, UserNotificationSeverity severity)
-    {
-        try
-        {
-            _fallback.Show(message, severity);
-            _lastFallbackFailure = null;
-            _logger.Log(LogLevel.Debug, $"TrayNotificationSent severity={severity}");
-        }
-        catch (Exception exception)
-        {
-            const string failure = "Tray notification could not be sent.";
-            if (string.Equals(_lastFallbackFailure, failure, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            _lastFallbackFailure = failure;
-            _logger.Log(LogLevel.Warning, failure, exception);
-        }
-    }
-}
-
-internal sealed class NotifyIconNotificationFallback(NotifyIcon notifyIcon) : IUserNotificationFallback
-{
-    private const int DisplayDurationMilliseconds = 2500;
-
-    public void Show(string message, UserNotificationSeverity severity)
-    {
-        var icon = severity == UserNotificationSeverity.Error
-            ? ToolTipIcon.Error
-            : ToolTipIcon.Info;
-        notifyIcon.ShowBalloonTip(DisplayDurationMilliseconds, "GhostSlacking", message, icon);
-    }
-}
-
-internal sealed class WindowsAppNotificationBackend : IWindowsAppNotificationBackend
-{
-    private const uint WindowsAppSdk18 = 0x00010008;
-
-    private AppNotificationManager? _manager;
-    private bool _bootstrapped;
-    private bool _registered;
-    private bool _disposed;
-
-    public bool TryInitialize(out string failureReason)
-    {
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
-        {
-            failureReason = "Windows 10 version 1809 or later is required";
-            return false;
-        }
-
-        if (!Bootstrap.TryInitialize(WindowsAppSdk18, string.Empty, out var hresult))
-        {
-            failureReason = $"Windows App Runtime 1.8 bootstrap failed with HRESULT 0x{hresult:X8}";
-            return false;
-        }
-
-        _bootstrapped = true;
-        if (!AppNotificationManager.IsSupported())
-        {
-            failureReason = "AppNotificationManager is not supported by this Windows environment";
-            return false;
-        }
-
-        _manager = AppNotificationManager.Default;
-        _manager.NotificationInvoked += OnNotificationInvoked;
-        try
-        {
-            _manager.Register();
-            _registered = true;
-            failureReason = string.Empty;
-            return true;
-        }
-        catch
-        {
-            _manager.NotificationInvoked -= OnNotificationInvoked;
-            _manager = null;
-            throw;
-        }
-    }
-
-    public bool CanShow(out string setting)
-    {
-        if (!_registered || _manager is null)
-        {
-            setting = "not registered";
-            return false;
-        }
-
-        var current = _manager.Setting;
-        setting = current.ToString();
-        return current == AppNotificationSetting.Enabled;
-    }
-
-    public void Show(UserNotificationRequest request)
-    {
-        if (!_registered || _manager is null)
-        {
-            throw new InvalidOperationException("Windows app notifications are not registered.");
-        }
-
-        var notification = new AppNotificationBuilder()
-            .AddText(request.Message)
-            .MuteAudio()
-            .SetDuration(AppNotificationDuration.Default)
-            .BuildNotification();
-        notification.Tag = request.Tag;
-        notification.Group = request.Group;
-        notification.Expiration = request.Expiration;
-        _manager.Show(notification);
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-        try
-        {
-            if (_manager is not null)
-            {
-                if (_registered)
-                {
-                    _manager.Unregister();
-                }
-
-                _manager.NotificationInvoked -= OnNotificationInvoked;
-            }
-        }
-        finally
-        {
-            _registered = false;
-            _manager = null;
-            if (_bootstrapped)
-            {
-                Bootstrap.Shutdown();
-                _bootstrapped = false;
-            }
-        }
-    }
-
-    private static void OnNotificationInvoked(
-        AppNotificationManager sender,
-        AppNotificationActivatedEventArgs args)
-    {
-        // Runtime notifications are informational and never open application UI.
     }
 }
