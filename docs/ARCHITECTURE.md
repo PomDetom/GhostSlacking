@@ -3,7 +3,7 @@
 > 版本：V0.1 设计基线  
 > 平台：Windows 10/11  x64  
 > 技术路线：C# + .NET + WinForms + Win32 P/Invoke  
-> V0.1 渲染路线：`SetWindowRgn` 硬边区域裁剪
+> 渲染路线：`SetWindowRgn` 内容裁剪 + 非抓屏 Windows Composition 外扩羽化
 
 ## 1. 文档目的
 
@@ -39,7 +39,7 @@ V0.1 不包含：
 - 多窗口同时 Ghost；
 - 云同步、账户、插件和复杂规则系统；
 - OCR、内容识别、截图录制或远程控制；
-- GPU Shader、软边渐变、模糊和复杂动画；
+- 抓屏、窗口内容复制、GPU Shader 和复杂动画；
 - 对 DirectX 独占窗口、受保护内容或所有管理员窗口的兼容承诺；
 - “防录屏”“防监控”或安全级别的隐私保证；
 - 通过注入、Hook 目标进程或修改目标应用业务逻辑来实现功能。
@@ -136,7 +136,9 @@ WindowSnapshot
 
 RevealSettings
 {
-    int DiameterPx;       // 以物理屏幕像素表达
+    int DiameterPx;       // 默认 144，以物理屏幕像素表达
+    int SoftEdgeWidthPx;  // 默认 16
+    RevealBlurLevel Blur; // 默认 Low
     RevealShape Shape;    // Circle / Rectangle / RoundedRectangle
     PeekTrigger Trigger;  // Hold 或 Toggle
 }
@@ -233,7 +235,7 @@ SetWindowRgn(hwnd, region, true)
 - 区域坐标必须与 `SetWindowRgn` 所要求的窗口本地坐标一致；
 - 成功传给 `SetWindowRgn` 后，region 句柄的所有权由系统接管；失败时才由调用方释放；
 - 旧 region 的更新频率应与光标变化绑定，光标未变时不重复创建；
-- V0.1 是硬边，直径和形状只做最少设置项。
+- `SetWindowRgn` 仍负责可靠的二值裁剪；启用羽化时，目标内容 region 外扩到设置宽度的 70%，独立的鼠标穿透 Composition overlay 在原始清晰 Reveal 外侧实时模糊并淡出，不改变目标窗口输入。
 
 ### 7.6 `RecoveryManager`
 
@@ -262,7 +264,7 @@ Settings
 Exit
 ```
 
-设置窗口保持 WinForms 原生控件，暴露 Peek Key、Reveal Diameter、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。主业务状态不应存放在窗体控件中。
+设置窗口保持 WinForms 原生控件，暴露 Peek Key、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。主业务状态不应存放在窗体控件中。
 
 ### 7.8 `Watchdog`
 
@@ -324,23 +326,25 @@ Restoring ── success ──► Idle
 
 V0.1 预计使用：
 
-| API/消息                                  | 用途            |
-| --------------------------------------- | ------------- |
-| `WindowFromPoint`                       | 根据屏幕点获取窗口     |
-| `GetAncestor`                           | 获取顶层窗口        |
-| `GetWindowRect`                         | 获取屏幕坐标矩形      |
-| `GetClientRect`                         | 辅助检查客户区尺寸     |
-| `IsWindow` / `IsWindowVisible`          | 生命周期和可见性检查    |
-| `IsIconic`                              | 判断最小化         |
-| `GetWindowThreadProcessId`              | 绑定进程身份        |
-| `GetCursorPos`                          | 获取鼠标屏幕坐标      |
-| `SetWindowRgn`                          | 应用/清除窗口区域     |
-| `GetWindowRgn`                          | 读取原始区域信息      |
-| `RegisterHotKey`                        | 注册全局组合快捷键     |
-| `UnregisterHotKey`                      | 注销快捷键         |
-| `GetWindowLongPtr` / `SetWindowLongPtr` | 读取/恢复必要 style |
-| `ShowWindow`                            | 必要时隐藏/恢复显示状态  |
-| `GetLastError`                          | 获取失败原因        |
+| API/消息                                  | 用途                                  |
+| --------------------------------------- | ----------------------------------- |
+| `WindowFromPoint`                       | 根据屏幕点获取窗口                           |
+| `GetAncestor`                           | 获取顶层窗口                              |
+| `GetWindowRect`                         | 获取屏幕坐标矩形                            |
+| `GetClientRect`                         | 辅助检查客户区尺寸                           |
+| `IsWindow` / `IsWindowVisible`          | 生命周期和可见性检查                          |
+| `IsIconic`                              | 判断最小化                               |
+| `GetWindowThreadProcessId`              | 绑定进程身份                              |
+| `GetCursorPos`                          | 获取鼠标屏幕坐标                            |
+| `SetWindowRgn`                          | 应用/清除窗口区域                           |
+| `GetWindowRgn`                          | 读取原始区域信息                            |
+| `Windows.UI.Composition` / Win2D        | 绘制鼠标穿透的实时背景模糊和羽化遮罩                  |
+| `CreateDispatcherQueueController`       | 为 WinForms UI 线程建立 Composition 调度队列 |
+| `RegisterHotKey`                        | 注册全局组合快捷键                           |
+| `UnregisterHotKey`                      | 注销快捷键                               |
+| `GetWindowLongPtr` / `SetWindowLongPtr` | 读取/恢复必要 style                       |
+| `ShowWindow`                            | 必要时隐藏/恢复显示状态                        |
+| `GetLastError`                          | 获取失败原因                              |
 
 消息循环通过 WinForms 主线程承载 `WM_HOTKEY` 和定时器回调。P/Invoke 声明应集中在 `Win32NativeMethods`，返回值统一封装为可诊断的结果类型。
 
@@ -358,7 +362,7 @@ region 句柄封装为 `SafeHandle` 更安全。每次更新都必须有明确�
 
 ### 9.3 关于 `SetWindowRgn` 的边界
 
-`SetWindowRgn` 适合 V0.1，因为它直接裁剪窗口可见区域，不需要截图或目标进程注入。但它有明确限制：
+`SetWindowRgn` 直接裁剪窗口可见区域，不需要截图或目标进程注入。但它有明确限制：
 
 - 边缘是硬切，不支持羽化；
 - 不同应用、自绘窗口和复杂合成内容可能表现不同；
@@ -366,11 +370,15 @@ region 句柄封装为 `SafeHandle` 更安全。每次更新都必须有明确�
 - 目标窗口的原始 region 必须可可靠保存和恢复；
 - 它不等于安全隐私机制，不能承诺阻止所有捕获路径。
 
-这些限制必须在验收和产品文案中明确，而不是在 V0.1 中通过额外技术掩盖。
+当前羽化不替换上述裁剪机制：应用创建一个非激活、无任务栏项的 Composition overlay。原始 Reveal 保持完全清晰，目标内容 region 向外扩展到羽化宽度的 70%；一个 alpha 遮罩驱动一个 `CompositionBackdropBrush`，用用户选择的轻/中/强单一模糊半径从清晰边界平滑渐入，并在外侧 30% 淡出。Overlay 的系统窗口 region 是“外扩轮廓减去清晰核心”的环形区域，因此核心不会参与跨进程命中测试，点击和滚轮直接到达目标窗口。应用不读取或持久化窗口像素；overlay 或图形设备失败时，协调器立即把目标缩回原始硬边 Reveal。
+
+对目标窗口应用 Reveal region 后会立即读取校验。Chrome/Electron 在重绘消息交错时可能瞬时返回无 region，因此单次更新内部最多重施三次；若一整轮仍无法确认，协调器先安全隐藏目标并在下一 tick 重试，而不是立即向用户报错。连续三轮均失败才视为持续故障。
 
 ## 10. Window Picker 细节
 
 Picker 需要避免把 GhostSlacking 自己的提示窗选为目标。推荐以屏幕点为中心按以下顺序处理：
+
+Picker 活跃期间同时安装鼠标与键盘低级钩子；Esc 的按下、自动重复和抬起均由应用拦截，取消流程只执行一次并恢复进入 Picker 前的领域状态。
 
 ```text
 WindowFromPoint
@@ -595,7 +603,7 @@ GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。
 
 - 快捷键定义；
 - Peek Key；
-- Reveal 直径和形状；
+- Reveal 直径、快捷键调整步长、软边宽度和形状；
 - 开机启动、退出恢复和日志级别；
 - 以后版本的 schema version。
 
@@ -631,16 +639,16 @@ V0.1 不持久化窗口内容，也不默认持久化目标 HWND。若未来支�
 
 纯状态机、坐标计算、边界求交、配置校验、恢复计划生成可做自动化测试。真实 HWND 生命周期、DPI、焦点、region 重绘和权限必须通过 Windows 集成/手工测试验证。
 
-## 21. 后续 DirectComposition 演进
+## 21. Composition 羽化与后续演进
 
-V0.1 的 `SetWindowRgn` 是验证产品闭环的最短路径，不是最终视觉上限。后续若硬边和频繁 region 更新成为明显瓶颈，可演进为：
+`SetWindowRgn` 继续承担可恢复的核心裁剪，Windows Composition 只负责原始 Reveal 外侧的非抓屏实时毛玻璃。当前路径为：
 
 ```text
-V0.1  SetWindowRgn                  硬边、低复杂度、先验证交互
+V0.1  SetWindowRgn                  硬边 Reveal 和原生交互
   ↓
-V0.5  Layered Window / Alpha Mask   支持透明渐变和软边
+V0.5  Layered Edge Overlay          内沿视觉渐变（已替换）
   ↓
-V1.x  DirectComposition             GPU 合成、平滑动画、多视觉层
+V1.x  Windows Composition Backdrop  外扩实时模糊、透明羽化、硬边回退
 ```
 
 演进时应保持不变的接口：
@@ -650,7 +658,7 @@ V1.x  DirectComposition             GPU 合成、平滑动画、多视觉层
 - `RecoveryManager` 的恢复契约；
 - `TriggerEngine` 的用户交互事件。
 
-只替换 `IVisibilityBackend`，而不是重写产品状态机。DirectComposition、DWM Thumbnail 或 live clone 只能作为后续渲染后端，不能提前成为 V0.1 的必要依赖。
+`IRevealVisualHost` 隔离可选 GPU 视觉层，`IVisibilityBackend` 继续负责窗口 region/style/尺寸和恢复。Composition 不是恢复链路的必要依赖，任何初始化或设备失败都必须回退到原始硬边 Reveal；后续若评估 DWM Thumbnail 或 live clone，也只能替换视觉宿主，不能绕过快照与恢复契约。
 
 ## 22. 架构验收条件
 
@@ -661,4 +669,4 @@ V1.x  DirectComposition             GPU 合成、平滑动画、多视觉层
 - 所有原生资源有明确的拥有者和释放路径；
 - 目标窗口身份至少绑定 HWND + PID，恢复流程可拒绝不匹配对象；
 - DPI、多显示器和权限边界已写入测试矩阵；
-- V0.1 与 DirectComposition 的边界明确，未引入不必要的 GPU/截图架构。
+- GPU 羽化与恢复链路边界明确，未引入截图或目标进程注入架构。

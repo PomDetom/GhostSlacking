@@ -1,18 +1,43 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.10240.0</SupportedOSPlatformVersion>
     <UseWindowsForms>true</UseWindowsForms>
+    <UseUwp>true</UseUwp>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WindowsAppSdkSelfContained>false</WindowsAppSdkSelfContained>
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="AntdUI" Version="2.4.8" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="1.8.260803002" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="1.8.260804001" />
+    <PackageReference
+      Include="Microsoft.VCRTForwarders.140"
+      Version="1.1.0"
+      ExcludeAssets="build;buildTransitive"
+      GeneratePathProperty="true" />
+    <PackageReference Include="Win2D.uwp" Version="1.28.3" />
     <ProjectReference Include="..\GhostSlacking.Core\GhostSlacking.Core.csproj" />
     <ProjectReference Include="..\GhostSlacking.Platform\GhostSlacking.Platform.csproj" />
     <ProjectReference Include="..\GhostSlacking.Watchdog\GhostSlacking.Watchdog.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="GhostSlacking.App.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="$(PkgMicrosoft_VCRTForwarders_140)\runtimes\win-x64\native\release\*.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
   <Target Name="CopyWatchdogArtifacts" AfterTargets="Build">
     <ItemGroup>

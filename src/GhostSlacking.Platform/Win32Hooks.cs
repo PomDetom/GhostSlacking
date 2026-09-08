@@ -40,10 +40,21 @@ public sealed class LowLevelKeyboardHook : IDisposable
 
     private nint Callback(int code, nint wParam, nint lParam)
     {
-        if (code >= 0 && (wParam == Win32NativeMethods.WM_KEYDOWN || wParam == Win32NativeMethods.WM_KEYUP))
+        if (code >= 0 &&
+            (wParam == Win32NativeMethods.WM_KEYDOWN ||
+             wParam == Win32NativeMethods.WM_KEYUP ||
+             wParam == Win32NativeMethods.WM_SYSKEYDOWN ||
+             wParam == Win32NativeMethods.WM_SYSKEYUP))
         {
             var data = Marshal.PtrToStructure<Win32NativeMethods.KBDLLHOOKSTRUCT>(lParam);
-            KeyStateChanged?.Invoke(this, new KeyStateChangedEventArgs((int)data.VkCode, wParam == Win32NativeMethods.WM_KEYDOWN));
+            var args = new KeyStateChangedEventArgs(
+                (int)data.VkCode,
+                wParam == Win32NativeMethods.WM_KEYDOWN || wParam == Win32NativeMethods.WM_SYSKEYDOWN);
+            KeyStateChanged?.Invoke(this, args);
+            if (args.Handled)
+            {
+                return 1;
+            }
         }
 
         return Win32NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
@@ -101,6 +112,7 @@ public sealed class KeyStateChangedEventArgs(int virtualKey, bool isDown) : Even
 {
     public int VirtualKey { get; } = virtualKey;
     public bool IsDown { get; } = isDown;
+    public bool Handled { get; set; }
 }
 
 public sealed class MouseButtonEventArgs(Point screenPoint) : EventArgs

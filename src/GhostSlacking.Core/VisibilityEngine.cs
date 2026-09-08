@@ -13,15 +13,22 @@ public sealed class VisibilityEngine
 
     public NativeResult ApplyGhost(GhostWindowProfile profile)
     {
-        var result = _backend.ApplyGhost(profile.Hwnd);
+        var result = _backend.ApplyGhost(profile.Hwnd, profile.Original);
         Log(result, $"GhostApplied hwnd={profile.Hwnd}");
         return result;
     }
 
     public NativeResult ApplyReveal(GhostWindowProfile profile, CircleRegion region)
     {
-        var result = _backend.ApplyReveal(profile.Hwnd, region);
+        var result = _backend.ApplyReveal(profile.Hwnd, region, profile.Original);
         Log(result, $"RevealApplied hwnd={profile.Hwnd} region={region}");
+        return result;
+    }
+
+    public NativeResult EnsureWindowPlacement(GhostWindowProfile profile)
+    {
+        var result = _backend.EnsureWindowPlacement(profile.Hwnd, profile.Original);
+        Log(result, $"WindowPlacementPreserved hwnd={profile.Hwnd} bounds={profile.Original.ScreenBounds}");
         return result;
     }
 

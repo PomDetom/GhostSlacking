@@ -17,14 +17,20 @@ internal static class Win32NativeMethods
     internal const nint WS_EX_APPWINDOW = 0x00040000;
     internal const nint WS_EX_TOPMOST = 0x00000008;
     internal const int SW_HIDE = 0;
+    internal const int SW_SHOWNORMAL = 1;
+    internal const int SW_SHOWMINIMIZED = 2;
+    internal const int SW_SHOWMAXIMIZED = 3;
     internal const int SW_MINIMIZE = 6;
     internal const int SW_SHOWNOACTIVATE = 4;
+    internal const int SW_SHOWNA = 8;
     internal const int WH_KEYBOARD_LL = 13;
     internal const int WH_MOUSE_LL = 14;
     internal const int WM_HOTKEY = 0x0312;
     internal const int WM_LBUTTONDOWN = 0x0201;
     internal const int WM_KEYDOWN = 0x0100;
     internal const int WM_KEYUP = 0x0101;
+    internal const int WM_SYSKEYDOWN = 0x0104;
+    internal const int WM_SYSKEYUP = 0x0105;
     internal const uint RDW_INVALIDATE = 0x0001;
     internal const uint RDW_ERASE = 0x0004;
     internal const uint RDW_UPDATENOW = 0x0100;
@@ -36,6 +42,7 @@ internal static class Win32NativeMethods
     internal const uint SWP_NOZORDER = 0x0004;
     internal const uint SWP_NOACTIVATE = 0x0010;
     internal const uint SWP_FRAMECHANGED = 0x0020;
+    internal const uint SWP_SHOWWINDOW = 0x0040;
     internal const int VK_MENU = 0x12;
     internal const uint MOD_ALT = 0x0001;
     internal const uint MOD_CONTROL = 0x0002;
@@ -69,6 +76,17 @@ internal static class Win32NativeMethods
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WINDOWPLACEMENT
+    {
+        public uint Length;
+        public uint Flags;
+        public uint ShowCmd;
+        public POINT MinPosition;
+        public POINT MaxPosition;
+        public RECT NormalPosition;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -118,6 +136,18 @@ internal static class Win32NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsIconic(nint hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsZoomed(nint hwnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetWindowPlacement(nint hwnd, ref WINDOWPLACEMENT placement);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetWindowPlacement(nint hwnd, ref WINDOWPLACEMENT placement);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
@@ -198,7 +228,6 @@ internal static class Win32NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int width, int height, uint flags);
-
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint SetWindowsHookEx(int idHook, HookProc callback, nint moduleHandle, uint threadId);

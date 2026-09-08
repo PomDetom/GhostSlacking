@@ -11,8 +11,10 @@ internal sealed class GhostApplicationContext : ApplicationContext
     private const int SettingsHotkey = 4;
     private const int QuitHotkey = 5;
     private const int PickHotkey = 6;
-
+    private const int DiameterIncreaseHotkey = 7;
+    private const int DiameterDecreaseHotkey = 8;
     private readonly FileLogger _logger;
+    private readonly IUserNotificationService _notifications;
     private readonly SettingsStore _settingsStore;
     private readonly Win32WindowApi _windows;
     private readonly RecoveryManager _recovery;
@@ -22,8 +24,10 @@ internal sealed class GhostApplicationContext : ApplicationContext
     private readonly MessageWindow _messageWindow;
     private readonly Win32HotkeyManager _hotkeys;
     private readonly LowLevelMouseHook _mouseHook;
+    private readonly LowLevelKeyboardHook _keyboardHook;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly NotifyIcon _notifyIcon;
+    private readonly RevealEdgeOverlay _revealOverlay;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _pickItem;
     private readonly ToolStripMenuItem _toggleItem;
@@ -33,6 +37,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _restoreAllItem;
     private AppSettings _settings;
     private bool _pickerActive;
+    private readonly PickerEscapeGate _pickerEscapeGate = new();
     private bool _peekDown;
     private bool _isExiting;
     private readonly PeekStateTracker _peekState = new();
@@ -44,15 +49,18 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _settings = _settingsStore.Load();
         _logger = new FileLogger(_settings);
         _windows = new Win32WindowApi();
+        _revealOverlay = new RevealEdgeOverlay(_logger);
         var backend = new Win32VisibilityBackend(_logger);
         _recovery = new RecoveryManager(_windows, backend, _logger);
         var visibility = new VisibilityEngine(backend, _logger);
-        _coordinator = new GhostCoordinator(_windows, _recovery, visibility, _logger);
+        _coordinator = new GhostCoordinator(_windows, _recovery, visibility, _logger, _revealOverlay);
         _messageWindow = new MessageWindow();
         _messageWindow.HotkeyPressed += OnHotkeyPressed;
         _hotkeys = new Win32HotkeyManager(_messageWindow.Handle);
         _mouseHook = new LowLevelMouseHook();
         _mouseHook.LeftButtonDown += OnPickerClick;
+        _keyboardHook = new LowLevelKeyboardHook();
+        _keyboardHook.KeyStateChanged += OnPickerKeyStateChanged;
         _picker = new Win32WindowPicker((uint)Environment.ProcessId, () => [_messageWindow.Handle]);
 
         _statusItem = new ToolStripMenuItem(UiText.Text(_settings.Language, "status")) { Enabled = false };
@@ -81,6 +89,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
             ContextMenuStrip = menu
         };
         _notifyIcon.DoubleClick += (_, _) => BeginPicking();
+        _notifications = WindowsAppNotificationService.Create(_notifyIcon, _logger);
 
         _coordinator.StateChanged += (_, _) => UpdateTrayStatus();
         _coordinator.UserError += (_, message) => ShowError(message);
@@ -111,7 +120,9 @@ internal sealed class GhostApplicationContext : ApplicationContext
             (RestoreHotkey, _settings.RestoreHotkey),
             (EmergencyRestoreHotkey, _settings.RestoreAllHotkey),
             (SettingsHotkey, _settings.SettingsHotkey),
-            (QuitHotkey, _settings.ExitHotkey)
+            (QuitHotkey, _settings.ExitHotkey),
+            (DiameterIncreaseHotkey, _settings.RevealDiameterIncreaseHotkey),
+            (DiameterDecreaseHotkey, _settings.RevealDiameterDecreaseHotkey)
         ];
         var duplicates = shortcuts
             .Where(shortcut => !shortcut.Binding.IsDisabled)
@@ -188,32 +199,76 @@ internal sealed class GhostApplicationContext : ApplicationContext
             case QuitHotkey:
                 ExitApplication();
                 break;
+            case DiameterIncreaseHotkey:
+                AdjustRevealDiameter(1);
+                break;
+            case DiameterDecreaseHotkey:
+                AdjustRevealDiameter(-1);
+                break;
         }
     }
 
     private void BeginPicking()
     {
-        if (_pickerActive)
+        if (_pickerActive || _pickerEscapeGate.AwaitingRelease)
         {
             return;
         }
 
-        _coordinator.BeginPicking();
-        _pickerActive = _mouseHook.Start();
+        if (!_coordinator.BeginPicking())
+        {
+            return;
+        }
+
+        var mouseStarted = _mouseHook.Start();
+        var keyboardStarted = mouseStarted && _keyboardHook.Start();
+        _pickerActive = mouseStarted && keyboardStarted;
         if (!_pickerActive)
         {
-            _coordinator.CancelPicking();
+            CancelPicking();
             ShowError("Could not start window picking.");
         }
         else
         {
-            _notifyIcon.ShowBalloonTip(1500, "GhostSlacking", UiText.Text(_settings.Language, "clickToPick"), ToolTipIcon.Info);
+            ShowInfo(UiText.Text(_settings.Language, "clickToPick"));
         }
     }
 
     private void OnPickerClick(object? sender, MouseButtonEventArgs args)
     {
         _messageWindow.Post(() => FinishPicking(args.ScreenPoint));
+    }
+
+    private void OnPickerKeyStateChanged(object? sender, KeyStateChangedEventArgs args)
+    {
+        var decision = _pickerEscapeGate.Process(_pickerActive, args.VirtualKey, args.IsDown);
+        if (!decision.Handled)
+        {
+            return;
+        }
+
+        args.Handled = true;
+        if (decision.CancelPicking)
+        {
+            _messageWindow.Post(() => CancelPicking(waitForEscapeRelease: true));
+        }
+        else if (decision.ReleaseKeyboardHook)
+        {
+            _messageWindow.Post(_keyboardHook.Stop);
+        }
+    }
+
+    private void CancelPicking(bool waitForEscapeRelease = false)
+    {
+        _pickerActive = false;
+        _mouseHook.Stop();
+        if (!waitForEscapeRelease)
+        {
+            _pickerEscapeGate.Reset();
+            _keyboardHook.Stop();
+        }
+
+        _coordinator.CancelPicking();
     }
 
     private void FinishPicking(Point screenPoint)
@@ -225,6 +280,8 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
         _pickerActive = false;
         _mouseHook.Stop();
+        _keyboardHook.Stop();
+        _pickerEscapeGate.Reset();
         var target = _picker.PickAt(screenPoint);
         if (target is null)
         {
@@ -236,6 +293,8 @@ internal sealed class GhostApplicationContext : ApplicationContext
         var settings = new RevealSettings
         {
             DiameterPx = _settings.RevealDiameterPx,
+            SoftEdgeWidthPx = _settings.RevealSoftEdgeWidthPx,
+            BlurLevel = _settings.RevealBlurLevel,
             Shape = _settings.RevealShape,
             Trigger = _settings.PeekTrigger
         };
@@ -244,7 +303,10 @@ internal sealed class GhostApplicationContext : ApplicationContext
             return;
         }
 
-        _notifyIcon.ShowBalloonTip(1200, "GhostSlacking", string.Format(UiText.Text(_settings.Language, "windowSelected"), target.ProcessName ?? (UiText.IsChinese(_settings.Language) ? "窗口" : "window"), UiText.PeekKeyName(_settings.Language, _settings.PeekVirtualKey)), ToolTipIcon.Info);
+        ShowInfo(string.Format(
+            UiText.Text(_settings.Language, "windowSelected"),
+            target.ProcessName ?? (UiText.IsChinese(_settings.Language) ? "窗口" : "window"),
+            UiText.PeekKeyName(_settings.Language, _settings.PeekVirtualKey)));
     }
 
     private void ToggleWindowVisibility()
@@ -310,19 +372,56 @@ internal sealed class GhostApplicationContext : ApplicationContext
     {
         var previousKey = _settings.PeekVirtualKey;
         var previousTrigger = _settings.PeekTrigger;
-        _settings = form.GetSettings(_settings).Normalize();
+        var updated = form.GetSettings(_settings).Normalize();
+        if (!_settingsStore.Save(updated))
+        {
+            form.ShowSaveError();
+            return false;
+        }
+
+        _settings = updated;
         if (previousKey != _settings.PeekVirtualKey || previousTrigger != _settings.PeekTrigger)
         {
             _peekState.Reset(_windows.IsKeyDown(_settings.PeekVirtualKey));
             _peekDown = false;
         }
-        var saved = _settingsStore.Save(_settings);
+        UpdateCurrentRevealSettings();
         if (!StartupManager.Apply(_settings.StartWithWindows))
         {
             _logger.Log(LogLevel.Warning, "Could not update the Windows startup registration.");
         }
         UpdateTrayStatus();
-        return saved;
+        return true;
+    }
+
+    private void AdjustRevealDiameter(int direction)
+    {
+        var updated = _settings.AdjustRevealDiameter(direction);
+        if (updated.RevealDiameterPx == _settings.RevealDiameterPx)
+        {
+            return;
+        }
+
+        if (!_settingsStore.Save(updated))
+        {
+            ShowError(UiText.Text(_settings.Language, "settingsSaveFailed"));
+            return;
+        }
+
+        _settings = updated;
+        UpdateCurrentRevealSettings();
+    }
+
+    private void UpdateCurrentRevealSettings()
+    {
+        _coordinator.UpdateRevealSettings(new RevealSettings
+        {
+            DiameterPx = _settings.RevealDiameterPx,
+            SoftEdgeWidthPx = _settings.RevealSoftEdgeWidthPx,
+            BlurLevel = _settings.RevealBlurLevel,
+            Shape = _settings.RevealShape,
+            Trigger = _settings.PeekTrigger
+        });
     }
 
     private void UpdateTrayStatus()
@@ -350,7 +449,17 @@ internal sealed class GhostApplicationContext : ApplicationContext
             return;
         }
 
-        _notifyIcon.ShowBalloonTip(2500, "GhostSlacking", UiText.Error(_settings.Language, message), ToolTipIcon.Error);
+        _notifications.Show(UiText.Error(_settings.Language, message), UserNotificationSeverity.Error);
+    }
+
+    private void ShowInfo(string message)
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        _notifications.Show(message, UserNotificationSeverity.Info);
     }
 
     private void ExitApplication()
@@ -366,6 +475,7 @@ internal sealed class GhostApplicationContext : ApplicationContext
 
     private void OnApplicationExit(object? sender, EventArgs args)
     {
+        CancelPicking();
         RestoreReport? restoreReport = null;
         if (_settings.RestoreOnExit)
         {
@@ -383,8 +493,11 @@ internal sealed class GhostApplicationContext : ApplicationContext
         _watchdog?.Dispose();
 
         _mouseHook.Dispose();
+        _keyboardHook.Dispose();
         _hotkeys.Dispose();
         _timer.Stop();
+        _revealOverlay.Dispose();
+        _notifications.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _messageWindow.Dispose();

@@ -18,7 +18,7 @@ Phase 2  Reliability            覆盖异常、DPI、权限和 Watchdog
    ↓
 Phase 3  Productization         托盘、设置、配置、发布和可诊断性
    ↓
-Phase 4  Advanced Rendering     在需求和数据证明后再做软边/GPU
+Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 ```
 
 ## 2. 技术基线与范围
@@ -49,7 +49,7 @@ Phase 4  Advanced Rendering     在需求和数据证明后再做软边/GPU
 ### 2.3 V0.1 不做
 
 - 多窗口同时管理；
-- 软边、模糊、渐变、GPU 合成；
+- 截图式软边、静态模糊副本和复杂动画；
 - 云同步、账户、插件、规则引擎；
 - OCR、截图、录制、远程控制；
 - 绝对防录屏/防监控；
@@ -256,7 +256,7 @@ Phase 4  Advanced Rendering     在需求和数据证明后再做软边/GPU
 
 ### 7.1 进入条件
 
-Phase 4 不是 V0.1 的必要条件。只有以下问题已由测试或用户反馈证明值得解决时才进入：
+Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可辨识度的反馈进入，并保留 region 硬边路径作为回退：
 
 - 硬边明显影响观感；
 - 高频 `SetWindowRgn` 更新在实际窗口上造成明显卡顿；
@@ -266,9 +266,9 @@ Phase 4 不是 V0.1 的必要条件。只有以下问题已由测试或用户反
 ### 7.2 任务拆解
 
 - 定义 `IVisibilityBackend`，将现有 region 后端与新后端隔离；
-- 评估 Layered Window + Alpha Mask；
-- 评估 DWM Thumbnail 作为动态内容源；
-- 原型 DirectComposition 的 Visual、Transform、Opacity 和裁剪；
+- 使用非激活、鼠标穿透的 Windows Composition overlay；
+- 使用 `CompositionBackdropBrush` 和 Win2D 效果描述实时模糊，不读取或保存目标像素；
+- 将目标内容 region 外扩到羽化宽度的 70%，用可选的单一 GPU 模糊等级在原始清晰边界之外平滑渐入、扩散和淡出；
 - 比较 CPU、GPU、内存、延迟和兼容性；
 - 保留 Region Backend 作为兼容和回退路径；
 - 迁移视觉验收，不改变 Trigger、Tracker、Recovery 和产品状态机。

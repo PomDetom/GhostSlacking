@@ -7,11 +7,21 @@ public sealed class SettingsStoreTests
     [Fact]
     public void Normalize_clamps_user_editable_values()
     {
-        var settings = new AppSettings { RevealDiameterPx = 5000, PeekVirtualKey = 0 };
+        var settings = new AppSettings
+        {
+            SchemaVersion = 1,
+            RevealDiameterPx = 5000,
+            RevealDiameterStepPx = 1,
+            RevealSoftEdgeWidthPx = 500,
+            PeekVirtualKey = 0
+        };
 
         var normalized = settings.Normalize();
 
+        Assert.Equal(3, normalized.SchemaVersion);
         Assert.Equal(800, normalized.RevealDiameterPx);
+        Assert.Equal(8, normalized.RevealDiameterStepPx);
+        Assert.Equal(128, normalized.RevealSoftEdgeWidthPx);
         Assert.Equal(0x12, normalized.PeekVirtualKey);
     }
 
@@ -22,7 +32,17 @@ public sealed class SettingsStoreTests
 
         var normalized = settings.Normalize();
 
-        Assert.Equal(RevealShape.Circle, normalized.RevealShape);
+        Assert.Equal(RevealShape.RoundedRectangle, normalized.RevealShape);
+    }
+
+    [Fact]
+    public void Normalize_falls_back_to_medium_for_unknown_blur_level()
+    {
+        var settings = new AppSettings { RevealBlurLevel = (RevealBlurLevel)999 };
+
+        var normalized = settings.Normalize();
+
+        Assert.Equal(RevealBlurLevel.Low, normalized.RevealBlurLevel);
     }
 
     [Fact]
@@ -32,7 +52,7 @@ public sealed class SettingsStoreTests
 
         var normalized = settings.Normalize();
 
-        Assert.Equal(PeekTrigger.Hold, normalized.PeekTrigger);
+        Assert.Equal(PeekTrigger.Toggle, normalized.PeekTrigger);
     }
 
     [Fact]
@@ -54,7 +74,9 @@ public sealed class SettingsStoreTests
             RestoreHotkey = new(256, ShortcutModifiers.None),
             RestoreAllHotkey = new(0x52, (ShortcutModifiers)8),
             SettingsHotkey = new(0, ShortcutModifiers.Control),
-            ExitHotkey = new(0, ShortcutModifiers.Alt)
+            ExitHotkey = new(0, ShortcutModifiers.Alt),
+            RevealDiameterIncreaseHotkey = new(300, ShortcutModifiers.Control),
+            RevealDiameterDecreaseHotkey = new(0x11, ShortcutModifiers.Alt)
         };
 
         var normalized = settings.Normalize();
@@ -64,6 +86,8 @@ public sealed class SettingsStoreTests
         Assert.Equal(new HotkeyBinding(0x52, ShortcutModifiers.Control | ShortcutModifiers.Alt | ShortcutModifiers.Shift), normalized.RestoreAllHotkey);
         Assert.Equal(new HotkeyBinding(0x53, ShortcutModifiers.Control | ShortcutModifiers.Alt), normalized.SettingsHotkey);
         Assert.Equal(new HotkeyBinding(0x51, ShortcutModifiers.Control | ShortcutModifiers.Alt), normalized.ExitHotkey);
+        Assert.True(normalized.RevealDiameterIncreaseHotkey.IsDisabled);
+        Assert.True(normalized.RevealDiameterDecreaseHotkey.IsDisabled);
     }
 
     [Fact]
@@ -76,7 +100,9 @@ public sealed class SettingsStoreTests
             RestoreHotkey = HotkeyBinding.Disabled,
             RestoreAllHotkey = HotkeyBinding.Disabled,
             SettingsHotkey = HotkeyBinding.Disabled,
-            ExitHotkey = HotkeyBinding.Disabled
+            ExitHotkey = HotkeyBinding.Disabled,
+            RevealDiameterIncreaseHotkey = HotkeyBinding.Disabled,
+            RevealDiameterDecreaseHotkey = HotkeyBinding.Disabled
         };
 
         var normalized = settings.Normalize();
@@ -87,6 +113,118 @@ public sealed class SettingsStoreTests
         Assert.True(normalized.RestoreAllHotkey.IsDisabled);
         Assert.True(normalized.SettingsHotkey.IsDisabled);
         Assert.True(normalized.ExitHotkey.IsDisabled);
+        Assert.True(normalized.RevealDiameterIncreaseHotkey.IsDisabled);
+        Assert.True(normalized.RevealDiameterDecreaseHotkey.IsDisabled);
+    }
+
+    [Fact]
+    public void Schema_one_settings_receive_new_reveal_defaults()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"GhostSlacking-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, """
+                {
+                  "SchemaVersion": 1,
+                  "RevealDiameterPx": 320
+                }
+                """);
+
+            var settings = new SettingsStore(path).Load();
+
+            Assert.Equal(3, settings.SchemaVersion);
+            Assert.Equal(320, settings.RevealDiameterPx);
+            Assert.Equal(16, settings.RevealDiameterStepPx);
+            Assert.Equal(16, settings.RevealSoftEdgeWidthPx);
+            Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
+            Assert.Equal(RevealShape.RoundedRectangle, settings.RevealShape);
+            Assert.Equal(PeekTrigger.Toggle, settings.PeekTrigger);
+            Assert.True(settings.RevealDiameterIncreaseHotkey.IsDisabled);
+            Assert.True(settings.RevealDiameterDecreaseHotkey.IsDisabled);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Schema_two_settings_receive_the_default_blur_level()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"GhostSlacking-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, """
+                {
+                  "SchemaVersion": 2,
+                  "RevealSoftEdgeWidthPx": 64
+                }
+                """);
+
+            var settings = new SettingsStore(path).Load();
+
+            Assert.Equal(3, settings.SchemaVersion);
+            Assert.Equal(64, settings.RevealSoftEdgeWidthPx);
+            Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void New_settings_use_the_compact_toggle_reveal_defaults()
+    {
+        var settings = new AppSettings();
+
+        Assert.Equal(144, settings.RevealDiameterPx);
+        Assert.Equal(16, settings.RevealDiameterStepPx);
+        Assert.Equal(16, settings.RevealSoftEdgeWidthPx);
+        Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
+        Assert.Equal(RevealShape.RoundedRectangle, settings.RevealShape);
+        Assert.Equal(PeekTrigger.Toggle, settings.PeekTrigger);
+    }
+
+    [Fact]
+    public void Selected_blur_level_is_persisted()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"GhostSlacking-{Guid.NewGuid():N}.json");
+        try
+        {
+            var store = new SettingsStore(path);
+
+            Assert.True(store.Save(new AppSettings { RevealBlurLevel = RevealBlurLevel.High }));
+
+            var settings = store.Load();
+            Assert.Equal(3, settings.SchemaVersion);
+            Assert.Equal(RevealBlurLevel.High, settings.RevealBlurLevel);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(240, 32, 1, 272)]
+    [InlineData(240, 32, -1, 208)]
+    [InlineData(790, 32, 1, 800)]
+    [InlineData(70, 32, -1, 64)]
+    [InlineData(240, 32, 0, 240)]
+    public void Diameter_adjustment_uses_the_configured_step_and_clamps(
+        int diameter,
+        int step,
+        int direction,
+        int expected)
+    {
+        var settings = new AppSettings
+        {
+            RevealDiameterPx = diameter,
+            RevealDiameterStepPx = step
+        };
+
+        Assert.Equal(expected, settings.AdjustRevealDiameter(direction).RevealDiameterPx);
     }
 
     [Theory]

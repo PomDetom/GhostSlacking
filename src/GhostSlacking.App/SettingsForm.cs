@@ -27,6 +27,9 @@ internal sealed class SettingsForm : Form
 
     private readonly UiLanguage _initialLanguage;
     private readonly AntInputNumber _diameter;
+    private readonly AntInputNumber _diameterStep;
+    private readonly AntInputNumber _softEdgeWidth;
+    private readonly AntSelect _blurLevel;
     private readonly AntSelect _shape;
     private readonly KeyDisplay _peekKeyDisplay;
     private readonly HotkeyEditor _pickHotkey;
@@ -35,6 +38,8 @@ internal sealed class SettingsForm : Form
     private readonly HotkeyEditor _restoreAllHotkey;
     private readonly HotkeyEditor _settingsHotkey;
     private readonly HotkeyEditor _exitHotkey;
+    private readonly HotkeyEditor _diameterIncreaseHotkey;
+    private readonly HotkeyEditor _diameterDecreaseHotkey;
     private readonly AntSelect _peekMode;
     private readonly AntSwitch _restoreOnExit;
     private readonly AntSwitch _startWithWindows;
@@ -78,7 +83,16 @@ internal sealed class SettingsForm : Form
         ClientSize = new Size(940, 680);
         MinimumSize = new Size(800, 620);
 
-        _diameter = CreateNumericInput(settings.RevealDiameterPx);
+        _diameter = CreateNumericInput(settings.RevealDiameterPx, 64, 800, 8);
+        _diameterStep = CreateNumericInput(settings.RevealDiameterStepPx, 8, 256, 8);
+        _softEdgeWidth = CreateNumericInput(settings.RevealSoftEdgeWidthPx, 0, 128, 4);
+        _blurLevel = CreateComboBox();
+        _blurLevel.Items.AddRange([
+            new BlurLevelChoice(RevealBlurLevel.Low, UiText.Text(settings.Language, "blurLow")),
+            new BlurLevelChoice(RevealBlurLevel.Medium, UiText.Text(settings.Language, "blurMedium")),
+            new BlurLevelChoice(RevealBlurLevel.High, UiText.Text(settings.Language, "blurHigh"))]);
+        FitSelectWidth(_blurLevel);
+        SelectBlurLevel(settings.RevealBlurLevel);
         _shape = CreateComboBox();
         _shape.Items.AddRange([
             new ShapeChoice(RevealShape.Circle, UiText.Text(settings.Language, "circle")),
@@ -102,6 +116,14 @@ internal sealed class SettingsForm : Form
         _restoreAllHotkey = CreateHotkeyEditor(settings.RestoreAllHotkey, DefaultSettings.RestoreAllHotkey, settings.Language);
         _settingsHotkey = CreateHotkeyEditor(settings.SettingsHotkey, DefaultSettings.SettingsHotkey, settings.Language);
         _exitHotkey = CreateHotkeyEditor(settings.ExitHotkey, DefaultSettings.ExitHotkey, settings.Language);
+        _diameterIncreaseHotkey = CreateHotkeyEditor(
+            settings.RevealDiameterIncreaseHotkey,
+            DefaultSettings.RevealDiameterIncreaseHotkey,
+            settings.Language);
+        _diameterDecreaseHotkey = CreateHotkeyEditor(
+            settings.RevealDiameterDecreaseHotkey,
+            DefaultSettings.RevealDiameterDecreaseHotkey,
+            settings.Language);
         UpdateHotkeyConflicts();
 
         _restoreOnExit = CreateCheckBox(settings.RestoreOnExit);
@@ -131,6 +153,9 @@ internal sealed class SettingsForm : Form
 
     public AppSettings GetSettings(AppSettings current)
     {
+        var blurLevel = _blurLevel.SelectedValue is BlurLevelChoice selectedBlurLevel
+            ? selectedBlurLevel.Level
+            : current.RevealBlurLevel;
         var shape = _shape.SelectedValue is ShapeChoice selectedShape ? selectedShape.Shape : current.RevealShape;
         var peekMode = _peekMode.SelectedValue is TriggerChoice selectedTrigger ? selectedTrigger.Trigger : current.PeekTrigger;
         var logLevel = _logLevel.SelectedValue is LogLevel selectedLevel ? selectedLevel : current.MinimumLogLevel;
@@ -138,6 +163,9 @@ internal sealed class SettingsForm : Form
         return current with
         {
             RevealDiameterPx = (int)_diameter.Value,
+            RevealDiameterStepPx = (int)_diameterStep.Value,
+            RevealSoftEdgeWidthPx = (int)_softEdgeWidth.Value,
+            RevealBlurLevel = blurLevel,
             RevealShape = shape,
             PeekTrigger = peekMode,
             Language = language,
@@ -149,6 +177,8 @@ internal sealed class SettingsForm : Form
             RestoreAllHotkey = _restoreAllHotkey.Binding,
             SettingsHotkey = _settingsHotkey.Binding,
             ExitHotkey = _exitHotkey.Binding,
+            RevealDiameterIncreaseHotkey = _diameterIncreaseHotkey.Binding,
+            RevealDiameterDecreaseHotkey = _diameterDecreaseHotkey.Binding,
             RestoreOnExit = _restoreOnExit.Checked,
             StartWithWindows = _startWithWindows.Checked,
             MinimumLogLevel = logLevel
@@ -159,8 +189,12 @@ internal sealed class SettingsForm : Form
     {
         _rootLayout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2,
-            Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Canvas
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 2,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Canvas
         };
         _rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 168F));
         _rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -170,8 +204,12 @@ internal sealed class SettingsForm : Form
 
         var content = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
-            Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Canvas
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Canvas
         };
         content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         content.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
@@ -199,8 +237,12 @@ internal sealed class SettingsForm : Form
     {
         _sidebarPanel = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3,
-            Margin = Padding.Empty, Padding = new Padding(12, 18, 12, 12), BackColor = Sidebar
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            Margin = Padding.Empty,
+            Padding = new Padding(12, 18, 12, 12),
+            BackColor = Sidebar
         };
         _sidebarPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         _sidebarPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 84F));
@@ -210,22 +252,34 @@ internal sealed class SettingsForm : Form
         _brandPanel = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Sidebar };
         _brandIcon = new PictureBox
         {
-            Image = AppIcon.Instance.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom,
-            BackColor = Color.Transparent, Location = Point.Empty, Size = new Size(36, 36), TabStop = false
+            Image = AppIcon.Instance.ToBitmap(),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.Transparent,
+            Location = Point.Empty,
+            Size = new Size(36, 36),
+            TabStop = false
         };
         _brandName = new Label
         {
-            Text = UiText.Text(language, "settings"), AutoSize = false,
-            Font = new Font(Font.FontFamily, 11F, FontStyle.Bold), ForeColor = PrimaryText,
-            TextAlign = ContentAlignment.MiddleLeft, Location = new Point(46, 0), Size = new Size(90, 36)
+            Text = UiText.Text(language, "settings"),
+            AutoSize = false,
+            Font = new Font(Font.FontFamily, 11F, FontStyle.Bold),
+            ForeColor = PrimaryText,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Location = new Point(46, 0),
+            Size = new Size(90, 36)
         };
         _localizedTextKeys[_brandName] = "settings";
         _brandPanel.Controls.AddRange([_brandIcon, _brandName]);
 
         var nav = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false,
-            Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Sidebar
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Sidebar
         };
         AddNavigationButton(nav, language, "revealSettings", NavGlyph.Reveal);
         AddNavigationButton(nav, language, "hotkeySettings", NavGlyph.Keyboard);
@@ -233,10 +287,18 @@ internal sealed class SettingsForm : Form
 
         _collapseButton = new AntButton
         {
-            Dock = DockStyle.Right, Width = 40, Height = 36, Radius = 6, BorderWidth = 0,
-            Text = "‹", Font = new Font(Font.FontFamily, 18F),
-            ForeColor = SecondaryText, BackColor = Color.Transparent, BackHover = SidebarSelected,
-            Cursor = Cursors.Hand, Margin = Padding.Empty
+            Dock = DockStyle.Right,
+            Width = 40,
+            Height = 36,
+            Radius = 6,
+            BorderWidth = 0,
+            Text = "‹",
+            Font = new Font(Font.FontFamily, 18F),
+            ForeColor = SecondaryText,
+            BackColor = Color.Transparent,
+            BackHover = SidebarSelected,
+            Cursor = Cursors.Hand,
+            Margin = Padding.Empty
         };
         _collapseButton.Click += (_, _) => SetSidebarCollapsed(!_sidebarCollapsed, language);
         _toolTip = new ToolTip();
@@ -254,9 +316,15 @@ internal sealed class SettingsForm : Form
     {
         var header = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 1, RowCount = 2, MinimumSize = new Size(0, 112),
-            Margin = Padding.Empty, Padding = new Padding(38, 22, 34, 18), BackColor = Canvas
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 2,
+            MinimumSize = new Size(0, 112),
+            Margin = Padding.Empty,
+            Padding = new Padding(38, 22, 34, 18),
+            BackColor = Canvas
         };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         header.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -279,8 +347,12 @@ internal sealed class SettingsForm : Form
         var footer = new Panel { Dock = DockStyle.Fill, Padding = new Padding(34, 14, 34, 14), BackColor = Card };
         var buttons = new FlowLayoutPanel
         {
-            Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft,
-            WrapContents = false, Margin = Padding.Empty, Padding = Padding.Empty
+            Dock = DockStyle.Right,
+            AutoSize = true,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
         };
         var save = CreatePrimaryButton(UiText.Text(language, "save"));
         _localizedTextKeys[save] = "save";
@@ -299,8 +371,13 @@ internal sealed class SettingsForm : Form
     {
         if (ValidateUniqueHotkeys() && SaveRequested?.Invoke() == true)
         {
-            AntdUI.Message.success(this, UiText.Text(CurrentLanguage, "saveSucceeded"));
+            AntdUI.Message.success(this, UiText.Text(CurrentLanguage, "saveSucceeded"), autoClose: 1);
         }
+    }
+
+    public void ShowSaveError()
+    {
+        AntdUI.Message.error(this, UiText.Text(CurrentLanguage, "settingsSaveFailed"), autoClose: 2);
     }
 
     private bool ValidateUniqueHotkeys()
@@ -329,10 +406,25 @@ internal sealed class SettingsForm : Form
     {
         return CreatePage([
             CreateSection(language, "revealAppearance", [
-                CreateSettingRow(language, "diameter", "diameterDescription", _diameter),
-                CreateSettingRow(language, "shape", "shapeDescription", _shape)]),
+                CreateSettingRow(language, "diameter", "diameterDescription", CreateResettableEditor(
+                    _diameter,
+                    () => _diameter.Value = DefaultSettings.RevealDiameterPx)),
+                CreateSettingRow(language, "diameterStep", "diameterStepDescription", CreateResettableEditor(
+                    _diameterStep,
+                    () => _diameterStep.Value = DefaultSettings.RevealDiameterStepPx)),
+                CreateSettingRow(language, "softEdgeWidth", "softEdgeWidthDescription", CreateResettableEditor(
+                    _softEdgeWidth,
+                    () => _softEdgeWidth.Value = DefaultSettings.RevealSoftEdgeWidthPx)),
+                CreateSettingRow(language, "blurLevel", "blurLevelDescription", CreateResettableEditor(
+                    _blurLevel,
+                    () => SelectBlurLevel(DefaultSettings.RevealBlurLevel))),
+                CreateSettingRow(language, "shape", "shapeDescription", CreateResettableEditor(
+                    _shape,
+                    () => SelectShape(DefaultSettings.RevealShape)))]),
             CreateSection(language, "peekBehavior", [
-                CreateSettingRow(language, "peekMode", "peekModeDescription", _peekMode),
+                CreateSettingRow(language, "peekMode", "peekModeDescription", CreateResettableEditor(
+                    _peekMode,
+                    () => SelectPeekMode(DefaultSettings.PeekTrigger))),
                 CreateSettingRow(language, "peekKey", "peekKeyDescription", CreateKeyEditorPanel(
                     _peekKeyDisplay,
                     () => ResetPeekKey(CurrentLanguage)))])]);
@@ -342,6 +434,8 @@ internal sealed class SettingsForm : Form
         CreateSection(language, "windowActions", [
             ShortcutRow(language, "pickHotkey", "pickHotkeyDescription", _pickHotkey),
             ShortcutRow(language, "windowToggleHotkey", "windowToggleHotkeyDescription", _windowToggleHotkey),
+            ShortcutRow(language, "diameterIncreaseHotkey", "diameterIncreaseHotkeyDescription", _diameterIncreaseHotkey),
+            ShortcutRow(language, "diameterDecreaseHotkey", "diameterDecreaseHotkeyDescription", _diameterDecreaseHotkey),
             ShortcutRow(language, "restoreHotkey", "restoreHotkeyDescription", _restoreHotkey),
             ShortcutRow(language, "restoreAllHotkey", "restoreAllHotkeyDescription", _restoreAllHotkey)]),
         CreateSection(language, "applicationActions", [
@@ -353,7 +447,10 @@ internal sealed class SettingsForm : Form
             editor.Display,
             () => ResetHotkey(editor, CurrentLanguage)));
 
-    private Control CreateKeyEditorPanel(KeyDisplay display, Action reset)
+    private Control CreateKeyEditorPanel(KeyDisplay display, Action reset) =>
+        CreateResettableEditor(display, reset, "resetHotkey");
+
+    private Control CreateResettableEditor(Control editor, Action reset, string tooltipKey = "resetSetting")
     {
         var panel = new FlowLayoutPanel
         {
@@ -385,31 +482,43 @@ internal sealed class SettingsForm : Form
             TabStop = true
         };
         resetButton.Click += (_, _) => reset();
-        _localizedToolTipKeys[resetButton] = "resetHotkey";
-        var resetText = UiText.Text(CurrentLanguage, "resetHotkey");
+        _localizedToolTipKeys[resetButton] = tooltipKey;
+        var resetText = UiText.Text(CurrentLanguage, tooltipKey);
         resetButton.AccessibleName = resetText;
         _toolTip?.SetToolTip(resetButton, resetText);
-        panel.Controls.Add(display);
+        panel.Controls.Add(editor);
         panel.Controls.Add(resetButton);
         return panel;
     }
 
     private Control CreateGeneralPage(UiLanguage language) => CreatePage([
         CreateSection(language, "startupAndSafety", [
-            CreateSettingRow(language, "startWindows", "startWindowsDescription", _startWithWindows),
-            CreateSettingRow(language, "restoreOnExit", "restoreOnExitDescription", _restoreOnExit)]),
+            CreateSettingRow(language, "startWindows", "startWindowsDescription", CreateResettableEditor(
+                _startWithWindows,
+                () => _startWithWindows.Checked = DefaultSettings.StartWithWindows)),
+            CreateSettingRow(language, "restoreOnExit", "restoreOnExitDescription", CreateResettableEditor(
+                _restoreOnExit,
+                () => _restoreOnExit.Checked = DefaultSettings.RestoreOnExit))]),
         CreateSection(language, "languageAndDiagnostics", [
-            CreateSettingRow(language, "interfaceLanguage", "languageDescription", _language),
-            CreateSettingRow(language, "logLevel", "logLevelDescription", _logLevel)])]);
+            CreateSettingRow(language, "interfaceLanguage", "languageDescription", CreateResettableEditor(
+                _language,
+                () => SelectLanguage(DefaultSettings.Language))),
+            CreateSettingRow(language, "logLevel", "logLevelDescription", CreateResettableEditor(
+                _logLevel,
+                () => SelectValue(_logLevel, DefaultSettings.MinimumLogLevel)))])]);
 
     private static Control CreatePage(Control[] sections)
     {
         var scroll = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill, AutoScroll = true,
-            FlowDirection = FlowDirection.TopDown, WrapContents = false,
-            Margin = Padding.Empty, Padding = new Padding(34, 0, 25, 24),
-            BackColor = Canvas, Visible = false
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = Padding.Empty,
+            Padding = new Padding(34, 0, 25, 24),
+            BackColor = Canvas,
+            Visible = false
         };
         scroll.Controls.AddRange(sections);
         scroll.Resize += (_, _) =>
@@ -424,24 +533,34 @@ internal sealed class SettingsForm : Form
     {
         var section = new TableLayoutPanel
         {
-            Width = 560, Height = 29 + (rows.Length * 84),
-            ColumnCount = 1, RowCount = 2,
-            Margin = new Padding(0, 0, 0, 20), Padding = Padding.Empty, BackColor = Canvas
+            Width = 560,
+            Height = 29 + (rows.Length * 84),
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = new Padding(0, 0, 0, 20),
+            Padding = Padding.Empty,
+            BackColor = Canvas
         };
         section.RowStyles.Add(new RowStyle(SizeType.Absolute, 29F));
         section.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         var heading = new Label
         {
-            Text = UiText.Text(language, titleKey), AutoSize = true,
-            Font = new Font(Font.FontFamily, 9F, FontStyle.Bold), ForeColor = SecondaryText,
-            Margin = new Padding(2, 0, 0, 0), Anchor = AnchorStyles.Left
+            Text = UiText.Text(language, titleKey),
+            AutoSize = true,
+            Font = new Font(Font.FontFamily, 9F, FontStyle.Bold),
+            ForeColor = SecondaryText,
+            Margin = new Padding(2, 0, 0, 0),
+            Anchor = AnchorStyles.Left
         };
         _localizedTextKeys[heading] = titleKey;
         var card = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown, WrapContents = false,
-            Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Canvas
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Canvas
         };
         card.Controls.AddRange(rows);
         card.Resize += (_, _) =>
@@ -460,36 +579,59 @@ internal sealed class SettingsForm : Form
     {
         var surface = new AntPanel
         {
-            Height = 76, Width = 560, Radius = 8, BorderWidth = 0,
-            Margin = new Padding(0, 0, 0, 8), Padding = Padding.Empty,
-            Back = Surface, BackColor = Surface
+            Height = 76,
+            Width = 560,
+            Radius = 8,
+            BorderWidth = 0,
+            Margin = new Padding(0, 0, 0, 8),
+            Padding = Padding.Empty,
+            Back = Surface,
+            BackColor = Surface
         };
         var layout = new TableLayoutPanel
         {
-            ColumnCount = 2, RowCount = 1, Dock = DockStyle.Fill,
-            Margin = Padding.Empty, Padding = new Padding(20, 8, 12, 8), BackColor = Color.Transparent
+            ColumnCount = 2,
+            RowCount = 1,
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = new Padding(20, 8, 12, 8),
+            BackColor = Color.Transparent
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 380F));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         var copy = new TableLayoutPanel
         {
-            ColumnCount = 1, RowCount = 2, Dock = DockStyle.Fill,
-            Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Color.Transparent
+            ColumnCount = 1,
+            RowCount = 2,
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Color.Transparent
         };
         copy.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
         copy.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
         var title = new Label
         {
-            Text = UiText.Text(language, titleKey), AutoSize = false, Dock = DockStyle.Fill,
-            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold), ForeColor = PrimaryText,
-            TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Margin = Padding.Empty
+            Text = UiText.Text(language, titleKey),
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold),
+            ForeColor = PrimaryText,
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+            Margin = Padding.Empty
         };
         var description = new Label
         {
-            Text = UiText.Text(language, descriptionKey), AutoSize = false, Dock = DockStyle.Fill,
-            Font = new Font(Font.FontFamily, 8.5F), ForeColor = SecondaryText,
-            TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Margin = new Padding(0, 0, 12, 0)
+            Text = UiText.Text(language, descriptionKey),
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+            Font = new Font(Font.FontFamily, 8.5F),
+            ForeColor = SecondaryText,
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+            Margin = new Padding(0, 0, 12, 0)
         };
         _localizedTextKeys[title] = titleKey;
         _localizedTextKeys[description] = descriptionKey;
@@ -530,8 +672,13 @@ internal sealed class SettingsForm : Form
         var text = UiText.Text(language, textKey);
         var button = new NavButton
         {
-            TextKey = textKey, LabelText = text, Glyph = glyph, AccessibleName = text,
-            Width = 144, Height = 44, Margin = new Padding(0, 0, 0, 6),
+            TextKey = textKey,
+            LabelText = text,
+            Glyph = glyph,
+            AccessibleName = text,
+            Width = 144,
+            Height = 44,
+            Margin = new Padding(0, 0, 0, 6),
             Font = new Font(Font.FontFamily, 9F, FontStyle.Bold)
         };
         _navigation.Add(button);
@@ -612,7 +759,18 @@ internal sealed class SettingsForm : Form
 
     private void RefreshChoiceText(UiLanguage language)
     {
-        var shape = _shape.SelectedValue is ShapeChoice shapeChoice ? shapeChoice.Shape : RevealShape.Circle;
+        var blurLevel = _blurLevel.SelectedValue is BlurLevelChoice blurLevelChoice
+            ? blurLevelChoice.Level
+            : DefaultSettings.RevealBlurLevel;
+        _blurLevel.Items.Clear();
+        _blurLevel.Items.AddRange([
+            new BlurLevelChoice(RevealBlurLevel.Low, UiText.Text(language, "blurLow")),
+            new BlurLevelChoice(RevealBlurLevel.Medium, UiText.Text(language, "blurMedium")),
+            new BlurLevelChoice(RevealBlurLevel.High, UiText.Text(language, "blurHigh"))]);
+        SelectBlurLevel(blurLevel);
+        FitSelectWidth(_blurLevel);
+
+        var shape = _shape.SelectedValue is ShapeChoice shapeChoice ? shapeChoice.Shape : DefaultSettings.RevealShape;
         _shape.Items.Clear();
         _shape.Items.AddRange([
             new ShapeChoice(RevealShape.Circle, UiText.Text(language, "circle")),
@@ -621,7 +779,7 @@ internal sealed class SettingsForm : Form
         SelectShape(shape);
         FitSelectWidth(_shape);
 
-        var trigger = _peekMode.SelectedValue is TriggerChoice triggerChoice ? triggerChoice.Trigger : PeekTrigger.Hold;
+        var trigger = _peekMode.SelectedValue is TriggerChoice triggerChoice ? triggerChoice.Trigger : DefaultSettings.PeekTrigger;
         _peekMode.Items.Clear();
         _peekMode.Items.AddRange([
             new TriggerChoice(PeekTrigger.Hold, UiText.Text(language, "holdPeek")),
@@ -631,7 +789,16 @@ internal sealed class SettingsForm : Form
     }
 
     private HotkeyEditor[] GetHotkeyEditors() =>
-        [_pickHotkey, _windowToggleHotkey, _restoreHotkey, _restoreAllHotkey, _settingsHotkey, _exitHotkey];
+        [
+            _pickHotkey,
+            _windowToggleHotkey,
+            _diameterIncreaseHotkey,
+            _diameterDecreaseHotkey,
+            _restoreHotkey,
+            _restoreAllHotkey,
+            _settingsHotkey,
+            _exitHotkey
+        ];
 
     private void UpdateHotkeyConflicts()
     {
@@ -774,6 +941,32 @@ internal sealed class SettingsForm : Form
 
     private UiLanguage CurrentLanguage => _language.SelectedValue is LanguageChoice choice ? choice.Language : _initialLanguage;
 
+    private void SelectLanguage(UiLanguage language)
+    {
+        for (var i = 0; i < _language.Items.Count; i++)
+        {
+            if (_language.Items[i] is LanguageChoice choice && choice.Language == language)
+            {
+                _language.SelectedIndex = i;
+                return;
+            }
+        }
+        _language.SelectedIndex = 0;
+    }
+
+    private void SelectBlurLevel(RevealBlurLevel level)
+    {
+        for (var i = 0; i < _blurLevel.Items.Count; i++)
+        {
+            if (_blurLevel.Items[i] is BlurLevelChoice choice && choice.Level == level)
+            {
+                _blurLevel.SelectedIndex = i;
+                return;
+            }
+        }
+        _blurLevel.SelectedIndex = 1;
+    }
+
     private void SelectPeekMode(PeekTrigger trigger)
     {
         for (var i = 0; i < _peekMode.Items.Count; i++)
@@ -815,21 +1008,43 @@ internal sealed class SettingsForm : Form
 
     private static AntSelect CreateComboBox() => new()
     {
-        Width = 112, Height = 38, Radius = 6, BorderWidth = 1F,
-        BorderColor = Border, BorderHover = Accent, BorderActive = Accent,
-        BackColor = Color.White, ForeColor = PrimaryText, Margin = Padding.Empty,
-        Font = new Font("Microsoft YaHei UI", 9F), TextAlign = HorizontalAlignment.Center,
-        DropDownTextAlign = AntdUI.TAlign.None, ListAutoWidth = true,
+        Width = 112,
+        Height = 38,
+        Radius = 6,
+        BorderWidth = 1F,
+        BorderColor = Border,
+        BorderHover = Accent,
+        BorderActive = Accent,
+        BackColor = Color.White,
+        ForeColor = PrimaryText,
+        Margin = Padding.Empty,
+        Font = new Font("Microsoft YaHei UI", 9F),
+        TextAlign = HorizontalAlignment.Center,
+        DropDownTextAlign = AntdUI.TAlign.None,
+        ListAutoWidth = true,
         CaretVisible = false
     };
 
-    private static AntInputNumber CreateNumericInput(int value) => new()
+    private static AntInputNumber CreateNumericInput(int value, int minimum, int maximum, int increment) => new()
     {
-        Minimum = 64, Maximum = 800, Increment = 8, Value = value,
-        Width = 112, Height = 38, TextAlign = HorizontalAlignment.Center,
-        SuffixText = "px", SuffixFore = SecondaryText, ShowControl = true,
-        Radius = 6, BorderWidth = 1F, BorderColor = Border, BorderHover = Accent, BorderActive = Accent,
-        BackColor = Color.White, ForeColor = PrimaryText, Margin = Padding.Empty
+        Minimum = minimum,
+        Maximum = maximum,
+        Increment = increment,
+        Value = value,
+        Width = 112,
+        Height = 38,
+        TextAlign = HorizontalAlignment.Center,
+        SuffixText = "px",
+        SuffixFore = SecondaryText,
+        ShowControl = true,
+        Radius = 6,
+        BorderWidth = 1F,
+        BorderColor = Border,
+        BorderHover = Accent,
+        BorderActive = Accent,
+        BackColor = Color.White,
+        ForeColor = PrimaryText,
+        Margin = Padding.Empty
     };
 
     private static KeyDisplay CreateKeyDisplay(string text)
@@ -837,21 +1052,38 @@ internal sealed class SettingsForm : Form
         var font = new Font("Microsoft YaHei UI", 9F);
         return new KeyDisplay
         {
-            ReadOnly = false, CaretVisible = false, AllowClear = false,
-            UseContextMenu = false, ImeMode = ImeMode.Disable,
-            Text = text, Width = MeasureOptionWidth(text, font, 72, 170), Height = 38, TabStop = false,
-            TextAlign = HorizontalAlignment.Center, Radius = 6, BorderWidth = 1F,
-            BorderColor = Border, BorderHover = Accent, BorderActive = Accent,
-            BackColor = Color.FromArgb(248, 250, 252), ForeColor = PrimaryText,
-            Font = font, Margin = Padding.Empty, Cursor = Cursors.Hand
+            ReadOnly = false,
+            CaretVisible = false,
+            AllowClear = false,
+            UseContextMenu = false,
+            ImeMode = ImeMode.Disable,
+            Text = text,
+            Width = MeasureOptionWidth(text, font, 72, 170),
+            Height = 38,
+            TabStop = false,
+            TextAlign = HorizontalAlignment.Center,
+            Radius = 6,
+            BorderWidth = 1F,
+            BorderColor = Border,
+            BorderHover = Accent,
+            BorderActive = Accent,
+            BackColor = Color.FromArgb(248, 250, 252),
+            ForeColor = PrimaryText,
+            Font = font,
+            Margin = Padding.Empty,
+            Cursor = Cursors.Hand
         };
     }
 
     private static AntSwitch CreateCheckBox(bool value) => new()
     {
-        Checked = value, AutoSize = false, Size = new Size(44, 24),
-        Fill = Accent, FillHover = Color.FromArgb(19, 151, 139),
-        WaveSize = 0, Margin = new Padding(0, 6, 4, 0)
+        Checked = value,
+        AutoSize = false,
+        Size = new Size(44, 24),
+        Fill = Accent,
+        FillHover = Color.FromArgb(19, 151, 139),
+        WaveSize = 0,
+        Margin = new Padding(0, 6, 4, 0)
     };
 
     private static AntButton CreatePrimaryButton(string text)
@@ -859,11 +1091,20 @@ internal sealed class SettingsForm : Form
         var font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
         return new AntButton
         {
-            Text = text, Size = new Size(MeasureButtonWidth(text, font), 40), Type = AntdUI.TTypeMini.Primary,
-            Radius = 6, BorderWidth = 0, BackColor = Accent, ForeColor = Color.White,
-            BackHover = Color.FromArgb(20, 154, 143), BackActive = Color.FromArgb(15, 132, 122),
-            ForeHover = Color.White, ForeActive = Color.White,
-            Font = font, TextAlign = ContentAlignment.MiddleCenter, Cursor = Cursors.Hand,
+            Text = text,
+            Size = new Size(MeasureButtonWidth(text, font), 40),
+            Type = AntdUI.TTypeMini.Primary,
+            Radius = 6,
+            BorderWidth = 0,
+            BackColor = Accent,
+            ForeColor = Color.White,
+            BackHover = Color.FromArgb(20, 154, 143),
+            BackActive = Color.FromArgb(15, 132, 122),
+            ForeHover = Color.White,
+            ForeActive = Color.White,
+            Font = font,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Cursor = Cursors.Hand,
             Margin = new Padding(10, 0, 0, 0)
         };
     }
@@ -873,11 +1114,21 @@ internal sealed class SettingsForm : Form
         var font = new Font("Microsoft YaHei UI", 9F);
         return new AntButton
         {
-            Text = text, Size = new Size(MeasureButtonWidth(text, font), 38), Radius = 6, BorderWidth = 1.2F,
-            DefaultBorderColor = Accent, DefaultBack = Color.FromArgb(221, 243, 239), BackColor = Color.FromArgb(221, 243, 239),
-            BackHover = Accent, BackActive = Color.FromArgb(15, 132, 122),
-            ForeColor = Color.FromArgb(18, 126, 116), ForeHover = Color.White, ForeActive = Color.White,
-            Font = font, TextAlign = ContentAlignment.MiddleCenter, Cursor = Cursors.Hand,
+            Text = text,
+            Size = new Size(MeasureButtonWidth(text, font), 38),
+            Radius = 6,
+            BorderWidth = 1.2F,
+            DefaultBorderColor = Accent,
+            DefaultBack = Color.FromArgb(221, 243, 239),
+            BackColor = Color.FromArgb(221, 243, 239),
+            BackHover = Accent,
+            BackActive = Color.FromArgb(15, 132, 122),
+            ForeColor = Color.FromArgb(18, 126, 116),
+            ForeHover = Color.White,
+            ForeActive = Color.White,
+            Font = font,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Cursor = Cursors.Hand,
             Margin = new Padding(10, 0, 0, 0)
         };
     }
@@ -918,6 +1169,7 @@ internal sealed class SettingsForm : Form
         button.Width = MeasureButtonWidth(text, button.Font);
     }
 
+    private sealed record BlurLevelChoice(RevealBlurLevel Level, string Name) { public override string ToString() => Name; }
     private sealed record ShapeChoice(RevealShape Shape, string Name) { public override string ToString() => Name; }
     private sealed record TriggerChoice(PeekTrigger Trigger, string Name) { public override string ToString() => Name; }
     private sealed record LanguageChoice(UiLanguage Language, string Name) { public override string ToString() => Name; }
@@ -1015,7 +1267,7 @@ internal sealed class SettingsForm : Form
             _capturing = false;
             Binding = _defaultBinding;
             SetHotkeyDisplayText(Display, UiText.ShortcutName(language, Binding));
-            Display.AllowClear = true;
+            Display.AllowClear = !Binding.IsDisabled;
         }
 
         public bool TryCapture(KeyEventArgs e, UiLanguage language)

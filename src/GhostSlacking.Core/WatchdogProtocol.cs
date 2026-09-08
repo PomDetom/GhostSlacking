@@ -7,7 +7,7 @@ public static class WatchdogProtocol
 {
     public const int Version = 1;
     public const int ManifestSchemaVersion = 1;
-    public const int SnapshotSchemaVersion = 1;
+    public const int SnapshotSchemaVersion = 2;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -86,6 +86,7 @@ public sealed record WatchdogRecoveryItem
     public required int BoundsHeight { get; init; }
     public required bool WasVisible { get; init; }
     public required bool WasMinimized { get; init; }
+    public required WindowPlacementSnapshot Placement { get; init; }
     public byte[]? OriginalRegionData { get; init; }
     public required long Style { get; init; }
     public required long ExtendedStyle { get; init; }
@@ -108,6 +109,7 @@ public sealed record WatchdogRecoveryItem
         BoundsHeight = snapshot.ScreenBounds.Height,
         WasVisible = snapshot.WasVisible,
         WasMinimized = snapshot.WasMinimized,
+        Placement = snapshot.Placement,
         OriginalRegionData = snapshot.OriginalRegionData,
         Style = snapshot.Styles.Style.ToInt64(),
         ExtendedStyle = snapshot.Styles.ExtendedStyle.ToInt64(),
@@ -128,6 +130,7 @@ public sealed record WatchdogRecoveryItem
         ScreenBounds = new System.Drawing.Rectangle(BoundsX, BoundsY, BoundsWidth, BoundsHeight),
         WasVisible = WasVisible,
         WasMinimized = WasMinimized,
+        Placement = Placement,
         OriginalRegionData = OriginalRegionData,
         Styles = new WindowStyleSnapshot((nint)Style, (nint)ExtendedStyle),
         OriginalSystemBackdropType = OriginalSystemBackdropType,
@@ -217,7 +220,10 @@ public sealed class WatchdogSession
                     message.Manifest.SchemaVersion != WatchdogProtocol.ManifestSchemaVersion ||
                     message.Manifest.ManifestId == Guid.Empty ||
                     message.Manifest.SessionId != _sessionId ||
-                    message.Manifest.Items is null)
+                    message.Manifest.Items is null ||
+                    message.Manifest.Items.Any(item =>
+                        item.SnapshotSchemaVersion != WatchdogProtocol.SnapshotSchemaVersion ||
+                        item.Placement is null))
                 {
                     return WatchdogMessageDisposition.RejectedPayload;
                 }

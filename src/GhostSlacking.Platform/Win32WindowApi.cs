@@ -24,6 +24,7 @@ public sealed class Win32WindowApi : IWindowApi
             ScreenBounds = ToRectangle(rect),
             IsVisible = Win32NativeMethods.IsWindowVisible(hwnd),
             IsMinimized = Win32NativeMethods.IsIconic(hwnd),
+            IsMaximized = Win32NativeMethods.IsZoomed(hwnd),
             ProcessName = TryGetProcessName(pid)
         };
     }
@@ -54,6 +55,17 @@ public sealed class Win32WindowApi : IWindowApi
                 "Could not capture the target process start identity. The window was not modified.");
         }
 
+        var placement = new Win32NativeMethods.WINDOWPLACEMENT
+        {
+            Length = (uint)Marshal.SizeOf<Win32NativeMethods.WINDOWPLACEMENT>()
+        };
+        if (!Win32NativeMethods.GetWindowPlacement(target.Hwnd, ref placement))
+        {
+            return OperationResult<WindowSnapshot>.Failed(
+                "Could not capture the target window placement. The window was not modified.",
+                Win32NativeMethods.LastError);
+        }
+
         return OperationResult<WindowSnapshot>.Ok(new WindowSnapshot
         {
             Hwnd = target.Hwnd,
@@ -63,6 +75,7 @@ public sealed class Win32WindowApi : IWindowApi
             ScreenBounds = ToRectangle(rect),
             WasVisible = Win32NativeMethods.IsWindowVisible(target.Hwnd),
             WasMinimized = Win32NativeMethods.IsIconic(target.Hwnd),
+            Placement = ToSnapshot(placement, ToRectangle(rect)),
             OriginalRegionData = region,
             OriginalSystemBackdropType = TryGetSystemBackdropType(target.Hwnd),
             OriginalNonClientRenderingPolicy = TryGetNonClientRenderingPolicy(target.Hwnd),
@@ -144,6 +157,16 @@ public sealed class Win32WindowApi : IWindowApi
 
     private static Rectangle ToRectangle(Win32NativeMethods.RECT rect) =>
         Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+
+    private static WindowPlacementSnapshot ToSnapshot(
+        Win32NativeMethods.WINDOWPLACEMENT placement,
+        Rectangle deviceBounds) => new(
+        (int)placement.Flags,
+        (int)placement.ShowCmd,
+        new Point(placement.MinPosition.X, placement.MinPosition.Y),
+        new Point(placement.MaxPosition.X, placement.MaxPosition.Y),
+        ToRectangle(placement.NormalPosition),
+        deviceBounds);
 
     private static string? TryGetProcessName(uint pid)
     {

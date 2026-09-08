@@ -85,6 +85,24 @@ public sealed class WatchdogProtocolTests
     }
 
     [Fact]
+    public void Session_rejects_a_manifest_with_an_old_incomplete_placement_snapshot()
+    {
+        var session = CreateSession();
+        session.Receive(Hello(), Now);
+        var manifest = CreateManifest() with
+        {
+            Items = [CreateItem() with { SnapshotSchemaVersion = WatchdogProtocol.SnapshotSchemaVersion - 1 }]
+        };
+
+        var disposition = session.Receive(
+            Message(WatchdogMessageKind.RecoveryManifest) with { Manifest = manifest },
+            Now.AddSeconds(1));
+
+        Assert.Equal(WatchdogMessageDisposition.RejectedPayload, disposition);
+        Assert.Null(session.LastManifest);
+    }
+
+    [Fact]
     public void Process_start_identity_mismatch_is_skipped()
     {
         var target = new FakeRecoveryTarget
@@ -156,6 +174,7 @@ public sealed class WatchdogProtocolTests
         Assert.Equal(snapshot.Styles, restored.Styles);
         Assert.Equal(snapshot.WasVisible, restored.WasVisible);
         Assert.Equal(snapshot.WasMinimized, restored.WasMinimized);
+        Assert.Equal(snapshot.Placement, restored.Placement);
     }
 
     private static WatchdogSession CreateSession() => new(SessionId, TimeSpan.FromSeconds(5));
@@ -193,6 +212,13 @@ public sealed class WatchdogProtocolTests
         BoundsHeight = 600,
         WasVisible = true,
         WasMinimized = false,
+        Placement = new WindowPlacementSnapshot(
+            0,
+            1,
+            Point.Empty,
+            Point.Empty,
+            new Rectangle(-100, 50, 800, 600),
+            new Rectangle(-1920, 0, 1920, 1080)),
         OriginalRegionData = [1, 2, 3],
         Style = 10,
         ExtendedStyle = 20,
