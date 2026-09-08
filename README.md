@@ -16,26 +16,13 @@ dotnet run --project src/GhostSlacking.App --configuration Debug
 
 ## 发布打包
 
-推荐生成无需预装 .NET 8 Desktop Runtime 的 Windows x64 自包含包：
+生成可双击安装的 Windows x64 MSI：
 
 ```powershell
-dotnet publish src/GhostSlacking.App/GhostSlacking.App.csproj `
-  --configuration Release `
-  --runtime win-x64 `
-  --self-contained true `
-  --artifacts-path artifacts/publish-work `
-  --output artifacts/publish/win-x64-self-contained `
-  -p:PublishTrimmed=false `
-  -p:DebugSymbols=false `
-  -p:DebugType=None
-
-Compress-Archive `
-  -Path artifacts/publish/win-x64-self-contained/* `
-  -DestinationPath artifacts/GhostSlacking-win-x64.zip `
-  -Force
+.\installer\build-installer.ps1
 ```
 
-如目标机器已经安装 .NET 8 Desktop Runtime，可将 `--self-contained true` 改为 `false` 以减小体积。请分发整个发布目录或 ZIP，不要只复制 `GhostSlacking.App.exe`；Avalonia、Windows App SDK 和 `GhostSlacking.Watchdog` 的运行文件也必须保留。
+输出文件为 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。安装时会显示标准 UAC 提示，默认安装到 `%ProgramFiles%\GhostSlacking`，并创建开始菜单快捷方式；应用启动后仍以普通用户权限运行。指定版本可运行 `.\installer\build-installer.ps1 -Version 0.2.0`；版本必须使用三段数字且升级时递增。
 
 默认快捷键（全部可在设置中修改）：
 

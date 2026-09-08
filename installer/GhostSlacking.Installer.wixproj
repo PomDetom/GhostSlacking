@@ -1,0 +1,12 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.0</ProductVersion>
+    <PublishDirectory Condition="'$(PublishDirectory)' == ''">$(MSBuildThisFileDirectory)..\artifacts\installer-publish\win-x64</PublishDirectory>
+    <DefineConstants>ProductVersion=$(ProductVersion);PublishDirectory=$(PublishDirectory)</DefineConstants>
+    <OutputName>GhostSlacking-$(ProductVersion)-win-x64</OutputName>
+    <OutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer</OutputPath>
+    <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer-obj\$(Configuration)</IntermediateOutputPath>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+</Project>
