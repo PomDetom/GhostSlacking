@@ -5,6 +5,8 @@
 > 主路线：C# + .NET + Avalonia/FluentAvalonia UI + Win32 P/Invoke
 > 首个可用渲染方案：`SetWindowRgn`
 
+> 当前状态（2026-09-09）：Phase 1 实现完成；Phase 2 的 Watchdog v1 已完成、其余可靠性工作进行中；Phase 3 产品化代码基本完成；Phase 4 Composition 羽化原型已接入。真实窗口兼容性、DPI/权限矩阵、长时间运行和干净系统安装验收仍未完成，详见 [实施状态](IMPLEMENTATION_STATUS.md)。
+
 ## 1. 实施策略
 
 按“先验证最关键风险，再补可靠性，最后产品化”的顺序推进。每个 Phase 都应产出可运行结果和明确的停止/继续判断，避免在核心技术未经验证前投入设置系统、复杂 UI 或高级渲染。
@@ -14,11 +16,11 @@ Phase 0  Technical Spike       验证 HWND、region、坐标、交互、恢复
    ↓
 Phase 1  Ghost Core            做出单窗口可用闭环
    ↓
-Phase 2  Reliability            覆盖异常、DPI、权限和 Watchdog
+Phase 2  Reliability            Watchdog v1 已完成，其余异常/DPI/权限验收进行中
    ↓
-Phase 3  Productization         托盘、设置、配置、发布和可诊断性
+Phase 3  Productization         托盘、设置、配置和发布代码基本完成
    ↓
-Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
+Phase 4  Advanced Rendering     Composition 外扩羽化原型已实现，验收进行中
 ```
 
 ## 2. 技术基线与范围
@@ -30,15 +32,15 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 - Win32 API 集中封装在 Platform 层；
 - 单目标窗口优先；
 - 不注入、不截图、不依赖目标应用 SDK；
-- V0.1 使用硬边 region；
-- 所有修改先保存快照，所有退出路径尝试恢复。
+- 核心裁剪使用 `SetWindowRgn`；Composition 外扩羽化是可选视觉层，失败时回退硬边 region；
+- 所有修改先保存快照；异常退出由 Watchdog 尽力恢复，正常退出按 `RestoreOnExit` 设置恢复。
 
 ### 2.2 V0.1 必须交付
 
 - Window Picker；
 - 单窗口 Ghost/Reveal/Restore 状态机；
-- Hold-to-Peek；
-- 圆形 Reveal 随鼠标移动；
+- Hold-to-Peek 和按下切换两种 Peek 模式；
+- 圆形、矩形或圆角矩形 Reveal 随鼠标移动；
 - 区域内点击/滚动的兼容性验证；
 - 当前窗口位置和尺寸跟踪；
 - 托盘入口和全局快捷键；
@@ -49,17 +51,19 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 ### 2.3 V0.1 不做
 
 - 多窗口同时管理；
-- 截图式软边、静态模糊副本和复杂动画；
+- 抓屏式软边、静态模糊副本、实时窗口克隆和复杂动画；
 - 云同步、账户、插件、规则引擎；
 - OCR、截图、录制、远程控制；
 - 绝对防录屏/防监控；
 - 为兼容个别特殊应用而引入复杂注入或驱动。
 
-## 3. Phase 0 — Technical Spike
+## 3. Phase 0 — Technical Spike（已沉淀到当前实现）
 
 ### 3.1 目的
 
-在最小代码量内验证一个关键问题：普通 Windows 窗口能否通过 `SetWindowRgn` 实现“默认不可见、按住 Peek 时显示光标附近圆形区域，并尽量可交互”，且可安全恢复。
+本阶段的验证结论已沉淀到当前 Core/Platform/App 实现：普通窗口采用 `SW_HIDE` 进入 Ghost，Reveal 使用 `SetWindowRgn`，并保留完整快照用于恢复。原始 Spike 工程未单独保留；真实窗口结论仍以手工矩阵为准。
+
+以下任务表是实施拆解和结果来源，不是尚未开始的待办列表。
 
 ### 3.2 任务
 
@@ -87,15 +91,17 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 - 明确记录空 region 与 `ShowWindow` 策略的优缺点；
 - 若核心交互在普通窗口上不可接受，应在此阶段停下来调整技术路线，而不是直接扩大产品范围。
 
-### 3.4 Phase 0 结束门槛
+### 3.4 Phase 0 结束门槛（历史判定口径）
 
-只有当 region 路线在至少两类普通窗口上稳定通过，并且恢复路径可重复验证，才进入 Phase 1。特殊窗口失败可以记录为边界，不应阻塞 MVP；普通窗口普遍失败则必须重新评估方案。
+进入 Phase 1 前，region 路线和恢复路径必须在至少两类普通窗口上验证；特殊窗口失败记录为边界，不阻塞 MVP。当前实现已沿用该路线，但仍需完成第 9 节列出的完整手工矩阵。
 
-## 4. Phase 1 — Ghost Core
+## 4. Phase 1 — Ghost Core（实现已完成）
 
 ### 4.1 目的
 
 把 Spike 重构为可测试的单窗口核心，形成从拾取到恢复的完整产品闭环。
+
+本阶段的代码和自动化测试已完成；剩余真实窗口验收列在第 9 节和实施状态文档中。
 
 ### 4.2 任务拆解
 
@@ -157,7 +163,7 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 
 - 用户可以从托盘进入 Picker 并选择一个普通顶层窗口；
 - 选中后窗口默认不可见，不影响目标进程继续运行；
-- 按住 Peek Key 且光标在目标范围内时出现圆形 Reveal；
+- 按配置的 Peek 模式且光标在目标范围内时出现所选形状的 Reveal；
 - 光标移动、窗口移动和窗口缩放后 Reveal 几何正确；
 - 松开按键、移出目标范围、Restore 或切换目标都会恢复正确状态；
 - 圆形区域内至少完成点击、滚轮中的一种真实交互；
@@ -165,11 +171,11 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 - 核心状态机和几何计算有自动化测试；
 - 无明显的 GDI region 泄漏或高频无效更新。
 
-## 5. Phase 2 — Reliability
+## 5. Phase 2 — Reliability（部分完成）
 
 ### 5.1 目的
 
-把“能跑”变成“出错时也不会把用户窗口留在异常状态”。本阶段不扩展大量用户功能，专注生命周期、恢复、DPI、权限和诊断。
+把“能跑”变成“出错时也不会把用户窗口留在异常状态”。Watchdog v1 已落地；本阶段剩余工作集中在生命周期、恢复、DPI、权限、诊断和真实环境验收。
 
 ### 5.2 任务拆解
 
@@ -184,34 +190,34 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 
 #### 5.2.2 异常与进程生命周期
 
-- 覆盖 Avalonia 调度线程异常、AppDomain 未处理异常和正常退出；
-- 捕获注销/关机通知，尽力提前恢复；
+- Avalonia 调度线程异常和正常退出已接入主进程恢复/关闭流程；AppDomain 未处理异常当前仅保留诊断输出，异常终止恢复由 Watchdog 负责；
+- 捕获注销/关机通知，尽力提前恢复（未完成）；
 - 发生恢复失败时停用自动重试并显示明确操作入口；
 - 将最后一次恢复状态写入本地诊断日志。
 
 #### 5.2.3 Watchdog
 
-- 新建最小 `GhostSlacking.Watchdog` 进程；
-- 设计带版本号和会话 ID 的本地 IPC；
-- 主进程发送启动握手、心跳和恢复清单；
-- 主进程正常退出前发送清理完成消息；
-- 心跳超时后验证进程身份并执行安全恢复；
-- Watchdog 失败、被阻止或版本不兼容时给出诊断信息。
+- [已完成] 新建最小 `GhostSlacking.Watchdog` 进程；
+- [已完成] 设计带版本号和会话 ID 的当前用户本地命名管道 IPC；
+- [已完成] 主进程发送启动握手、心跳和恢复清单；
+- [已完成] 主进程正常退出前发送清理完成消息；
+- [已完成] 心跳超时后验证 HWND、PID、进程启动身份和快照版本，再执行安全恢复；
+- [部分完成] Watchdog 启动、IPC 失败和版本不兼容已有日志；真实异常终止和用户侧诊断反馈仍需手工验收。
 
 #### 5.2.4 DPI 与多显示器
 
-- 设置 Per Monitor DPI Awareness V2；
-- 测试负坐标、不同缩放、跨屏移动和热插拔显示器；
-- 将所有核心几何统一到物理屏幕像素；
-- 对 DPI 变化和 rect 变化重新计算 region。
+- [已完成] 设置 Per Monitor DPI Awareness V2；
+- [待验收] 测试负坐标、不同缩放、跨屏移动和热插拔显示器；
+- [已完成] 将所有核心几何统一到物理屏幕像素；
+- [已完成实现/待手工验收] 对 DPI 变化和 rect 变化重新计算 region。
 
 #### 5.2.5 权限和兼容性
 
-- 检测目标窗口完整性级别或 native 操作失败模式；
-- 对高权限目标给出“需相同权限运行”的提示；
-- 不默认提升管理员权限；
-- 对 Electron、浏览器、自绘窗口、全屏应用分别记录测试结果；
-- 将不支持的窗口类型转为可理解的非阻断错误。
+- [部分完成] native 操作失败已有错误码和用户反馈；目标完整性级别的专门诊断仍未完成；
+- [待补齐] 对高权限目标给出更具体的“需相同权限运行”提示；
+- [已完成] 不默认提升管理员权限；
+- [待验收] 对 Electron、浏览器、自绘窗口、全屏应用分别记录测试结果；
+- [已完成实现/待扩充矩阵] 将不支持的窗口类型转为可理解的非阻断错误。
 
 ### 5.3 Phase 2 验收标准
 
@@ -223,7 +229,7 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 - 日志足以定位“哪一个 native 操作、对哪个目标、因何失败”；
 - 长时间运行至少 2 小时无持续句柄增长、明显 CPU 升高或状态漂移。
 
-## 6. Phase 3 — Productization
+## 6. Phase 3 — Productization（主要实现已完成）
 
 ### 6.1 目的
 
@@ -231,16 +237,16 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 
 ### 6.2 任务拆解
 
-- 完善托盘菜单、状态文字和错误 Toast；
-- 增加 Avalonia + FluentAvalonia 设置页：Peek Key、Reveal Diameter、开机启动、退出恢复、日志级别；
-- 使用带 schema version 的 JSON 配置，并对损坏配置提供回退；
-- 增加启动单实例互斥，避免多个主进程同时修改同一窗口；
-- 完善 Emergency Restore 快捷键和托盘入口；
-- 增加安装/卸载、快捷方式和开机启动选项；
-- 增加版本信息、日志目录入口和诊断导出；
-- 准备签名/发布策略和最小权限说明；
-- 编写用户可读的兼容性和隐私说明；
-- 打包手工测试清单和回归测试脚本。
+- [已完成] 完善托盘菜单、状态文字和非激活错误/信息提示；
+- [已完成] 增加 Avalonia + FluentAvalonia 设置页：Peek Key、Reveal Diameter、形状、羽化、模糊、开机启动、退出恢复、日志级别和全局快捷键；
+- [已完成] 使用 schema version 为 4 的 JSON 配置，并对损坏配置提供回退；
+- [已完成] 增加启动单实例互斥，避免多个主进程同时修改同一窗口；
+- [已完成] 完善 Emergency Restore 快捷键和托盘入口；
+- [已完成] 增加 MSI 安装/卸载、快捷方式和开机启动选项；
+- [部分完成] 发布脚本、版本信息和日志已存在；诊断导出尚未实现；
+- [部分完成] 已有最小权限说明和 GitHub Actions 发布流程；代码签名策略尚未落地；
+- [已完成] 编写用户可读的兼容性和隐私说明；
+- [待验收] 完成干净 Windows 环境安装、升级、卸载和手工回归清单。
 
 ### 6.3 产品化验收标准
 
@@ -252,7 +258,7 @@ Phase 4  Advanced Rendering     已进入：外扩羽化/GPU 毛玻璃
 - 安装包在干净 Windows 环境中可安装、启动、卸载；
 - 产品文案明确说明硬边 region、兼容性范围和不具备防录屏能力。
 
-## 7. Phase 4 — Advanced Rendering
+## 7. Phase 4 — Advanced Rendering（原型已实现，验收进行中）
 
 ### 7.1 进入条件
 
@@ -265,13 +271,13 @@ Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可�
 
 ### 7.2 任务拆解
 
-- 定义 `IVisibilityBackend`，将现有 region 后端与新后端隔离；
-- 使用非激活、鼠标穿透的 Windows Composition overlay；
-- 使用 `CompositionBackdropBrush` 和 Win2D 效果描述实时模糊，不读取或保存目标像素；
-- 将目标内容 region 外扩到羽化宽度的 70%，用可选的单一 GPU 模糊等级在原始清晰边界之外平滑渐入、扩散和淡出；
-- 比较 CPU、GPU、内存、延迟和兼容性；
-- 保留 Region Backend 作为兼容和回退路径；
-- 迁移视觉验收，不改变 Trigger、Tracker、Recovery 和产品状态机。
+- [已完成] 通过 `IVisibilityBackend` 和 `IRevealVisualHost` 隔离窗口 region 后端与视觉层；
+- [已完成] 使用非激活、鼠标穿透的 Windows Composition overlay；
+- [已完成] 使用 `CompositionBackdropBrush` 和 Win2D 效果描述实时模糊，不读取或保存目标像素；
+- [已完成] 将目标内容 region 外扩到羽化宽度的 70%，用可选的单一 GPU 模糊等级在原始清晰边界之外平滑渐入、扩散和淡出；
+- [待验收] 比较 CPU、GPU、内存、延迟和兼容性；
+- [已完成] 保留 Region Backend 作为兼容和回退路径；
+- [已完成实现/待手工验收] 视觉层未改变 Trigger、Tracker、Recovery 和产品状态机。
 
 ### 7.3 Phase 4 验收标准
 
@@ -304,8 +310,8 @@ Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可�
 |---|---|---|
 | 选择普通窗口 | 获取正确顶层 HWND/PID | 自动化 + 手工 |
 | Ghost | 默认不可见，进程继续运行 | 手工 |
-| Hold-to-Peek | 按住显示，释放隐藏 | 手工 |
-| 光标移动 | 圆形 region 跟随且无明显偏移 | 手工 |
+| Peek | 按配置的按住显示或按下切换模式工作 | 自动化 + 手工 |
+| 光标移动 | 所选形状的 region 跟随且无明显偏移 | 手工 |
 | 窗口移动/缩放 | Reveal 几何跟随新 rect | 手工 |
 | 圆内点击/滚轮 | 至少一种交互可用 | 手工 |
 | 移出目标范围 | 回到 Ghost | 自动化 + 手工 |
@@ -337,13 +343,13 @@ Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可�
 
 ## 10. 里程碑
 
-| 里程碑 | 完成标志 |
-|---|---|
-| M0 Spike Decision | 普通窗口 region 路线结论、坐标和恢复风险已验证 |
-| M1 Core Demo | 单窗口 Pick → Ghost → Peek → Restore 可演示 |
-| M2 Reliability Candidate | 异常、DPI、多屏、权限和恢复矩阵通过 |
-| M3 V0.1 Release Candidate | 托盘、设置、配置、日志、安装和兼容性说明完成 |
-| M4 Rendering Prototype | 在数据证明必要时完成可回退的高级后端原型 |
+| 里程碑 | 完成标志 | 当前状态 |
+|---|---|---|
+| M0 Spike Decision | 普通窗口 region 路线结论、坐标和恢复风险已验证 | 实现已沉淀；手工记录待补 |
+| M1 Core Demo | 单窗口 Pick → Ghost → Peek → Restore 可演示 | 已完成实现 |
+| M2 Reliability Candidate | 异常、DPI、多屏、权限和恢复矩阵通过 | Watchdog v1 已完成；矩阵未通过 |
+| M3 V0.1 Release Candidate | 托盘、设置、配置、日志、安装和兼容性说明完成 | 代码基本完成；发布/兼容性验收待补 |
+| M4 Rendering Prototype | 在数据证明必要时完成可回退的高级后端原型 | 已完成原型；性能/兼容性待验收 |
 
 ## 11. Definition of Done
 
@@ -359,9 +365,9 @@ Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可�
 - 代码在目标 Windows 版本上可构建、启动和退出；
 - 任何未完成项都被标记为已知限制或下一 Phase 任务，而不是隐含在发布范围内。
 
-## 12. 推荐的首个开发顺序
+## 12. 原始首个开发顺序（已完成，供回溯）
 
-如果只安排最短验证路径，按以下顺序执行：
+如果从零开始重建原型，最短验证路径如下；它不是当前剩余工作的待办清单：
 
 ```text
 1. 建立最小 Avalonia 托盘/消息循环

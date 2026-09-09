@@ -334,9 +334,45 @@ $upgradeNavigation = Get-MsiRows -Database $database -Table 'ControlEvent' |
 Assert-Msi ($null -ne $upgradeNavigation) 'The upgrade-specific wizard page is not connected.'
 
 $controlEvents = Get-MsiRows -Database $database -Table 'ControlEvent'
+$exitDialogId = 'GhostSlackingExitDialog'
+$exitDialogControls = Get-MsiRows -Database $database -Table 'Control' |
+    Where-Object { $_.Fields[0] -eq $exitDialogId }
+$launchCheckbox = $exitDialogControls |
+    Where-Object { $_.Fields[1] -eq 'OptionalCheckBox' } |
+    Select-Object -First 1
+$launchCheckboxText = $exitDialogControls |
+    Where-Object { $_.Fields[1] -eq 'OptionalCheckBoxText' } |
+    Select-Object -First 1
+$exitDialogBackButton = $exitDialogControls |
+    Where-Object { $_.Fields[1] -eq 'Back' } |
+    Select-Object -First 1
+Assert-Msi ($null -ne $launchCheckbox -and
+    $launchCheckbox.Fields[2] -eq 'CheckBox' -and
+    [int]$launchCheckbox.Fields[3] -eq 15 -and
+    [int]$launchCheckbox.Fields[4] -eq 243 -and
+    [int]$launchCheckbox.Fields[5] -ge 150 -and
+    [int]$launchCheckbox.Fields[6] -eq 17 -and
+    $launchCheckbox.Fields[8] -eq 'WIXUI_EXITDIALOGOPTIONALCHECKBOX' -and
+    $launchCheckbox.Fields[9] -eq '[WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT]') 'The launch checkbox is not a single aligned control in the standard bottom bar.'
+Assert-Msi ($null -ne $exitDialogBackButton -and
+    ([int]$launchCheckbox.Fields[3] + [int]$launchCheckbox.Fields[5]) -le [int]$exitDialogBackButton.Fields[3]) 'The launch checkbox overlaps the completion buttons.'
+Assert-Msi ($null -eq $launchCheckboxText) 'The obsolete separate launch-checkbox label is still present.'
+
+$controlConditions = Get-MsiRows -Database $database -Table 'ControlCondition'
+$launchCheckboxCondition = $controlConditions |
+    Where-Object {
+        $_.Fields[0] -eq $exitDialogId -and
+        $_.Fields[1] -eq 'OptionalCheckBox' -and
+        $_.Fields[2] -eq 'Show'
+    } |
+    Select-Object -First 1
+$freshInstallCheckboxCondition = 'WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT AND NOT Installed'
+Assert-Msi ($null -ne $launchCheckboxCondition -and
+    $launchCheckboxCondition.Fields[3] -eq $freshInstallCheckboxCondition) 'The launch checkbox is not restricted to fresh installs.'
+
 $postInstallLaunchEvent = $controlEvents |
     Where-Object {
-        $_.Fields[0] -eq 'ExitDialog' -and
+        $_.Fields[0] -eq $exitDialogId -and
         $_.Fields[1] -eq 'Finish' -and
         $_.Fields[2] -eq 'DoAction' -and
         $_.Fields[3] -eq 'LaunchGhostSlackingAfterInstall'
@@ -344,14 +380,14 @@ $postInstallLaunchEvent = $controlEvents |
     Select-Object -First 1
 $exitDialogCloseEvent = $controlEvents |
     Where-Object {
-        $_.Fields[0] -eq 'ExitDialog' -and
+        $_.Fields[0] -eq $exitDialogId -and
         $_.Fields[1] -eq 'Finish' -and
         $_.Fields[2] -eq 'EndDialog'
     } |
     Select-Object -First 1
 $postInstallTargetEvent = $controlEvents |
     Where-Object {
-        $_.Fields[0] -eq 'ExitDialog' -and
+        $_.Fields[0] -eq $exitDialogId -and
         $_.Fields[1] -eq 'Finish' -and
         $_.Fields[2] -eq '[WixUnelevatedShellExecTarget]' -and
         $_.Fields[3] -eq '[INSTALLFOLDER]GhostSlacking.App.exe'
@@ -367,6 +403,19 @@ Assert-Msi ($null -ne $exitDialogCloseEvent -and
     [int]$postInstallLaunchEvent.Fields[5] -lt [int]$exitDialogCloseEvent.Fields[5]) 'The application launch event does not run before ExitDialog closes.'
 
 $installUiRows = Get-MsiRows -Database $database -Table 'InstallUISequence'
+$exitDialogShow = $installUiRows |
+    Where-Object { $_.Fields[0] -eq $exitDialogId -and [int]$_.Fields[2] -eq -1 } |
+    Select-Object -First 1
+$legacyExitDialogShow = $installUiRows |
+    Where-Object { $_.Fields[0] -eq 'ExitDialog' } |
+    Select-Object -First 1
+$adminExitDialogShow = Get-MsiRows -Database $database -Table 'AdminUISequence' |
+    Where-Object { $_.Fields[0] -eq $exitDialogId -and [int]$_.Fields[2] -eq -1 } |
+    Select-Object -First 1
+Assert-Msi ($null -ne $exitDialogShow -and
+    $null -ne $adminExitDialogShow -and
+    $null -eq $legacyExitDialogShow) 'The customized completion dialog is not the only success dialog in the UI sequences.'
+
 $checkboxTextAction = $customActions |
     Where-Object { $_.Fields[0] -eq 'SetWIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT' } |
     Select-Object -First 1

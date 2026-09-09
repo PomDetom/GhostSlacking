@@ -1,85 +1,196 @@
 # GhostSlacking
 
-Windows 10/11 x64 上的轻量窗口 Ghost/Peek 工具。当前实现包含 V0.1 Phase 1 闭环和 Phase 2 的首个 Watchdog 恢复增量：
+GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部查看工具。它可以隐藏指定窗口，并在鼠标附近临时显示一块可交互区域，方便在不完整恢复窗口的情况下查看、点击或滚动内容。
 
-`Pick Window → Ghost → Peek 局部 Reveal → Restore`
+核心使用流程：
 
-Reveal 默认使用 144px 圆角矩形、16px 羽化范围和轻度模糊，直径快捷键步长为 16px；形状、羽化和模糊等级均可在设置中调整。原有 Reveal 中心保持完全清晰且可直接点击、滚动，外侧由系统合成器使用所选的单一模糊强度生成平滑渐入、淡出的透明毛玻璃。Peek 默认采用按下切换，也可改为按住显示；Avalonia + FluentAvalonia 设置页的每项输入均提供恢复默认按钮，并支持跟随系统、浅色和深色三种界面主题。
+```text
+选择窗口 → 隐藏窗口 → 局部查看（Peek）→ 恢复窗口
+```
 
-## 构建与测试
+## 功能特性
+
+- 通过全局快捷键或托盘菜单选择目标窗口。
+- 隐藏目标窗口，并在需要时切换完整显示状态。
+- 在鼠标附近显示圆形、矩形或圆角矩形 Reveal 区域。
+- Reveal 区域支持羽化和模糊效果，区域内可正常点击、滚动和操作。
+- Peek 支持按住显示或按下切换两种模式。
+- 可配置 Reveal 尺寸、调整步长、形状、羽化宽度和模糊等级。
+- 可自定义窗口选择、显隐、恢复、设置、退出等全局快捷键。
+- 支持简体中文和英文界面。
+- 支持跟随系统、浅色和深色主题。
+- 支持开机启动、退出时恢复窗口和日志级别设置。
+- 内置 Watchdog，在主程序异常终止后尝试安全恢复受控窗口。
+- 单实例运行，不会同时启动多个托盘进程。
+
+## 系统要求
+
+- Windows 10 或 Windows 11，x64。
+- [.NET 8 Runtime x64](https://aka.ms/dotnet/8.0/runtime-win-x64.exe)。无需安装 .NET Desktop Runtime。
+- 控制以管理员身份运行的窗口时，GhostSlacking 通常也需要以相同权限运行。
+
+## 安装
+
+从项目的 GitHub Releases 页面下载 `GhostSlacking-<版本>-win-x64.msi`，双击并按照安装向导完成安装。
+
+安装器支持选择安装位置，以及是否创建开始菜单和桌面快捷方式。普通卸载不会删除用户设置和日志。
+
+## 使用方法
+
+GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托盘图标可开始选择窗口，右键托盘图标可使用完整菜单。
+
+### 基本流程
+
+1. 启动 GhostSlacking。
+2. 按 `Ctrl+Alt+P`，或单击托盘图标进入窗口选择状态。
+3. 单击需要控制的普通顶层窗口。按 `Esc` 可以取消选择。
+4. 按 `Ctrl+Alt+G` 隐藏或完整显示当前目标窗口。
+5. 按 `Alt` 在鼠标附近显示或隐藏 Reveal 区域。默认模式为按下切换，可在设置中改为按住显示。
+6. 按 `Ctrl+Alt+R` 恢复当前窗口并解除目标关联。
+
+### 默认快捷键
+
+| 功能            | 默认快捷键              |
+| ------------- | ------------------ |
+| 选择窗口          | `Ctrl+Alt+P`       |
+| 隐藏/显示当前窗口     | `Ctrl+Alt+G`       |
+| Peek / Reveal | `Alt`              |
+| 恢复当前窗口        | `Ctrl+Alt+R`       |
+| 紧急恢复全部窗口      | `Ctrl+Shift+Alt+R` |
+| 打开设置          | `Ctrl+Alt+S`       |
+| 退出应用          | `Ctrl+Alt+Q`       |
+| 增大/减小 Reveal  | 默认未绑定              |
+
+快捷键和 Peek 按键均可在设置页面中调整。若快捷键与其他应用冲突，GhostSlacking 会显示提示并保留可恢复的设置状态。
+
+### 设置与退出
+
+按 `Ctrl+Alt+S` 或从托盘菜单打开设置。界面主题会在选中后立即预览，取消或关闭窗口会恢复已保存主题；其他修改及主题持久化仍需点击“保存”后生效。保存成功状态会短暂显示后自动隐藏。
+
+建议通过托盘菜单或 `Ctrl+Alt+Q` 正常退出。默认情况下，退出应用会恢复所有由 GhostSlacking 修改过的窗口。
+
+## 配置、日志与数据
+
+应用数据保存在当前用户的本地应用数据目录：
+
+```text
+%LOCALAPPDATA%\GhostSlacking\
+├── settings.json
+└── logs\
+    ├── ghostslacking.log
+    ├── ghostslacking.1.log
+    └── watchdog.log
+```
+
+- `settings.json`：用户设置。
+- `ghostslacking.log`：主程序日志，达到大小限制后滚动为 `ghostslacking.1.log`。
+- `watchdog.log`：异常恢复进程日志。
+
+可在资源管理器地址栏输入 `%LOCALAPPDATA%\GhostSlacking` 直接打开该目录。
+
+## 从源码构建和启动
+
+### 开发环境
+
+- Windows 10/11 x64。
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)。
+- Git。
+
+在 PowerShell 中执行：
 
 ```powershell
+git clone <你的仓库地址>
+cd GhostSlacking
+
+dotnet restore GhostSlacking.sln
 dotnet build GhostSlacking.sln --configuration Debug
-dotnet test GhostSlacking.sln --configuration Debug
 dotnet run --project src/GhostSlacking.App --configuration Debug
 ```
 
-## 发布打包
+程序启动后会出现在系统托盘中。调试期间请通过托盘菜单退出，避免已有实例占用单实例互斥锁或全局快捷键。
 
-生成可双击安装的 Windows x64 MSI：
+### 运行测试
 
 ```powershell
-.\installer\build-installer.ps1
+dotnet test GhostSlacking.sln --configuration Debug
 ```
 
-输出文件为 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。安装包不包含 .NET；目标机器需要预先安装普通 [.NET 8 Runtime x64](https://aka.ms/dotnet/8.0/runtime-win-x64.exe)，不需要 Desktop Runtime。简体中文安装向导允许修改默认的 `%ProgramFiles%\GhostSlacking` 安装位置，并可独立选择开始菜单和桌面快捷方式；开始菜单快捷方式默认创建，桌面快捷方式默认不创建。全新安装完成页默认勾选“立即启动 GhostSlacking”，取消勾选后不会启动。安装时会显示标准 UAC 提示，应用始终以普通用户权限运行。
+发布前建议同时验证 Release 配置：
 
-不带安全升级协议标记的旧版（包括 `0.1.0`）不能直接覆盖升级。安装器会在关闭程序或修改文件前提示用户：先退出程序，并在 Windows 设置的“已安装的应用”中卸载所有 GhostSlacking 条目，再重新运行新版 MSI；普通卸载不会删除 `%LocalAppData%\GhostSlacking` 中的设置与日志。
+```powershell
+dotnet test GhostSlacking.sln --configuration Release
+```
 
-从带有升级协议标记的新版本开始，后续升级可直接运行更高版本（或同版本重新构建）的 MSI，无需先卸载。安装器会沿用原安装位置和快捷方式选择；如程序正在运行，会先请求安全退出并恢复受控窗口，最多等待 15 秒。升级事务成功后，只有升级前处于运行状态且使用交互式向导时才自动启动新版；升级前未运行以及静默安装或升级均不会自动启动。若程序或 Watchdog 未能安全退出，文件替换会失败并回滚保留旧版本。更改安装位置仍需先卸载再重新安装。
+## 构建安装包
 
-指定版本可运行 `.\installer\build-installer.ps1 -Version 0.2.0`；版本必须使用三段数字且升级时递增。构建完成后脚本会检查 MSI 的 UpgradeCode、升级协议标记、旧版拦截条件、功能迁移、关闭动作、事务时序和非提权重启动作。
-
-打包脚本会为自有程序集生成随产品版本递增的 Windows 文件版本，并同时校验发布目录和 MSI `File` 表，确保升级安装真正替换主程序、Core、Platform 与 Watchdog 文件。
-
-### 一键自动打包
-
-双击仓库根目录的 `package.cmd`，或在 PowerShell 中直接运行：
+双击仓库根目录的 `package.cmd`，或运行交互式发布脚本：
 
 ```powershell
 .\build-release.ps1
 ```
 
-脚本会显示中文菜单，可直接选择 Patch、Minor、Major、指定版本或跳过测试的 Patch 快速调试包，并可选择完成后是否打开输出目录，无需手写命令后缀。完整打包会依次还原依赖、运行 Release 测试、发布应用、构建并校验 MSI，最后在 `artifacts\releases\<版本>` 生成 MSI、SHA256 校验文件、`release.json` 发布清单和完整构建日志。自动递增时，工具会根据已有 MSI 或 `v1.2.3` 格式的 Git 标签计算下一版本；首次打包使用安装器项目中的初始版本。
+脚本可以选择 Patch、Minor、Major 或指定版本，并依次完成依赖还原、Release 测试、应用发布、MSI 构建和安装包校验。输出位于：
 
-CI 或自动化调用仍可使用非交互参数：
-
-```powershell
-# 明确指定版本
-.\build-release.ps1 -Version 0.2.0
-
-# 自动递增次版本号（非交互）
-.\build-release.ps1 -Increment Minor
-
-# 仅在紧急排查时跳过测试（非交互）
-.\build-release.ps1 -Version 0.2.0 -SkipTests
+```text
+artifacts\releases\<版本>\
 ```
 
-### GitHub CI/CD
-
-推送到 `master` 或提交 Pull Request 时，GitHub Actions 会在 Windows 环境运行 Release 测试。发布正式版本时，将工作流文件合并到 `master`，再创建并推送严格的三段式版本标签：
+自动化环境可使用非交互参数：
 
 ```powershell
-git tag v0.2.0
-git push origin v0.2.0
+# 指定版本并执行完整构建
+.\build-release.ps1 -Version 0.1.0
+
+# 自动递增补丁版本
+.\build-release.ps1 -Increment Patch
+
+# 仅在临时排查时跳过测试
+.\build-release.ps1 -Version 0.1.0 -SkipTests
 ```
 
-标签工作流会调用同一个 `build-release.ps1`，自动创建公开的 GitHub Release，并上传 MSI、SHA256 校验文件和 `release.json`。构建日志作为 Actions artifact 保留 14 天。仓库需要启用 GitHub Actions，并允许工作流使用只读仓库权限；发布任务会仅为当前作业申请 `contents: write`。已存在同名 Release 时工作流会失败，不覆盖已发布资产。
+如只需直接生成 MSI：
 
-默认快捷键（全部可在设置中修改）：
+```powershell
+.\installer\build-installer.ps1 -Version 0.1.0
+```
 
-- `Ctrl+Alt+G`：没有目标时开始拾取；有目标时切换当前窗口的隐藏/显示状态
-- `Ctrl+Alt+P`：选择窗口
-- 自定义 Peek 按键：按设置的模式显示或切换光标附近的 Reveal 区域
-- 默认未绑定：按可配置步长增大或减小 Reveal 直径
-- `Ctrl+Alt+R`：恢复当前窗口
-- `Ctrl+Shift+Alt+R`：Emergency Restore All
-- `Ctrl+Alt+Q`：退出并按设置恢复
+MSI 将生成到 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。WiX 依赖由项目在还原和构建时自动获取。
 
-设置页会分别显示并捕获选择窗口、窗口显隐、Reveal 直径增减、恢复当前窗口、恢复所有窗口、打开设置和退出应用的快捷键；`Ctrl+Alt+R` 仍会最终恢复窗口并解除目标关联。
+## 发布到 GitHub
 
-实现使用 `SetWindowRgn` 扩展目标的局部可见范围，并通过鼠标穿透的 Windows Composition overlay 在清晰 Reveal 外侧以单一模糊半径实时扩散和淡出；不截图、不注入目标进程，也不提供防录屏保证。窗口恢复保存完整 `WINDOWPLACEMENT`，并在延迟稳定校验完成前保留恢复资料。合成效果不可用时会退回原有硬边 Reveal。特殊窗口、不同权限窗口和高频重绘窗口仍需按文档中的手工矩阵验证。
+仓库包含以下 GitHub Actions 工作流：
 
-独立 `GhostSlacking.Watchdog` 进程通过当前用户本地命名管道接收版本化心跳和恢复清单。主进程意外停止心跳时，Watchdog 只恢复 HWND、PID 与进程启动身份均匹配的登记目标；正常退出会清除最后清单。
+- 推送到 `master` 或创建 Pull Request 时运行 Release 测试。
+- 推送 `vMAJOR.MINOR.PATCH` 格式的标签时构建 MSI、生成 SHA256 与发布清单，并创建 GitHub Release。
 
-选择窗口、选择成功和运行错误通过 Avalonia 非激活实底提示浮层反馈，无需打开设置窗口；连续提示会替换上一条并在 2.5 秒后隐藏。设置修改和保存结果通过底部操作栏中的 FluentAvalonia `InfoBar` 显示，保存成功提示会在 2.5 秒后自动隐藏。
+示例：
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+## 项目结构
+
+```text
+src/
+├── GhostSlacking.Core/       领域模型、状态协调、设置与恢复逻辑
+├── GhostSlacking.Platform/   Windows/Win32 平台适配
+├── GhostSlacking.App/        托盘主程序、设置与通知界面
+└── GhostSlacking.Watchdog/   主程序异常后的窗口恢复进程
+tests/
+├── GhostSlacking.Core.Tests/
+└── GhostSlacking.App.Tests/
+installer/                    WiX MSI 安装器
+docs/                         架构、实施计划和兼容性说明
+```
+
+更多实现细节请参阅 [技术架构](docs/ARCHITECTURE.md) 和 [实施状态](docs/IMPLEMENTATION_STATUS.md)。
+
+## 工作原理与限制
+
+GhostSlacking 使用 Windows 窗口区域和合成效果实现局部显示，不截取窗口内容，也不向目标进程注入代码。它不是防录屏或隐私防护工具。
+
+部分特殊窗口、使用独立渲染表面的应用、高权限窗口或高频重绘窗口可能存在兼容性限制。恢复窗口时会校验窗口句柄、进程和进程启动身份，避免将旧状态错误应用到已复用的窗口句柄。
+
+遇到异常时，请先使用 `Ctrl+Shift+Alt+R` 尝试恢复所有窗口，再查看 `%LOCALAPPDATA%\GhostSlacking\logs` 中的日志。

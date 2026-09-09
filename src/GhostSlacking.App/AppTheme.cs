@@ -8,6 +8,7 @@ namespace GhostSlacking.App;
 internal static class AppTheme
 {
     public static readonly Color AccentColor = Color.Parse("#1CB2A5");
+    public static readonly Color DarkFieldColor = Color.Parse("#111111");
 
     public static ThemeVariant RequestedVariant(UiThemeMode mode) => mode switch
     {

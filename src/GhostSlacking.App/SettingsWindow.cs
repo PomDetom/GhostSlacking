@@ -36,6 +36,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly SolidColorBrush _errorBrush = new();
 
     private readonly Func<AppSettings, bool> _save;
+    private readonly Action<UiThemeMode> _applyTheme;
     private readonly List<(TextBlock Text, string Key)> _localizedText = [];
     private readonly List<(Button Button, string Key)> _localizedButtons = [];
     private readonly Dictionary<string, Control> _pages = [];
@@ -76,10 +77,14 @@ internal sealed class SettingsWindow : AppWindow
     private bool _initializing = true;
     private string _selectedPage = RevealPage;
 
-    public SettingsWindow(AppSettings settings, Func<AppSettings, bool> save)
+    public SettingsWindow(
+        AppSettings settings,
+        Func<AppSettings, bool> save,
+        Action<UiThemeMode>? applyTheme = null)
     {
         _editState = new SettingsEditState(settings);
         _save = save;
+        _applyTheme = applyTheme ?? AppTheme.Apply;
         _peekVirtualKey = settings.PeekVirtualKey;
 
         ApplyThemePalette();
@@ -706,7 +711,6 @@ internal sealed class SettingsWindow : AppWindow
         }
 
         _editState.MarkSaved(updated);
-        AppTheme.Apply(updated.ThemeMode);
         ShowSavedStatus();
     }
 
@@ -742,13 +746,25 @@ internal sealed class SettingsWindow : AppWindow
             numberBox.ValueChanged += (_, _) => OnSettingsEdited();
         }
 
-        foreach (var comboBox in new[] { _blurLevel, _shape, _peekMode, _themeMode, _logLevel })
+        foreach (var comboBox in new[] { _blurLevel, _shape, _peekMode, _logLevel })
         {
             comboBox.SelectionChanged += (_, _) => OnSettingsEdited();
         }
 
+        _themeMode.SelectionChanged += OnThemeModeSelectionChanged;
         _restoreOnExit.IsCheckedChanged += (_, _) => OnSettingsEdited();
         _startWithWindows.IsCheckedChanged += (_, _) => OnSettingsEdited();
+    }
+
+    private void OnThemeModeSelectionChanged(object? sender, SelectionChangedEventArgs args)
+    {
+        if (_initializing || _updatingLanguage)
+        {
+            return;
+        }
+
+        _applyTheme(SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode));
+        OnSettingsEdited();
     }
 
     private void OnSettingsEdited()
@@ -838,7 +854,7 @@ internal sealed class SettingsWindow : AppWindow
         var dark = AppTheme.IsDark(ActualThemeVariant);
         _canvasBrush.Color = Color.Parse(dark ? "#000000" : "#F5F9FC");
         _cardBrush.Color = Color.Parse(dark ? "#0A0A0A" : "#FFFFFF");
-        _fieldBrush.Color = Color.Parse(dark ? "#111111" : "#F8FAFC");
+        _fieldBrush.Color = dark ? AppTheme.DarkFieldColor : Color.Parse("#F8FAFC");
         _fieldBorderBrush.Color = Color.Parse(dark ? "#2A2A2A" : "#DCE7EF");
         _primaryBrush.Color = Color.Parse(dark ? "#F5F5F5" : "#172033");
         _secondaryBrush.Color = Color.Parse(dark ? "#A3A3A3" : "#667085");
@@ -861,8 +877,10 @@ internal sealed class SettingsWindow : AppWindow
 
     private void OnClosed(object? sender, EventArgs args)
     {
+        _applyTheme(_editState.SavedSettings.ThemeMode);
         _savedStatusTimer.Stop();
         _savedStatusTimer.Tick -= OnSavedStatusTimerTick;
+        _themeMode.SelectionChanged -= OnThemeModeSelectionChanged;
         ActualThemeVariantChanged -= OnActualThemeVariantChanged;
         Closed -= OnClosed;
     }

@@ -1,12 +1,30 @@
 # Implementation status
 
-## 已完成：Phase 1 Core Demo 基线
+> 更新基准：2026-09-09，依据当前工作区代码、解决方案项目清单和 Debug 构建/测试结果整理。代码已实现不等于真实窗口兼容性验收已完成；后者仍以 Windows 手工矩阵为准。
 
-- 三层项目边界：`Core`、`Platform`、`App`。
+## 当前总览
+
+| 阶段 | 当前状态 | 说明 |
+|---|---|---|
+| Phase 0 Technical Spike | 实现基线已完成，手工验收待补 | `SetWindowRgn`、坐标、拾取、交互和恢复路径已沉淀到当前实现；没有单独保留 Spike 工程。 |
+| Phase 1 Ghost Core | 已完成实现 | 单窗口闭环、托盘宿主、设置、快捷键和自动化测试已在当前解决方案中。 |
+| Phase 2 Reliability | Watchdog v1 已完成，其余进行中 | 异常恢复协议和独立进程已落地；注销/关机、权限诊断、DPI 热插拔和长时间观测仍待验证或补齐。 |
+| Phase 3 Productization | 主要代码已完成，发布验收待补 | Avalonia 设置、配置、反馈、单实例、开机启动、MSI 和 GitHub Actions 已存在；诊断导出、签名和干净系统验收仍未完成。 |
+| Phase 4 Advanced Rendering | Composition 原型已实现，兼容性验收待补 | 非抓屏 Composition 外扩羽化/模糊和硬边回退已接入；性能及设备/窗口兼容性仍需实测。 |
+
+## 当前验证结果
+
+- `dotnet build GhostSlacking.sln --configuration Debug`：0 个警告，0 个错误。
+- `dotnet test GhostSlacking.sln --configuration Debug --no-build`：134 个测试通过（Core 96，App 38），0 个失败，0 个跳过。
+- 解决方案当前包含 4 个生产项目：`Core`、`Platform`、`App`、`Watchdog`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
+
+## 已完成：Phase 1 Core Demo 与 App 宿主基线
+
+- 四个生产项目边界：`Core`、`Platform`、`App` 和独立的 `Watchdog`；Core 保持平台无关，Win32 细节位于 Platform。
 - Per Monitor V2 DPI manifest 和 Avalonia Win32 平台初始化。
 - 顶层窗口拾取：`WindowFromPoint`、`GetAncestor`、可见性/系统窗口/自身进程过滤。
 - 原始窗口快照：HWND、PID、必需的进程启动标识、rect、完整 `WINDOWPLACEMENT`、可见/最小化/最大化状态、原始 region 数据和 style 快照；启动身份或 placement 不可读取时在修改前失败。
-- `Ghost → Reveal → Ghost → Restore` 状态协调器。
+- `Ghost → Reveal → Ghost → Visible/Restore` 状态协调器，支持临时完整显示和最终恢复两条路径。
 - 基于屏幕物理像素的圆形、矩形和圆角矩形区域几何计算，光标或窗口几何无变化时跳过 native 更新。
 - `SetWindowRgn` 句柄所有权和失败释放路径。
 - Ghost 使用 `SW_HIDE`，Reveal 时在显示前后均应用所选 region，兼容会在显示过程中重置窗口帧的窗口。
@@ -29,7 +47,7 @@
 - Core 自动化测试：坐标换算、区域边界、状态更新去重、身份不匹配保护、配置归一化。
 - Picker 同时使用鼠标和键盘低级钩子；Esc 按下、自动重复和抬起均被拦截且只取消一次，并恢复进入 Picker 前的 Ghost、Reveal 或完整显示状态。
 
-## 已完成：Phase 2 Reliability 首个增量
+## 已完成：Phase 2 Reliability 的 Watchdog v1 增量
 
 - 新增独立 `GhostSlacking.Watchdog` 可执行项目并加入解决方案；App 构建输出会携带 Watchdog 运行文件。
 - 使用仅限当前用户的本地命名管道与 Watchdog v1 逐行 JSON 协议。
@@ -41,9 +59,21 @@
 - 新增协议序列化、协议版本、会话校验、心跳超时、正常关闭、PID/HWND 复用、进程启动身份不匹配和幂等恢复测试。
 - Debug 基线：解决方案构建 0 警告/0 错误；Core 与 App 自动化测试全部通过；本地命名管道握手、空清单、正常关闭和断连超时冒烟测试退出码均为 0。
 
-## 尚未完成：后续 Phase
+## 已实现：Phase 3 Productization 基线
 
-- Phase 2 其余可靠性工作：Avalonia/AppDomain/注销关机恢复路径的完整协调、权限错误用户反馈、DPI/显示器热插拔验证和长时间资源观测。
-- Phase 1/2 真实窗口验收：普通 Win32、资源管理器、浏览器、Electron/自绘窗口上的 Ghost/Reveal/Restore、区域内点击/滚轮、焦点与重绘；100%/125%/150% DPI、负坐标与混合缩放双屏、移动/缩放/最小化/关闭、普通/管理员权限目标，以及主进程异常终止后的 Watchdog 真实恢复。当前自动化环境未替代这些交互式检查。
-- 诊断导出和更完整的用户反馈（Phase 3）；当前已实现 framework-dependent MSI 和开机启动注册的基础开关。
-- Composition 羽化的 Chrome/Electron、混合 DPI、远程桌面、透明效果关闭和图形设备丢失手工兼容性验收。
+- Avalonia + FluentAvalonia 设置页、中文/English 文案、跟随系统/浅色/深色主题、主题实时预览与取消回滚、设置保存反馈和单项恢复默认按钮。
+- JSON 配置归一化、损坏配置回退、滚动日志、单实例互斥、HKCU 开机启动开关和退出时恢复选项。
+- WiX MSI 安装器、开始菜单/桌面快捷方式选项、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、发布、构建和 MSI 校验，GitHub Actions 已配置测试与标签发布流程。
+
+## 已实现：Phase 4 Advanced Rendering 原型
+
+- `RevealEdgeOverlay` 使用非激活、鼠标穿透的 Windows Composition/Win2D overlay，在清晰核心外侧提供可配置羽化和单一模糊等级。
+- 目标内容 region 外扩到羽化宽度的 70%，overlay 只命中外环，清晰核心仍由目标窗口接收点击和滚轮。
+- Composition 初始化、设备或渲染失败时回退到硬边 region；不读取、不保存目标窗口像素。
+
+## 尚未完成：验收与后续工作
+
+- Phase 2 其余可靠性工作：注销/关机通知下的尽力恢复、权限级别识别与更具体的用户反馈、DPI/显示器热插拔验证和长时间资源观测。当前 `AppDomain.UnhandledException` 只保留诊断输出；异常终止后的窗口恢复由 Watchdog 负责。
+- Phase 1/2 真实窗口验收：普通 Win32、资源管理器、浏览器、Electron/自绘窗口上的 Ghost/Reveal/Restore、区域内点击/滚轮、焦点与重绘；100%/125%/150% DPI、负坐标与混合缩放双屏、移动/缩放/最小化/关闭、普通/管理员权限目标，以及主进程异常终止后的 Watchdog 真实恢复。自动化测试未替代这些交互式检查。
+- Phase 3 诊断导出、代码签名/发布签名策略、干净 Windows 环境中的安装/升级/卸载回归和完整用户文档验收。
+- Composition 羽化在 Chrome/Electron、混合 DPI、远程桌面、透明效果关闭和图形设备丢失场景下的手工兼容性与性能验收。

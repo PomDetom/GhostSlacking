@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using GhostSlacking.Core;
 using DrawingPoint = System.Drawing.Point;
@@ -23,6 +24,14 @@ internal readonly record struct TransientNotification(
     string Message,
     UserNotificationSeverity Severity,
     DateTimeOffset ExpiresAt);
+
+internal readonly record struct UserNotificationPalette(
+    Color Surface,
+    Color Border,
+    Color Title,
+    Color Message,
+    Color Badge,
+    Color Accent);
 
 internal sealed class TransientNotificationState(TimeSpan duration)
 {
@@ -58,6 +67,23 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
     private readonly TransientNotificationState _state = new(DisplayDuration);
     private NotificationWindow? _window;
     private bool _disposed;
+
+    internal static UserNotificationPalette ResolvePalette(
+        ThemeVariant? themeVariant,
+        UserNotificationSeverity severity)
+    {
+        var dark = AppTheme.IsDark(themeVariant);
+        var error = severity == UserNotificationSeverity.Error;
+        return new UserNotificationPalette(
+            dark ? AppTheme.DarkFieldColor : Color.Parse("#FFFFFF"),
+            error ? Color.Parse("#EF4444") : AppTheme.AccentColor,
+            Color.Parse(dark ? "#F5F5F5" : "#172033"),
+            Color.Parse(dark ? "#A3A3A3" : "#667085"),
+            Color.Parse(error
+                ? dark ? "#3F1010" : "#FEE2E2"
+                : dark ? "#103B37" : "#DDF7F5"),
+            error ? Color.Parse("#EF4444") : AppTheme.AccentColor);
+    }
 
     public AvaloniaNotificationService(Func<DrawingPoint> getCursorPosition, ILogger logger)
     {
@@ -160,6 +186,9 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             ShowInTaskbar = false;
             Topmost = true;
             SystemDecorations = SystemDecorations.None;
+            Background = Brushes.Transparent;
+            TransparencyBackgroundFallback = Brushes.Transparent;
+            TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
             _icon = new TextBlock
             {
                 FontSize = 16,
@@ -204,6 +233,8 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             {
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(10),
+                ClipToBounds = true,
+                Margin = new Thickness(1),
                 Padding = new Thickness(16, 14),
                 Child = content
             };
@@ -221,26 +252,15 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
 
         private void ApplyPalette()
         {
-            var dark = AppTheme.IsDark(ActualThemeVariant);
-            var error = _severity == UserNotificationSeverity.Error;
-            var background = Color.Parse(dark ? "#0A0A0A" : "#FFFFFF");
-            var border = error ? Color.Parse("#EF4444") : AppTheme.AccentColor;
-            var title = Color.Parse(dark ? "#F5F5F5" : "#172033");
-            var message = Color.Parse(dark ? "#A3A3A3" : "#667085");
-            var badge = Color.Parse(error
-                ? dark ? "#3F1010" : "#FEE2E2"
-                : dark ? "#103B37" : "#DDF7F5");
-            var accent = error ? Color.Parse("#EF4444") : AppTheme.AccentColor;
-
-            var backgroundBrush = new SolidColorBrush(background);
-            Background = backgroundBrush;
+            var palette = ResolvePalette(ActualThemeVariant, _severity);
+            var backgroundBrush = new SolidColorBrush(palette.Surface);
             _surface.Background = backgroundBrush;
-            _surface.BorderBrush = new SolidColorBrush(border);
-            _iconBadge.Background = new SolidColorBrush(badge);
-            _icon.Foreground = new SolidColorBrush(accent);
-            _icon.Text = error ? "!" : "i";
-            _title.Foreground = new SolidColorBrush(title);
-            _message.Foreground = new SolidColorBrush(message);
+            _surface.BorderBrush = new SolidColorBrush(palette.Border);
+            _iconBadge.Background = new SolidColorBrush(palette.Badge);
+            _icon.Foreground = new SolidColorBrush(palette.Accent);
+            _icon.Text = _severity == UserNotificationSeverity.Error ? "!" : "i";
+            _title.Foreground = new SolidColorBrush(palette.Title);
+            _message.Foreground = new SolidColorBrush(palette.Message);
         }
     }
 }
