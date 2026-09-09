@@ -19,6 +19,7 @@ internal sealed class GhostApplicationController : IDisposable
     private const int DiameterIncreaseHotkey = 7;
     private const int DiameterDecreaseHotkey = 8;
     private readonly FileLogger _logger;
+    private readonly DataExportService _dataExport;
     private readonly IClassicDesktopStyleApplicationLifetime _lifetime;
     private readonly IUserNotificationService _notifications;
     private readonly SettingsStore _settingsStore;
@@ -61,6 +62,7 @@ internal sealed class GhostApplicationController : IDisposable
         _settings = _settingsStore.Load();
         AppTheme.Apply(_settings.ThemeMode);
         _logger = new FileLogger(_settings);
+        _dataExport = new DataExportService(_logger);
         _windows = new Win32WindowApi();
         _revealOverlay = new RevealEdgeOverlay(_logger);
         var backend = new Win32VisibilityBackend(_logger);
@@ -129,7 +131,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     internal void ShowStartupNotification()
     {
-        _logger.Log(LogLevel.Info, "Startup notification requested.");
+        _logger.Log(LogLevel.Debug, "Startup notification requested.");
         ShowInfo(UiText.Text(_settings.Language, "startupReady"));
     }
 
@@ -420,7 +422,11 @@ internal sealed class GhostApplicationController : IDisposable
         _hotkeys.UnregisterAll();
         try
         {
-            var window = new SettingsWindow(_settings, SaveSettings);
+            var window = new SettingsWindow(
+                _settings,
+                SaveSettings,
+                exportLogs: stream => _dataExport.ExportLogsAsync(stream, _settings.MinimumLogLevel),
+                exportSettings: (settings, stream) => _dataExport.ExportSettingsAsync(stream, settings));
             _settingsWindow = window;
             window.Closed += OnSettingsClosed;
             window.Show();
@@ -463,6 +469,7 @@ internal sealed class GhostApplicationController : IDisposable
         }
 
         _settings = updated;
+        _logger.MinimumLevel = _settings.MinimumLogLevel;
         AppTheme.Apply(_settings.ThemeMode);
         if (previousKey != _settings.PeekVirtualKey || previousTrigger != _settings.PeekTrigger)
         {

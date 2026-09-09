@@ -30,6 +30,20 @@ public sealed class UiTextTests
     }
 
     [Theory]
+    [InlineData(UiLanguage.Chinese, "导出日志", "导出配置", "导出成功")]
+    [InlineData(UiLanguage.English, "Export logs", "Export settings", "Export completed")]
+    public void Export_actions_have_localized_copy(
+        UiLanguage language,
+        string logs,
+        string settings,
+        string success)
+    {
+        Assert.Equal(logs, UiText.Text(language, "exportLogs"));
+        Assert.Equal(settings, UiText.Text(language, "exportSettings"));
+        Assert.Equal(success, UiText.Text(language, "exportSucceeded"));
+    }
+
+    [Theory]
     [InlineData(UserErrorKind.SelectionStateCaptureFailed, "无法选择该窗口。未能安全保存窗口状态，未作任何更改。")]
     [InlineData(UserErrorKind.GhostActivationFailed, "无法隐藏所选窗口。已尝试恢复原状态，请确认窗口显示正常。")]
     [InlineData(UserErrorKind.WindowPlacementCorrectionFailed, "无法保持窗口位置。正在恢复窗口，请确认其显示正常。")]

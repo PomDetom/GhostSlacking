@@ -185,6 +185,51 @@ public sealed class SettingsStoreTests
         Assert.Equal(RevealShape.RoundedRectangle, settings.RevealShape);
         Assert.Equal(PeekTrigger.Toggle, settings.PeekTrigger);
         Assert.Equal(UiThemeMode.System, settings.ThemeMode);
+        Assert.Equal(LogLevel.Info, settings.MinimumLogLevel);
+    }
+
+    [Fact]
+    public void Unknown_log_level_falls_back_to_info()
+    {
+        var settings = new AppSettings { MinimumLogLevel = (LogLevel)999 };
+
+        Assert.Equal(LogLevel.Info, settings.Normalize().MinimumLogLevel);
+    }
+
+    [Fact]
+    public void Settings_json_omits_computed_hotkey_properties_and_round_trips()
+    {
+        var settings = new AppSettings
+        {
+            MinimumLogLevel = LogLevel.Debug,
+            ExitHotkey = HotkeyBinding.Disabled
+        };
+
+        var json = AppSettingsJson.Serialize(settings);
+        var restored = AppSettingsJson.Deserialize(json);
+
+        Assert.DoesNotContain("IsDisabled", json);
+        Assert.Equal(LogLevel.Debug, restored.MinimumLogLevel);
+        Assert.True(restored.ExitHotkey.IsDisabled);
+    }
+
+    [Fact]
+    public void Existing_json_with_computed_hotkey_property_remains_compatible()
+    {
+        var restored = AppSettingsJson.Deserialize("""
+            {
+              "SchemaVersion": 4,
+              "MinimumLogLevel": "Debug",
+              "ExitHotkey": {
+                "VirtualKey": 0,
+                "Modifiers": "None",
+                "IsDisabled": true
+              }
+            }
+            """);
+
+        Assert.Equal(LogLevel.Debug, restored.MinimumLogLevel);
+        Assert.True(restored.ExitHotkey.IsDisabled);
     }
 
     [Theory]

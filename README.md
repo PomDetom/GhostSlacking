@@ -20,6 +20,7 @@ GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部
 - 支持简体中文和英文界面。
 - 支持跟随系统、浅色和深色主题。
 - 支持开机启动、退出时恢复窗口和日志级别设置。
+- 支持从设置页导出日志诊断包和当前已保存的配置。
 - 内置 Watchdog，在主程序异常终止后尝试安全恢复受控窗口。
 - 单实例运行，不会同时启动多个托盘进程。
 
@@ -78,13 +79,23 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 ├── settings.json
 └── logs\
     ├── ghostslacking.log
-    ├── ghostslacking.1.log
-    └── watchdog.log
+    ├── ghostslacking.1.log ... ghostslacking.4.log
+    ├── watchdog.log
+    └── watchdog.1.log ... watchdog.4.log
 ```
 
 - `settings.json`：用户设置。
-- `ghostslacking.log`：主程序日志，达到大小限制后滚动为 `ghostslacking.1.log`。
+- `ghostslacking.log`：主程序日志。
 - `watchdog.log`：异常恢复进程日志。
+
+两类日志均按 2 MB 单文件滚动，每类最多保留 5 个文件，并自动清理超过 30 天的备份；日志总占用上限约为 20 MB。默认日志级别为 `Info`，在设置页修改后会立即作用于主程序日志。Watchdog 始终保留 `Info` 及以上的恢复审计信息。
+
+设置页的“数据与诊断”区域提供两个导出入口：
+
+- “导出日志”生成 ZIP 诊断包，包含当前及滚动日志，以及不含用户名、机器名和配置内容的版本/运行环境摘要。
+- “导出配置”生成 JSON 文件，只包含当前已保存并生效的设置，不包含尚未保存的界面修改。
+
+所有导出都由用户主动选择保存位置；GhostSlacking 不会自动上传或发送这些文件。
 
 可在资源管理器地址栏输入 `%LOCALAPPDATA%\GhostSlacking` 直接打开该目录。
 

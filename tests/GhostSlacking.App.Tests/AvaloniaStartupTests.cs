@@ -26,6 +26,7 @@ public sealed class AvaloniaStartupTests
                 Assert.Same(AppIcon.TitleBarImage, settingsWindow.Icon);
                 AssertDefaultSettingsWindowLayout(settingsWindow);
                 AssertThemePreviewLifecycle();
+                AssertSavedSettingsExport();
                 using var trayIcon = new TrayIcon
                 {
                     Icon = AppIcon.Instance,
@@ -99,10 +100,33 @@ public sealed class AvaloniaStartupTests
         languageWindow.Close();
     }
 
+    private static void AssertSavedSettingsExport()
+    {
+        AppSettings? exported = null;
+        var settingsWindow = new SettingsWindow(
+            new AppSettings(),
+            _ => true,
+            exportSettings: (settings, _) =>
+            {
+                exported = settings;
+                return Task.FromResult(DataExportResult.Success());
+            });
+        GetPrivateField<ComboBox>(settingsWindow, "_logLevel").SelectedIndex = 3;
+
+        settingsWindow.ExportSavedSettingsAsync(Stream.Null).GetAwaiter().GetResult();
+
+        Assert.NotNull(exported);
+        Assert.Equal(LogLevel.Info, exported.MinimumLogLevel);
+        Assert.Equal(SettingsStatus.Modified, GetPrivateField<SettingsEditState>(settingsWindow, "_editState").Status);
+        settingsWindow.Close();
+    }
+
     private static void AssertDefaultSettingsWindowLayout(SettingsWindow settingsWindow)
     {
         var navigation = GetPrivateField<NavigationView>(settingsWindow, "_navigation");
         var infoBar = GetPrivateField<InfoBar>(settingsWindow, "_infoBar");
+        var exportLogs = GetPrivateField<Button>(settingsWindow, "_exportLogsButton");
+        var exportSettings = GetPrivateField<Button>(settingsWindow, "_exportSettingsButton");
         var footerContent = Assert.IsType<Grid>(infoBar.Parent);
         var footer = Assert.IsType<Border>(footerContent.Parent);
         var content = Assert.IsAssignableFrom<Control>(settingsWindow.Content);
@@ -112,6 +136,8 @@ public sealed class AvaloniaStartupTests
         Assert.False(navigation.IsPaneOpen);
         Assert.Equal(32, infoBar.Height);
         Assert.Equal(HorizontalAlignment.Left, infoBar.HorizontalAlignment);
+        Assert.Equal("导出日志", exportLogs.Content);
+        Assert.Equal("导出配置", exportSettings.Content);
 
         content.Measure(new Avalonia.Size(settingsWindow.Width, settingsWindow.Height));
         var closedHeight = footer.DesiredSize.Height;

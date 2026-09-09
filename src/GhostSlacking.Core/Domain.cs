@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Text.Json.Serialization;
 
 namespace GhostSlacking.Core;
 
@@ -47,6 +48,7 @@ public readonly record struct HotkeyBinding(int VirtualKey, ShortcutModifiers Mo
 {
     public static HotkeyBinding Disabled => new(0, ShortcutModifiers.None);
 
+    [JsonIgnore]
     public bool IsDisabled => this == Disabled;
 
     public bool IsValid() => IsDisabled ||
@@ -230,7 +232,10 @@ public sealed record AppSettings
         SettingsHotkey = SettingsHotkey.Normalize(0x53, ShortcutModifiers.Control | ShortcutModifiers.Alt),
         ExitHotkey = ExitHotkey.Normalize(0x51, ShortcutModifiers.Control | ShortcutModifiers.Alt),
         RevealDiameterIncreaseHotkey = RevealDiameterIncreaseHotkey.Normalize(0, ShortcutModifiers.None),
-        RevealDiameterDecreaseHotkey = RevealDiameterDecreaseHotkey.Normalize(0, ShortcutModifiers.None)
+        RevealDiameterDecreaseHotkey = RevealDiameterDecreaseHotkey.Normalize(0, ShortcutModifiers.None),
+        MinimumLogLevel = MinimumLogLevel is LogLevel.Error or LogLevel.Warning or LogLevel.Info or LogLevel.Debug
+            ? MinimumLogLevel
+            : LogLevel.Info
     };
 
     private HotkeyBinding NormalizeWindowToggleHotkey()

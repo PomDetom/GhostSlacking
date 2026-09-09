@@ -621,7 +621,11 @@ V0.1 不持久化窗口内容，也不默认持久化目标 HWND。若未来支�
 
 ### 19.2 日志
 
-日志级别：`Error`、`Warning`、`Info`、`Debug`。生产默认 `Info`。采用滚动文件并限制大小，记录状态转换和恢复结果，不记录敏感内容。
+日志级别：`Error`、`Warning`、`Info`、`Debug`。生产默认 `Info`，设置保存后立即更新主程序过滤级别；Watchdog 固定记录 `Info` 及以上的恢复审计。高频状态转换和采样性能数据使用 `Debug`，成功路径不逐帧写入。
+
+主程序和 Watchdog 使用同一滚动实现、不同文件组。每个文件最大 2 MB，每组包含当前文件和最多 4 个备份，并清理超过 30 天的备份；滚动失败且当前文件已满时丢弃新记录，避免无限增长，同时绝不让日志错误影响恢复路径。
+
+设置页可分别导出日志 ZIP 和已保存配置 JSON。日志 ZIP 只收集 GhostSlacking 管理的日志，并附带版本、操作系统、运行时、架构和日志级别摘要；不自动包含配置、用户名、机器名、窗口标题或其他环境数据。导出只由用户主动触发，不包含上传行为。
 
 关键事件：`PickStarted`、`WindowSelected`、`SnapshotSaved`、`GhostApplied`、`RevealApplied`、`RestoreStarted`、`RestoreCompleted`、`NativeCallFailed`、`TargetClosed`、`WatchdogRecovery`。
 

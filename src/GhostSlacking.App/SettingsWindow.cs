@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using FluentAvalonia.UI.Windowing;
@@ -36,6 +37,8 @@ internal sealed class SettingsWindow : AppWindow
     private readonly SolidColorBrush _errorBrush = new();
 
     private readonly Func<AppSettings, bool> _save;
+    private readonly Func<Stream, Task<DataExportResult>> _exportLogs;
+    private readonly Func<AppSettings, Stream, Task<DataExportResult>> _exportSettings;
     private readonly Action<UiThemeMode> _applyTheme;
     private readonly List<(TextBlock Text, string Key)> _localizedText = [];
     private readonly List<(Button Button, string Key)> _localizedButtons = [];
@@ -59,6 +62,8 @@ internal sealed class SettingsWindow : AppWindow
     private readonly ComboBox _language;
     private readonly ComboBox _themeMode;
     private readonly ComboBox _logLevel;
+    private readonly Button _exportLogsButton;
+    private readonly Button _exportSettingsButton;
     private readonly ToggleSwitch _restoreOnExit;
     private readonly ToggleSwitch _startWithWindows;
     private readonly HotkeyEditor _pickHotkey;
@@ -76,15 +81,20 @@ internal sealed class SettingsWindow : AppWindow
     private bool _updatingLanguage;
     private bool _initializing = true;
     private string _selectedPage = RevealPage;
+    private string? _exportStatusKey;
 
     public SettingsWindow(
         AppSettings settings,
         Func<AppSettings, bool> save,
-        Action<UiThemeMode>? applyTheme = null)
+        Action<UiThemeMode>? applyTheme = null,
+        Func<Stream, Task<DataExportResult>>? exportLogs = null,
+        Func<AppSettings, Stream, Task<DataExportResult>>? exportSettings = null)
     {
         _editState = new SettingsEditState(settings);
         _save = save;
         _applyTheme = applyTheme ?? AppTheme.Apply;
+        _exportLogs = exportLogs ?? (_ => Task.FromResult(DataExportResult.Failure()));
+        _exportSettings = exportSettings ?? ((_, _) => Task.FromResult(DataExportResult.Failure()));
         _peekVirtualKey = settings.PeekVirtualKey;
 
         ApplyThemePalette();
@@ -107,6 +117,10 @@ internal sealed class SettingsWindow : AppWindow
         _language = CreateComboBox();
         _themeMode = CreateComboBox();
         _logLevel = CreateComboBox();
+        _exportLogsButton = CreateTextButton(settings.Language, "exportLogs");
+        _exportSettingsButton = CreateTextButton(settings.Language, "exportSettings");
+        _exportLogsButton.Click += OnExportLogsClicked;
+        _exportSettingsButton.Click += OnExportSettingsClicked;
         _restoreOnExit = new ToggleSwitch { IsChecked = settings.RestoreOnExit };
         _startWithWindows = new ToggleSwitch { IsChecked = settings.StartWithWindows };
         _peekKeyButton = CreateCaptureButton();
@@ -299,6 +313,11 @@ internal sealed class SettingsWindow : AppWindow
                 CreateSettingRow(language, "theme", "themeDescription", _themeMode),
                 CreateSettingRow(language, "interfaceLanguage", "languageDescription", _language),
                 CreateSettingRow(language, "logLevel", "logLevelDescription", _logLevel)
+            ]),
+            CreateSection(language, "dataAndDiagnostics",
+            [
+                CreateSettingRow(language, "exportLogs", "exportLogsDescription", _exportLogsButton),
+                CreateSettingRow(language, "exportSettings", "exportSettingsDescription", _exportSettingsButton)
             ])
         ]);
     }
@@ -714,6 +733,80 @@ internal sealed class SettingsWindow : AppWindow
         ShowSavedStatus();
     }
 
+    private async void OnExportLogsClicked(object? sender, RoutedEventArgs args)
+    {
+        await ExportAsync(
+            "zip",
+            $"GhostSlacking-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip",
+            "ZIP archive",
+            ["*.zip"],
+            _exportLogs);
+    }
+
+    private async void OnExportSettingsClicked(object? sender, RoutedEventArgs args)
+    {
+        await ExportAsync(
+            "json",
+            $"GhostSlacking-settings-{DateTime.Now:yyyyMMdd-HHmmss}.json",
+            "JSON file",
+            ["*.json"],
+            ExportSavedSettingsAsync);
+    }
+
+    internal Task<DataExportResult> ExportSavedSettingsAsync(Stream destination) =>
+        _exportSettings(_editState.SavedSettings, destination);
+
+    private async Task ExportAsync(
+        string extension,
+        string suggestedFileName,
+        string fileTypeName,
+        IReadOnlyList<string> patterns,
+        Func<Stream, Task<DataExportResult>> export)
+    {
+        DataExportResult result;
+        try
+        {
+            var destination = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = UiText.Text(CurrentLanguage, "selectExportDestination"),
+                SuggestedFileName = suggestedFileName,
+                DefaultExtension = extension,
+                ShowOverwritePrompt = true,
+                FileTypeChoices = [new FilePickerFileType(fileTypeName) { Patterns = patterns }]
+            });
+            if (destination is null)
+            {
+                return;
+            }
+
+            SetExportButtonsEnabled(false);
+            await using var stream = await destination.OpenWriteAsync();
+            result = await export(stream);
+        }
+        catch
+        {
+            result = DataExportResult.Failure();
+        }
+        finally
+        {
+            SetExportButtonsEnabled(true);
+        }
+
+        var (key, severity) = result.Status switch
+        {
+            DataExportStatus.Success => ("exportSucceeded", InfoBarSeverity.Success),
+            DataExportStatus.PartialSuccess => ("exportPartiallySucceeded", InfoBarSeverity.Warning),
+            _ => ("exportFailed", InfoBarSeverity.Error)
+        };
+        ShowExportStatus(key, severity);
+    }
+
+    private void SetExportButtonsEnabled(bool enabled)
+    {
+        _exportLogsButton.IsEnabled = enabled;
+        _exportSettingsButton.IsEnabled = enabled;
+    }
+
     private AppSettings GetSettings() => _editState.SavedSettings with
     {
         RevealDiameterPx = (int)_diameter.Value,
@@ -790,6 +883,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private void ShowSavedStatus()
     {
+        _exportStatusKey = null;
         ShowStatus(
             SettingsStatus.Saved,
             UiText.Text(CurrentLanguage, "saveSucceeded"),
@@ -800,6 +894,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private void ShowStatus(SettingsStatus status, string title, string message, InfoBarSeverity severity)
     {
+        _exportStatusKey = null;
         _savedStatusTimer.Stop();
         _editState.SetStatus(status);
         _infoBar.Title = StatusText(title, message);
@@ -809,8 +904,21 @@ internal sealed class SettingsWindow : AppWindow
         _infoBar.IsOpen = true;
     }
 
+    private void ShowExportStatus(string key, InfoBarSeverity severity)
+    {
+        _savedStatusTimer.Stop();
+        _exportStatusKey = key;
+        _infoBar.Title = UiText.Text(CurrentLanguage, key);
+        _infoBar.Message = string.Empty;
+        _infoBar.Severity = severity;
+        ToolTip.SetTip(_infoBar, _infoBar.Title);
+        _infoBar.IsOpen = true;
+        _savedStatusTimer.Start();
+    }
+
     private void HideStatus()
     {
+        _exportStatusKey = null;
         _savedStatusTimer.Stop();
         _editState.SetStatus(SettingsStatus.None);
         _infoBar.IsOpen = false;
@@ -818,6 +926,13 @@ internal sealed class SettingsWindow : AppWindow
 
     private void RefreshStatusText()
     {
+        if (_exportStatusKey is not null)
+        {
+            _infoBar.Title = UiText.Text(CurrentLanguage, _exportStatusKey);
+            ToolTip.SetTip(_infoBar, _infoBar.Title);
+            return;
+        }
+
         switch (_editState.Status)
         {
             case SettingsStatus.Modified:
@@ -840,6 +955,15 @@ internal sealed class SettingsWindow : AppWindow
 
     private void OnSavedStatusTimerTick(object? sender, EventArgs args)
     {
+        if (_exportStatusKey is not null)
+        {
+            _exportStatusKey = null;
+            _savedStatusTimer.Stop();
+            _infoBar.IsOpen = false;
+            OnSettingsEdited();
+            return;
+        }
+
         if (_editState.ExpireSaved())
         {
             _savedStatusTimer.Stop();
@@ -880,6 +1004,8 @@ internal sealed class SettingsWindow : AppWindow
         _applyTheme(_editState.SavedSettings.ThemeMode);
         _savedStatusTimer.Stop();
         _savedStatusTimer.Tick -= OnSavedStatusTimerTick;
+        _exportLogsButton.Click -= OnExportLogsClicked;
+        _exportSettingsButton.Click -= OnExportSettingsClicked;
         _themeMode.SelectionChanged -= OnThemeModeSelectionChanged;
         ActualThemeVariantChanged -= OnActualThemeVariantChanged;
         Closed -= OnClosed;

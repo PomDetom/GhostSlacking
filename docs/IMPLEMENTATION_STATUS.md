@@ -15,7 +15,7 @@
 ## 当前验证结果
 
 - `dotnet build GhostSlacking.sln --configuration Debug`：0 个警告，0 个错误。
-- `dotnet test GhostSlacking.sln --configuration Debug/Release --no-restore`：147 个测试通过（Core 100，App 47），两个配置均为 0 个失败、0 个跳过。
+- `dotnet test GhostSlacking.sln --configuration Debug/Release`：162 个测试通过（Core 108，App 54），两个配置均为 0 个失败、0 个跳过。
 - 解决方案当前包含 4 个生产项目：`Core`、`Platform`、`App`、`Watchdog`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
 
 ## 已完成：Phase 1 Core Demo 与 App 宿主基线
@@ -42,7 +42,7 @@
 - Peek 支持“按住显示”和“按下切换”两种模式，默认按下切换；切换模式按下沿翻转状态，按键重复不会重复切换。
 - 支持配置窗口显隐快捷键；当前目标可在隐藏和完整显示之间切换，最终恢复仍由 Restore 快捷键负责。
 - 所有全局功能均可在设置页配置快捷键：选择窗口、窗口显隐、增大/减小 Reveal 直径、恢复当前窗口、恢复所有窗口、打开设置和退出应用；直径调整使用默认 16px 的可配置共用步长，设置页支持捕获 Ctrl/Alt/Shift 组合键，并为所有输入提供单项恢复默认按钮。
-- Avalonia 托盘菜单、FluentAvalonia 设置页、JSON 配置、滚动日志、单实例互斥。
+- Avalonia 托盘菜单、FluentAvalonia 设置页、JSON 配置、受限滚动日志、日志/配置导出、单实例互斥。
 - 无主窗口状态反馈使用 Avalonia 非激活提示浮层；连续提示替换上一条并在 2.5 秒后隐藏。设置保存结果通过 FluentAvalonia `InfoBar` 在设置页内反馈。
 - 中文/English 界面切换，中文为默认语言，语言选择持久化到配置文件。
 - Core 自动化测试：坐标换算、区域边界、状态更新去重、身份不匹配保护、配置归一化。
@@ -63,7 +63,7 @@
 ## 已实现：Phase 3 Productization 基线
 
 - Avalonia + FluentAvalonia 设置页、中文/English 文案、跟随系统/浅色/深色主题、主题实时预览与取消回滚、设置保存反馈和单项恢复默认按钮。
-- JSON 配置归一化、损坏配置回退、滚动日志、单实例互斥、HKCU 开机启动开关和退出时恢复选项。
+- JSON 配置归一化、损坏配置回退、每类 2 MB × 5 文件且清理 30 天前备份的滚动日志、日志诊断 ZIP、已保存配置 JSON 导出、单实例互斥、HKCU 开机启动开关和退出时恢复选项。
 - WiX MSI 安装器、开始菜单/桌面快捷方式选项、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、发布、构建和 MSI 校验，GitHub Actions 已配置测试与标签发布流程。
 
 ## 已实现：Phase 4 Advanced Rendering 原型
@@ -77,5 +77,5 @@
 
 - Phase 2 其余可靠性工作：注销/关机通知下的尽力恢复、权限级别识别与更具体的用户反馈、DPI/显示器热插拔验证和长时间资源观测。当前 `AppDomain.UnhandledException` 只保留诊断输出；异常终止后的窗口恢复由 Watchdog 负责。
 - Phase 1/2 真实窗口验收：普通 Win32、资源管理器、浏览器、Electron/自绘窗口上的 Ghost/Reveal/Restore、区域内点击/滚轮、焦点与重绘；100%/125%/150% DPI、负坐标与混合缩放双屏、移动/缩放/最小化/关闭、普通/管理员权限目标，以及主进程异常终止后的 Watchdog 真实恢复。自动化测试未替代这些交互式检查。
-- Phase 3 诊断导出、代码签名/发布签名策略、干净 Windows 环境中的安装/升级/卸载回归和完整用户文档验收。
+- Phase 3 剩余代码签名/发布签名策略、干净 Windows 环境中的安装/升级/卸载回归和完整用户文档验收；诊断与配置导出已完成自动化覆盖，仍需发布环境手工验收。
 - Composition 羽化在 Chrome/Electron、混合 DPI、远程桌面、透明效果关闭和图形设备丢失场景下的手工兼容性与性能验收。

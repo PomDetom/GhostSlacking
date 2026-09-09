@@ -573,7 +573,7 @@ public sealed class GhostCoordinator
 
         var previous = _state;
         _state = state;
-        _logger.Log(LogLevel.Info, $"StateChanged {previous} -> {state}");
+        _logger.Log(LogLevel.Debug, $"StateChanged {previous} -> {state}");
         StateChanged?.Invoke(this, new StateChangedEventArgs(state));
     }
 
