@@ -21,6 +21,8 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
     private StreamReader? _reader;
     private StreamWriter? _writer;
     private Task? _heartbeatTask;
+    private Process? _watchdogProcess;
+    private bool _watchdogExitWaitAttempted;
     private bool _started;
     private bool _disposed;
 
@@ -42,6 +44,7 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
 
     public Guid SessionId { get; }
     public bool IsConnected { get; private set; }
+    internal int? WatchdogProcessId => _watchdogProcess?.Id;
 
     public void Start()
     {
@@ -72,10 +75,8 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
         startInfo.ArgumentList.Add("--heartbeat-timeout-ms");
         startInfo.ArgumentList.Add(((int)WatchdogHeartbeatTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture));
 
-        if (Process.Start(startInfo) is null)
-        {
+        _watchdogProcess = Process.Start(startInfo) ??
             throw new InvalidOperationException("The GhostSlacking watchdog process could not be started.");
-        }
 
         _pipe = new NamedPipeClientStream(
             ".",
@@ -168,6 +169,7 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
             IsConnected = false;
             _heartbeatCancellation.Cancel();
             WaitForHeartbeatTask();
+            WaitForWatchdogExit(TimeSpan.FromSeconds(2));
         }
     }
 
@@ -185,6 +187,8 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
         _writer?.Dispose();
         _reader?.Dispose();
         _pipe?.Dispose();
+        WaitForWatchdogExit(TimeSpan.FromSeconds(7));
+        _watchdogProcess?.Dispose();
         _heartbeatCancellation.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -235,6 +239,27 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
         }
         catch (AggregateException exception) when (exception.InnerExceptions.All(inner => inner is OperationCanceledException))
         {
+        }
+    }
+
+    private void WaitForWatchdogExit(TimeSpan timeout)
+    {
+        if (_watchdogProcess is null || _watchdogExitWaitAttempted)
+        {
+            return;
+        }
+
+        _watchdogExitWaitAttempted = true;
+        try
+        {
+            if (!_watchdogProcess.WaitForExit(timeout))
+            {
+                _logger.Log(LogLevel.Error, $"Watchdog did not exit within {timeout.TotalSeconds:0} seconds after the main process began shutdown.");
+            }
+        }
+        catch (InvalidOperationException exception)
+        {
+            _logger.Log(LogLevel.Error, "Watchdog exit could not be observed.", exception);
         }
     }
 }

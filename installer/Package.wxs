@@ -1,6 +1,7 @@
 <Wix
   xmlns="http://wixtoolset.org/schemas/v4/wxs"
-  xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx">
+  xmlns:netfx="http://wixtoolset.org/schemas/v4/wxs/netfx"
+  xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package
     Name="GhostSlacking"
     Manufacturer="GhostSlacking"
@@ -9,8 +10,58 @@
     Scope="perMachine"
     Language="2052">
 
-    <MajorUpgrade DowngradeErrorMessage="已安装更高版本的 GhostSlacking。" />
+    <MajorUpgrade
+      Schedule="afterInstallExecute"
+      MigrateFeatures="yes"
+      AllowSameVersionUpgrades="yes"
+      IgnoreRemoveFailure="no"
+      DowngradeErrorMessage="已安装更高版本的 GhostSlacking，无法安装较低版本。" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <Property Id="GHOSTSLACKING_WAS_RUNNING" Secure="yes" />
+    <Property Id="GHOSTSLACKING_STILL_RUNNING" Secure="yes" />
+    <Property Id="GHOSTSLACKING_WATCHDOG_STILL_RUNNING" Secure="yes" />
+    <Property Id="UPGRADE_PROTOCOL_VERSION" Secure="yes">
+      <RegistrySearch
+        Id="UpgradeProtocolVersionSearch"
+        Root="HKLM"
+        Key="Software\GhostSlacking"
+        Name="UpgradeProtocolVersion"
+        Type="raw"
+        Bitness="always64" />
+    </Property>
+    <util:CloseApplication
+      Id="DetectGhostSlackingBeforeUpgrade"
+      Target="GhostSlacking.App.exe"
+      Condition="WIX_UPGRADE_DETECTED"
+      Property="GHOSTSLACKING_WAS_RUNNING"
+      RebootPrompt="no"
+      Sequence="1" />
+    <util:CloseApplication
+      Id="CloseGhostSlackingForUpgrade"
+      Target="GhostSlacking.App.exe"
+      Description="GhostSlacking 正在运行。安装程序需要先安全退出程序并恢复受控窗口。"
+      Condition="WIX_UPGRADE_DETECTED"
+      CloseMessage="yes"
+      ElevatedCloseMessage="yes"
+      Timeout="15"
+      RebootPrompt="no"
+      Sequence="2" />
+    <util:CloseApplication
+      Id="VerifyGhostSlackingStopped"
+      Target="GhostSlacking.App.exe"
+      Condition="WIX_UPGRADE_DETECTED"
+      Property="GHOSTSLACKING_STILL_RUNNING"
+      RebootPrompt="no"
+      Sequence="3" />
+    <util:CloseApplication
+      Id="VerifyWatchdogStopped"
+      Target="GhostSlacking.Watchdog.exe"
+      Condition="WIX_UPGRADE_DETECTED"
+      Property="GHOSTSLACKING_WATCHDOG_STILL_RUNNING"
+      RebootPrompt="no"
+      Sequence="4" />
 
     <netfx:DotNetCompatibilityCheck
       Property="DOTNETRUNTIMECHECK"
@@ -21,10 +72,56 @@
     <Launch
       Condition="Installed OR DOTNETRUNTIMECHECK = 0"
       Message="GhostSlacking 需要安装 .NET 8 Runtime x64（不是 Desktop Runtime）。请先访问 https://aka.ms/dotnet/8.0/runtime-win-x64.exe 安装后重试。" />
+    <Launch
+      Condition="NOT WIX_UPGRADE_DETECTED OR UPGRADE_PROTOCOL_VERSION = &quot;#1&quot;"
+      Message="检测到不支持安全自动升级的旧版本。请先退出程序，并在 Windows 设置的“已安装的应用”中卸载所有 GhostSlacking 条目，然后重新运行此安装包。用户设置和日志不会被删除。" />
 
     <Icon Id="GhostSlacking.exe" SourceFile="$(PublishDirectory)\GhostSlacking.App.exe" />
     <Property Id="ARPPRODUCTICON" Value="GhostSlacking.exe" />
     <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="INSTALLLEVEL" Value="1" />
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch
+        Id="PreviousInstallFolder"
+        Root="HKLM"
+        Key="Software\GhostSlacking"
+        Name="InstallLocation"
+        Type="raw"
+        Bitness="always64" />
+    </Property>
+    <Property
+      Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+      Value="GhostSlacking 已安装成功。单击“完成”退出安装向导。" />
+
+    <SetProperty
+      Id="WixUnelevatedShellExecTarget"
+      Value="[INSTALLFOLDER]GhostSlacking.App.exe"
+      Before="RestartGhostSlackingAfterUpgrade"
+      Sequence="execute"
+      Condition="WIX_UPGRADE_DETECTED AND GHOSTSLACKING_WAS_RUNNING AND UILevel &gt;= 4 AND NOT REMOVE" />
+    <CustomAction
+      Id="RestartGhostSlackingAfterUpgrade"
+      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+      DllEntry="WixUnelevatedShellExec"
+      Execute="immediate"
+      Return="ignore" />
+    <CustomAction
+      Id="BlockUpgradeWhileGhostSlackingIsRunning"
+      Error="GhostSlacking 或其 Watchdog 未能安全退出。旧版本尚未更改，请手动退出程序后重试升级。" />
+    <InstallExecuteSequence>
+      <Custom
+        Action="override Wix4CloseApplications_$(sys.BUILDARCHSHORT)"
+        Before="InstallFiles"
+        Condition="VersionNT &gt; 400" />
+      <Custom
+        Action="BlockUpgradeWhileGhostSlackingIsRunning"
+        After="Wix4CloseApplications_$(sys.BUILDARCHSHORT)"
+        Condition="GHOSTSLACKING_STILL_RUNNING OR GHOSTSLACKING_WATCHDOG_STILL_RUNNING" />
+      <Custom
+        Action="RestartGhostSlackingAfterUpgrade"
+        After="InstallFinalize"
+        Condition="WIX_UPGRADE_DETECTED AND GHOSTSLACKING_WAS_RUNNING AND UILevel &gt;= 4 AND NOT REMOVE" />
+    </InstallExecuteSequence>
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="GhostSlacking" />
@@ -34,25 +131,91 @@
       <Directory Id="ApplicationProgramsFolder" Name="GhostSlacking" />
     </StandardDirectory>
 
-    <Files Directory="INSTALLFOLDER" Include="$(PublishDirectory)\**">
-      <Exclude Files="$(PublishDirectory)\**\*.pdb" />
-    </Files>
+    <StandardDirectory Id="DesktopFolder" />
 
-    <Component Id="ApplicationShortcut" Directory="ApplicationProgramsFolder" Guid="*">
-      <Shortcut
-        Id="ApplicationStartMenuShortcut"
-        Name="GhostSlacking"
-        Description="GhostSlacking 窗口 Ghost/Peek 工具"
-        Target="[INSTALLFOLDER]GhostSlacking.App.exe"
-        WorkingDirectory="INSTALLFOLDER" />
-      <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
-      <RegistryValue
-        Root="HKCU"
-        Key="Software\GhostSlacking"
-        Name="InstallerVersion"
-        Type="string"
-        Value="[ProductVersion]"
-        KeyPath="yes" />
-    </Component>
+    <Feature
+      Id="MainProgramFeature"
+      Title="GhostSlacking 主程序"
+      Description="GhostSlacking 应用程序和运行所需文件。"
+      Level="1"
+      AllowAbsent="no"
+      AllowAdvertise="no"
+      Display="hidden">
+      <Files Directory="INSTALLFOLDER" Include="$(PublishDirectory)\**">
+        <Exclude Files="$(PublishDirectory)\**\*.pdb" />
+      </Files>
+      <Component Id="InstallerRegistration" Directory="INSTALLFOLDER" Guid="*">
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\GhostSlacking"
+          Name="InstallLocation"
+          Type="string"
+          Value="[INSTALLFOLDER]"
+          KeyPath="yes" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\GhostSlacking"
+          Name="InstallerVersion"
+          Type="string"
+          Value="[ProductVersion]" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\GhostSlacking"
+          Name="UpgradeProtocolVersion"
+          Type="integer"
+          Value="1" />
+      </Component>
+    </Feature>
+
+    <Feature
+      Id="StartMenuShortcutFeature"
+      Title="开始菜单快捷方式"
+      Description="在所有用户的开始菜单中创建 GhostSlacking 快捷方式。"
+      Level="1"
+      AllowAdvertise="no">
+      <Component Id="ApplicationStartMenuShortcut" Directory="ApplicationProgramsFolder" Guid="*">
+        <Shortcut
+          Id="ApplicationStartMenuShortcut"
+          Name="GhostSlacking"
+          Description="GhostSlacking 窗口 Ghost/Peek 工具"
+          Target="[INSTALLFOLDER]GhostSlacking.App.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="GhostSlacking.exe" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\GhostSlacking"
+          Name="StartMenuShortcut"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </Feature>
+
+    <Feature
+      Id="DesktopShortcutFeature"
+      Title="桌面快捷方式"
+      Description="在所有用户的桌面上创建 GhostSlacking 快捷方式。"
+      Level="2"
+      AllowAdvertise="no">
+      <Component Id="ApplicationDesktopShortcut" Directory="DesktopFolder" Guid="*">
+        <Shortcut
+          Id="ApplicationDesktopShortcut"
+          Name="GhostSlacking"
+          Description="GhostSlacking 窗口 Ghost/Peek 工具"
+          Target="[INSTALLFOLDER]GhostSlacking.App.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="GhostSlacking.exe" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\GhostSlacking"
+          Name="DesktopShortcut"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </Feature>
+
+    <UIRef Id="GhostSlackingInstallerUI" />
   </Package>
 </Wix>

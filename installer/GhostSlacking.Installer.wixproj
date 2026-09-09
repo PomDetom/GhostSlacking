@@ -8,8 +8,14 @@
     <OutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer</OutputPath>
     <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer-obj\$(Configuration)</IntermediateOutputPath>
     <DebugType>none</DebugType>
+    <Cultures>zh-CN</Cultures>
+    <!-- AllowSameVersionUpgrades intentionally makes the upgrade range inclusive. -->
+    <!-- ProgramMenuFolder/DesktopFolder resolve to all-users locations because this is per-machine. -->
+    <SuppressIces>ICE38;ICE43;ICE57;ICE61;ICE63</SuppressIces>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="WixToolset.Netfx.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
   </ItemGroup>
 </Project>

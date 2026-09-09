@@ -23,4 +23,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\GhostSlacking.App\GhostSlacking.App.csproj" />
   </ItemGroup>
+  <Target Name="CopyWatchdogTestArtifacts" AfterTargets="Build">
+    <ItemGroup>
+      <WatchdogTestArtifact Include="..\..\src\GhostSlacking.Watchdog\bin\$(Configuration)\net8.0-windows\GhostSlacking.Watchdog.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WatchdogTestArtifact)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

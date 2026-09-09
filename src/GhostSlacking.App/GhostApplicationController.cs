@@ -45,6 +45,7 @@ internal sealed class GhostApplicationController : IDisposable
     private readonly PickerEscapeGate _pickerEscapeGate = new();
     private bool _peekDown;
     private bool _isExiting;
+    private bool _forceRestoreOnExit;
     private readonly PeekStateTracker _peekState = new();
     private readonly TrayDoubleClickDetector _trayDoubleClick = new(TimeSpan.FromMilliseconds(500));
     private SettingsWindow? _settingsWindow;
@@ -64,6 +65,7 @@ internal sealed class GhostApplicationController : IDisposable
         _coordinator = new GhostCoordinator(_windows, _recovery, visibility, _logger, _revealOverlay);
         _messageWindow = new Win32MessageWindow();
         _messageWindow.HotkeyPressed += OnHotkeyPressed;
+        _messageWindow.CloseRequested += OnCloseRequested;
         _hotkeys = new Win32HotkeyManager(_messageWindow.Handle);
         _mouseHook = new LowLevelMouseHook();
         _mouseHook.LeftButtonDown += OnPickerClick;
@@ -516,15 +518,29 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void ExitApplication()
     {
+        ExitApplication(restoreAll: false);
+    }
+
+    private void ExitApplication(bool restoreAll)
+    {
         if (_isExiting)
         {
             return;
         }
 
+        _forceRestoreOnExit = restoreAll;
         _isExiting = true;
-        Dispose();
-        _lifetime.Shutdown();
+        try
+        {
+            Dispose();
+        }
+        finally
+        {
+            _lifetime.Shutdown();
+        }
     }
+
+    private void OnCloseRequested() => Dispatcher.UIThread.Post(() => ExitApplication(restoreAll: true));
 
     public void Dispose()
     {
@@ -537,21 +553,12 @@ internal sealed class GhostApplicationController : IDisposable
         _isExiting = true;
         CancelPicking();
         RestoreReport? restoreReport = null;
-        if (_settings.RestoreOnExit)
+        if (_settings.RestoreOnExit || _forceRestoreOnExit)
         {
             restoreReport = _coordinator.RestoreAll("application exit");
         }
 
-        // A failed restore is intentionally not acknowledged as clean. Closing
-        // the pipe leaves the last manifest for the watchdog timeout path.
-        if (restoreReport is null || !restoreReport.HasFailures)
-        {
-            _watchdog?.CompleteShutdown();
-        }
-
         _recovery.ProfilesChanged -= OnRecoveryProfilesChanged;
-        _watchdog?.Dispose();
-
         _mouseHook.Dispose();
         _keyboardHook.Dispose();
         _hotkeys.Dispose();
@@ -568,6 +575,17 @@ internal sealed class GhostApplicationController : IDisposable
         _trayIcon.Clicked -= OnTrayIconClicked;
         _trayIcon.IsVisible = false;
         _trayIcon.Dispose();
+
+        // A failed restore is intentionally not acknowledged as clean. Closing
+        // the pipe leaves the last manifest for the watchdog timeout path. On a
+        // clean exit, hooks and tray UI are already stopped before acknowledgment.
+        if (restoreReport is null || !restoreReport.HasFailures)
+        {
+            _watchdog?.CompleteShutdown();
+        }
+
+        _watchdog?.Dispose();
+        _messageWindow.CloseRequested -= OnCloseRequested;
         _messageWindow.Dispose();
         _logger.Log(LogLevel.Info, "Application exited.");
         _logger.Dispose();

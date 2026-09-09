@@ -24,6 +24,20 @@ public sealed class Win32MessageWindowTests
     }
 
     [Fact]
+    public void Close_message_requests_shutdown_only_once()
+    {
+        using var window = new Win32MessageWindow();
+        var closeRequests = 0;
+        window.CloseRequested += () => closeRequests++;
+
+        SendMessage(window.Handle, 0x0010, 0, 0);
+        SendMessage(window.Handle, 0x0010, 0, 0);
+
+        Assert.Equal(1, closeRequests);
+        Assert.NotEqual(0, window.Handle);
+    }
+
+    [Fact]
     public void Overlay_window_applies_ring_and_disposes_repeatedly()
     {
         var window = new Win32OverlayWindow();

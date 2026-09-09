@@ -9,6 +9,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\GhostSlacking.ico</ApplicationIcon>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <WindowsAppSdkSelfContained>false</WindowsAppSdkSelfContained>
     <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
@@ -29,6 +30,9 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="GhostSlacking.App.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\GhostSlacking.ico" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="$(PkgMicrosoft_VCRTForwarders_140)\runtimes\win-x64\native\release\*.dll">

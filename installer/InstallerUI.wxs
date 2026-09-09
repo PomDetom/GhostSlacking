@@ -1,0 +1,135 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <UI Id="GhostSlackingInstallerUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Dialog Id="UpgradeReadyDlg" Width="370" Height="270" Title="[ProductName] 升级向导">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes" Text="升级 GhostSlacking" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="315" Height="15" Transparent="yes" NoPrefix="yes" Text="已检测到旧版本，将升级至 [ProductVersion]。" />
+        <Control Id="UpgradeText" Type="Text" X="20" Y="66" Width="330" Height="52" NoPrefix="yes" Text="安装程序将沿用当前安装位置和快捷方式选择。若 GhostSlacking 正在运行，会先安全恢复所有受控窗口并退出，升级成功后再自动恢复运行。" />
+        <Control Id="InstallFolderLabel" Type="Text" X="20" Y="130" Width="330" Height="14" NoPrefix="yes" Text="当前安装位置：" />
+        <Control Id="InstallFolder" Type="Text" X="30" Y="149" Width="320" Height="30" NoPrefix="yes" Text="[INSTALLFOLDER]" />
+        <Control Id="RelocateHint" Type="Text" X="20" Y="190" Width="330" Height="24" NoPrefix="yes" Text="如需更改安装位置，请先卸载旧版本，再重新安装。" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+          <Publish Event="NewDialog" Value="WelcomeDlg" />
+        </Control>
+        <Control Id="Upgrade" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" ElevationShield="yes" Text="升级">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ShortcutOptionsDlg" Width="370" Height="270" Title="[ProductName] 安装向导">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="220" Height="15" Transparent="yes" NoPrefix="yes" Text="选择快捷方式" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="选择安装程序需要创建的快捷方式。" />
+        <Control Id="Prompt" Type="Text" X="20" Y="66" Width="320" Height="24" NoPrefix="yes" Text="安装完成后，可通过以下位置启动 GhostSlacking：" />
+        <Control
+          Id="StartMenuShortcut"
+          Type="CheckBox"
+          X="30"
+          Y="104"
+          Width="300"
+          Height="18"
+          Property="CREATE_STARTMENU_SHORTCUT"
+          CheckBoxValue="1"
+          Text="创建开始菜单快捷方式（推荐）" />
+        <Control
+          Id="DesktopShortcut"
+          Type="CheckBox"
+          X="30"
+          Y="132"
+          Width="300"
+          Height="18"
+          Property="CREATE_DESKTOP_SHORTCUT"
+          CheckBoxValue="1"
+          Text="创建桌面快捷方式" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <Publish Event="AddLocal" Value="StartMenuShortcutFeature" Order="1" Condition="CREATE_STARTMENU_SHORTCUT = &quot;1&quot;" />
+          <Publish Event="Remove" Value="StartMenuShortcutFeature" Order="2" Condition="NOT CREATE_STARTMENU_SHORTCUT" />
+          <Publish Event="AddLocal" Value="DesktopShortcutFeature" Order="3" Condition="CREATE_DESKTOP_SHORTCUT = &quot;1&quot;" />
+          <Publish Event="Remove" Value="DesktopShortcutFeature" Order="4" Condition="NOT CREATE_DESKTOP_SHORTCUT" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="5" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="UpgradeReadyDlg" Order="1" Condition="WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath_X64" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="2" Condition="WIXUI_INSTALLDIR_VALID &lt;&gt; &quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="3" Condition="WIXUI_INSTALLDIR_VALID = &quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ShortcutOptionsDlg" Order="4" Condition="WIXUI_INSTALLDIR_VALID = &quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+
+      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_X64" Order="1" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="2" Condition="WIXUI_INSTALLDIR_VALID &lt;&gt; &quot;1&quot;" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath" Value="[_BrowseProperty]" Order="3" Condition="WIXUI_INSTALLDIR_VALID = &quot;1&quot;" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="4" Condition="WIXUI_INSTALLDIR_VALID = &quot;1&quot;" />
+
+      <Publish Dialog="ShortcutOptionsDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ShortcutOptionsDlg" Order="1" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+    </UI>
+
+    <SetProperty
+      Id="CREATE_STARTMENU_SHORTCUT"
+      Value="1"
+      After="MigrateFeatureStates"
+      Sequence="ui"
+      Condition="&amp;StartMenuShortcutFeature = 3" />
+    <SetProperty
+      Id="CREATE_DESKTOP_SHORTCUT"
+      Value="1"
+      After="MigrateFeatureStates"
+      Sequence="ui"
+      Condition="&amp;DesktopShortcutFeature = 3" />
+    <SetProperty
+      Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+      Value="GhostSlacking 已成功升级至版本 [ProductVersion]。单击“完成”退出升级向导。"
+      After="FindRelatedProducts"
+      Sequence="ui"
+      Condition="WIX_UPGRADE_DETECTED" />
+
+    <UIRef Id="WixUI_Common" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+  </Fragment>
+</Wix>

@@ -11,13 +11,14 @@ public sealed class Win32MessageWindow : IDisposable
     private static readonly Dictionary<nint, Win32MessageWindow> Instances = [];
     private static readonly Win32NativeMethods.WindowProc WindowProcedure = WindowProc;
     private static bool _classRegistered;
+    private bool _closeRequested;
     private bool _disposed;
 
     public Win32MessageWindow()
     {
         EnsureWindowClass();
         Handle = Win32NativeMethods.CreateWindowEx(
-            0,
+            (uint)Win32NativeMethods.WS_EX_TOOLWINDOW,
             WindowClassName,
             WindowClassName,
             0,
@@ -25,7 +26,7 @@ public sealed class Win32MessageWindow : IDisposable
             0,
             0,
             0,
-            Win32NativeMethods.HWND_MESSAGE,
+            0,
             0,
             Win32NativeMethods.GetModuleHandle(null),
             0);
@@ -43,6 +44,8 @@ public sealed class Win32MessageWindow : IDisposable
     public nint Handle { get; private set; }
 
     public event Action<int>? HotkeyPressed;
+
+    public event Action? CloseRequested;
 
     private static void EnsureWindowClass()
     {
@@ -72,15 +75,26 @@ public sealed class Win32MessageWindow : IDisposable
 
     private static nint WindowProc(nint hwnd, uint message, nint wParam, nint lParam)
     {
+        Win32MessageWindow? instance;
+        lock (InstancesGate)
+        {
+            Instances.TryGetValue(hwnd, out instance);
+        }
+
         if (message == Win32NativeMethods.WM_HOTKEY)
         {
-            Win32MessageWindow? instance;
-            lock (InstancesGate)
+            instance?.HotkeyPressed?.Invoke(wParam.ToInt32());
+        }
+
+        if (message == Win32NativeMethods.WM_CLOSE && instance is not null)
+        {
+            if (!instance._closeRequested)
             {
-                Instances.TryGetValue(hwnd, out instance);
+                instance._closeRequested = true;
+                instance.CloseRequested?.Invoke();
             }
 
-            instance?.HotkeyPressed?.Invoke(wParam.ToInt32());
+            return 0;
         }
 
         return Win32NativeMethods.DefWindowProc(hwnd, message, wParam, lParam);

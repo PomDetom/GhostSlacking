@@ -22,7 +22,13 @@ dotnet run --project src/GhostSlacking.App --configuration Debug
 .\installer\build-installer.ps1
 ```
 
-输出文件为 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。安装包不包含 .NET；目标机器需要预先安装普通 [.NET 8 Runtime x64](https://aka.ms/dotnet/8.0/runtime-win-x64.exe)，不需要 Desktop Runtime。安装时会显示标准 UAC 提示，默认安装到 `%ProgramFiles%\GhostSlacking`，并创建开始菜单快捷方式；应用启动后仍以普通用户权限运行。指定版本可运行 `.\installer\build-installer.ps1 -Version 0.2.0`；版本必须使用三段数字且升级时递增。
+输出文件为 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。安装包不包含 .NET；目标机器需要预先安装普通 [.NET 8 Runtime x64](https://aka.ms/dotnet/8.0/runtime-win-x64.exe)，不需要 Desktop Runtime。简体中文安装向导允许修改默认的 `%ProgramFiles%\GhostSlacking` 安装位置，并可独立选择开始菜单和桌面快捷方式；开始菜单快捷方式默认创建，桌面快捷方式默认不创建。安装完成后会显示成功页面。安装时会显示标准 UAC 提示，应用启动后仍以普通用户权限运行。
+
+不带安全升级协议标记的旧版（包括 `0.1.0`）不能直接覆盖升级。安装器会在关闭程序或修改文件前提示用户：先退出程序，并在 Windows 设置的“已安装的应用”中卸载所有 GhostSlacking 条目，再重新运行新版 MSI；普通卸载不会删除 `%LocalAppData%\GhostSlacking` 中的设置与日志。
+
+从带有升级协议标记的新版本开始，后续升级可直接运行更高版本（或同版本重新构建）的 MSI，无需先卸载。安装器会沿用原安装位置和快捷方式选择；如程序正在运行，会先请求安全退出并恢复受控窗口，最多等待 15 秒。升级事务成功后，只有升级前处于运行状态且使用交互式向导时才自动启动新版；全新安装和静默升级均不会自动启动。若程序或 Watchdog 未能安全退出，文件替换会失败并回滚保留旧版本。更改安装位置仍需先卸载再重新安装。
+
+指定版本可运行 `.\installer\build-installer.ps1 -Version 0.2.0`；版本必须使用三段数字且升级时递增。构建完成后脚本会检查 MSI 的 UpgradeCode、升级协议标记、旧版拦截条件、功能迁移、关闭动作、事务时序和非提权重启动作。
 
 默认快捷键（全部可在设置中修改）：
 

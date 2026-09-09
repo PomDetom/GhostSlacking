@@ -26,6 +26,7 @@ internal static class Win32NativeMethods
     internal const int WH_KEYBOARD_LL = 13;
     internal const int WH_MOUSE_LL = 14;
     internal const int WM_HOTKEY = 0x0312;
+    internal const int WM_CLOSE = 0x0010;
     internal const int WM_ERASEBKGND = 0x0014;
     internal const int WM_NCHITTEST = 0x0084;
     internal const int HTTRANSPARENT = -1;
