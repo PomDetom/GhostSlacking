@@ -10,12 +10,12 @@
 | Phase 1 Ghost Core | 已完成实现 | 单窗口闭环、托盘宿主、设置、快捷键和自动化测试已在当前解决方案中。 |
 | Phase 2 Reliability | Watchdog v1 已完成，其余进行中 | 异常恢复协议和独立进程已落地；注销/关机、权限诊断、DPI 热插拔和长时间观测仍待验证或补齐。 |
 | Phase 3 Productization | 主要代码已完成，发布验收待补 | Avalonia 设置、配置、反馈、单实例、开机启动、MSI 和 GitHub Actions 已存在；诊断导出、签名和干净系统验收仍未完成。 |
-| Phase 4 Advanced Rendering | Composition 原型已实现，兼容性验收待补 | 非抓屏 Composition 外扩羽化/模糊和硬边回退已接入；性能及设备/窗口兼容性仍需实测。 |
+| Phase 4 Advanced Rendering | Composition 原型与 60 Hz 热路径优化已实现，兼容性验收待补 | 非抓屏 Composition 外扩羽化/模糊、位置无关遮罩缓存和硬边回退已接入；真实设备/窗口性能仍需实测。 |
 
 ## 当前验证结果
 
 - `dotnet build GhostSlacking.sln --configuration Debug`：0 个警告，0 个错误。
-- `dotnet test GhostSlacking.sln --configuration Debug --no-build`：134 个测试通过（Core 96，App 38），0 个失败，0 个跳过。
+- `dotnet test GhostSlacking.sln --configuration Debug/Release --no-restore`：147 个测试通过（Core 100，App 47），两个配置均为 0 个失败、0 个跳过。
 - 解决方案当前包含 4 个生产项目：`Core`、`Platform`、`App`、`Watchdog`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
 
 ## 已完成：Phase 1 Core Demo 与 App 宿主基线
@@ -27,15 +27,16 @@
 - `Ghost → Reveal → Ghost → Visible/Restore` 状态协调器，支持临时完整显示和最终恢复两条路径。
 - 基于屏幕物理像素的圆形、矩形和圆角矩形区域几何计算，光标或窗口几何无变化时跳过 native 更新。
 - `SetWindowRgn` 句柄所有权和失败释放路径。
-- Ghost 使用 `SW_HIDE`，Reveal 时在显示前后均应用所选 region，兼容会在显示过程中重置窗口帧的窗口。
+- Ghost 使用 `SW_HIDE`；首次或重新显示 Reveal 时在显示前后均应用所选 region，连续移动时只应用和校验一次增量 region，兼容会在显示过程中重置窗口帧的窗口且避免重复同步重绘。
 - Reveal 后读取 `GetWindowRgn`/`GetRgnBox` 校验裁剪结果；目标窗口临时使用 `WS_EX_TOOLWINDOW` 排除 Alt+Tab，恢复时还原原始扩展样式。
 - Chrome 在重绘期间偶发短暂清除 region 时，后台会静默重施并校验三次；单轮竞态安全隐藏后在下一 tick 恢复，不再弹出误报，只有连续三轮仍失败才通知用户。
 - 修正 GDI 椭圆 region 右/下边界的开区间换算，避免校验误报导致 Reveal 被保持隐藏。
 - Windows 11 Reveal 期间临时关闭 `DWMWA_SYSTEMBACKDROP_TYPE`，恢复时还原原始 DWM backdrop 设置。
 - Ghost/Reveal 保留目标窗口的标题栏、缩放边框和系统按钮 style，避免 Chrome/Electron 因非客户区 style 变化重排；仍临时控制 Alt+Tab 扩展样式及 DWM 装饰，Restore 时还原原值。
 - Ghost/Reveal 期间临时置顶目标窗口，避免 Alt+Tab 后目标位于其他窗口下方；Restore 时恢复原始 TopMost 状态。
-- Ghost、Reveal 和 Restore 使用完整 placement 做状态感知校正；普通/Snap 恢复坐标与尺寸，最大化/最小化恢复对应状态。Restore 经过 33ms 周期的三次连续匹配才释放恢复资料，最多纠正十次 Chrome/Electron 延迟漂移。
-- Reveal 默认使用 144px 圆角矩形、16px 羽化和轻度模糊；保留原始清晰核心，并把目标内容 region 外扩到羽化宽度的 70%。非激活的 Windows Composition overlay 使用用户选择的单一模糊等级，通过连续透明遮罩渐入并淡出；宿主命中区域仅保留羽化外环，清晰核心的点击和滚轮直接落到目标窗口。渲染或设备失败时立即缩回硬边 region。
+- Ghost、Reveal 和 Restore 使用完整 placement 做状态感知校正；普通/Snap 恢复坐标与尺寸，最大化/最小化恢复对应状态。Restore 经过约 16.7ms 周期的三次连续匹配才释放恢复资料，最多纠正十次 Chrome/Electron 延迟漂移。
+- Reveal 默认使用 144px 圆角矩形、16px 羽化和轻度模糊；保留原始清晰核心，并把目标内容 region 外扩到羽化宽度的 70%。非激活的 Windows Composition overlay 固定覆盖目标 bounds，位置无关遮罩按视觉参数缓存，光标移动仅更新 visual offset 和羽化外环 region；清晰核心的点击和滚轮直接落到目标窗口。渲染或设备失败时立即缩回硬边 region。
+- Peek 使用约 60 Hz 的 Input 优先级轮询；Debug 日志每 120 个有效移动帧输出一次 FPS、平均/P95/最大耗时和超出 16.7ms 的帧数，不逐帧写入成功日志。
 - 全局热键、低级键盘 Peek 状态和拾取用低级鼠标钩子。
 - 设置页支持捕获自定义 Peek 按键，避免 Alt/Shift 对浏览器或其他前台应用产生快捷键副作用。
 - Peek 支持“按住显示”和“按下切换”两种模式，默认按下切换；切换模式按下沿翻转状态，按键重复不会重复切换。
@@ -69,6 +70,7 @@
 
 - `RevealEdgeOverlay` 使用非激活、鼠标穿透的 Windows Composition/Win2D overlay，在清晰核心外侧提供可配置羽化和单一模糊等级。
 - 目标内容 region 外扩到羽化宽度的 70%，overlay 只命中外环，清晰核心仍由目标窗口接收点击和滚轮。
+- Overlay 宿主与目标窗口同 bounds；遮罩 surface 与屏幕位置解耦并按视觉参数缓存，边缘/角落移动不再重建 Win2D 和 Composition 资源。
 - Composition 初始化、设备或渲染失败时回退到硬边 region；不读取、不保存目标窗口像素。
 
 ## 尚未完成：验收与后续工作

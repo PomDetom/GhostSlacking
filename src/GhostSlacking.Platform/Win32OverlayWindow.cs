@@ -11,6 +11,7 @@ public sealed class Win32OverlayWindow : IDisposable
     private static readonly object ClassGate = new();
     private static readonly Win32NativeMethods.WindowProc WindowProcedure = WindowProc;
     private static bool _classRegistered;
+    private Rectangle? _bounds;
     private bool _disposed;
 
     public Win32OverlayWindow()
@@ -46,6 +47,11 @@ public sealed class Win32OverlayWindow : IDisposable
     public NativeResult SetBounds(Rectangle bounds)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_bounds == bounds)
+        {
+            return NativeResult.Ok("SetWindowPos(RevealFeatherBounds)");
+        }
+
         if (!Win32NativeMethods.SetWindowPos(
                 Handle,
                 Win32NativeMethods.HWND_TOPMOST,
@@ -58,18 +64,15 @@ public sealed class Win32OverlayWindow : IDisposable
             return NativeResult.Failed("SetWindowPos(RevealFeatherBounds)", Win32NativeMethods.LastError);
         }
 
+        _bounds = bounds;
         return NativeResult.Ok("SetWindowPos(RevealFeatherBounds)");
     }
 
-    public NativeResult SetRingRegion(
-        CircleRegion outer,
-        CircleRegion inner,
-        Rectangle targetBounds,
-        Rectangle hostBounds)
+    public NativeResult SetRingRegion(CircleRegion outer, CircleRegion inner)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var outerHandle = CreateRegion(outer, targetBounds, hostBounds);
-        var innerHandle = CreateRegion(inner, targetBounds, hostBounds);
+        var outerHandle = CreateRegion(outer);
+        var innerHandle = CreateRegion(inner);
         if (outerHandle == 0 || innerHandle == 0)
         {
             DeleteRegion(outerHandle);
@@ -106,6 +109,11 @@ public sealed class Win32OverlayWindow : IDisposable
     public NativeResult ShowTopmostNoActivate()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (IsVisible)
+        {
+            return NativeResult.Ok("SetWindowPos(RevealFeather)");
+        }
+
         return Win32NativeMethods.SetWindowPos(
             Handle,
             Win32NativeMethods.HWND_TOPMOST,
@@ -129,10 +137,9 @@ public sealed class Win32OverlayWindow : IDisposable
         }
     }
 
-    private static nint CreateRegion(CircleRegion region, Rectangle targetBounds, Rectangle hostBounds)
+    private static nint CreateRegion(CircleRegion region)
     {
         var bounds = RevealGeometry.GetBounds(region);
-        bounds.Offset(targetBounds.Left - hostBounds.Left, targetBounds.Top - hostBounds.Top);
         return region.Shape switch
         {
             RevealShape.Circle => Win32NativeMethods.CreateEllipticRgn(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom),

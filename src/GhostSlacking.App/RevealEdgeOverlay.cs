@@ -45,7 +45,7 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
     private CompositionColorBrush? _mistBrush;
     private CompositionMaskBrush? _mistMaskBrush;
     private CompositionDrawingSurface? _maskSurface;
-    private MaskKey? _lastMask;
+    private RevealMaskKey? _lastMask;
     private bool _initialized;
     private volatile bool _failed;
     private bool _failureLogged;
@@ -173,41 +173,51 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
             return NativeResult.Failed("CompositionBackdropBrush", 0, "The compositor was not initialized.");
         }
 
-        var blurPadding = (int)MathF.Ceiling(visual.BlurAmountPx * 3F);
-        var hostBounds = GetHostBounds(visual, blurPadding);
-        if (hostBounds.Width <= 0 || hostBounds.Height <= 0)
+        var layout = RevealOverlayLayout.Create(visual);
+        if (layout.HostBounds.Width <= 0 || layout.HostBounds.Height <= 0)
         {
             HideVisual();
             return NativeResult.Failed("CompositionBackdropBrush", 0, "The Reveal feather is outside the target window.");
         }
 
-        var coreBounds = RevealGeometry.GetBounds(visual.CoreRegion);
-        coreBounds.Offset(visual.WindowBounds.Location);
-        var maskKey = new MaskKey(
-            hostBounds.Size,
-            new Point(coreBounds.Left - hostBounds.Left, coreBounds.Top - hostBounds.Top),
-            visual.CoreRegion.DiameterPx,
-            visual.CoreRegion.Shape,
-            visual.CoreRegion.CornerRadius,
-            visual.FeatherWidthPx,
-            visual.BlurAmountPx);
-
-        if (_lastMask != maskKey)
-        {
-            RebuildVisuals(visual, hostBounds, maskKey);
-            _lastMask = maskKey;
-        }
-
-        var boundsResult = _window.SetBounds(hostBounds);
+        var boundsResult = _window.SetBounds(layout.HostBounds);
         if (!boundsResult.Success)
         {
             return boundsResult;
         }
 
+        _root.Size = new Vector2(layout.HostBounds.Width, layout.HostBounds.Height);
+        if (_lastMask != layout.MaskKey)
+        {
+            RebuildVisuals(visual, layout);
+            _lastMask = layout.MaskKey;
+            _logger.Log(
+                LogLevel.Debug,
+                $"RevealMaskRebuilt size={layout.SurfaceSize.Width}x{layout.SurfaceSize.Height} " +
+                $"shape={layout.MaskKey.Shape} feather={layout.MaskKey.FeatherWidthPx} blur={layout.MaskKey.BlurAmountPx:F2}");
+        }
+
+        var visualOffset = new Vector3(layout.VisualOffset.X, layout.VisualOffset.Y, 0F);
+        if (_blurVisual is not null)
+        {
+            _blurVisual.Offset = visualOffset;
+        }
+
+        if (_mistVisual is not null)
+        {
+            _mistVisual.Offset = visualOffset;
+        }
+
+        var regionResult = _window.SetRingRegion(layout.RingOuterRegion, layout.RingInnerRegion);
+        if (!regionResult.Success)
+        {
+            return regionResult;
+        }
+
         return NativeResult.Ok("CompositionBackdropBrush");
     }
 
-    private void RebuildVisuals(RevealVisualState visual, Rectangle hostBounds, MaskKey maskKey)
+    private void RebuildVisuals(RevealVisualState visual, RevealOverlayLayout layout)
     {
         if (_compositor is null || _root is null || _canvasDevice is null || _graphicsDevice is null)
         {
@@ -216,14 +226,14 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
 
         ReleaseVisualResources();
 
-        var pixels = CreateMaskPixels(visual, hostBounds);
-        _maskSurface = CreateMaskSurface(pixels, hostBounds.Size);
+        var pixels = CreateMaskPixels(layout.TemplateCoreRegion, visual.FeatherWidthPx, layout.SurfaceSize);
+        _maskSurface = CreateMaskSurface(pixels, layout.SurfaceSize);
 
         _maskSurfaceBrush = _compositor.CreateSurfaceBrush(_maskSurface);
         _maskSurfaceBrush.Stretch = CompositionStretch.None;
 
-        var size = new Vector2(hostBounds.Width, hostBounds.Height);
-        CreateBlurLayer(size, maskKey.BlurAmountPx);
+        var size = new Vector2(layout.SurfaceSize.Width, layout.SurfaceSize.Height);
+        CreateBlurLayer(size, layout.MaskKey.BlurAmountPx);
 
         _mistBrush = _compositor.CreateColorBrush(WinColor.FromArgb(NeutralMistAlpha, 255, 255, 255));
         _mistMaskBrush = _compositor.CreateMaskBrush();
@@ -233,17 +243,7 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         _mistVisual.Size = size;
         _mistVisual.Brush = _mistMaskBrush;
 
-        _root.Size = size;
         _root.Children.InsertAtTop(_mistVisual);
-        var regionResult = _window.SetRingRegion(
-            RevealGeometry.Expand(visual.CoreRegion, visual.FeatherWidthPx),
-            visual.CoreRegion,
-            visual.WindowBounds,
-            hostBounds);
-        if (!regionResult.Success)
-        {
-            throw new ExternalException(regionResult.ErrorMessage ?? regionResult.Operation, regionResult.ErrorCode);
-        }
     }
 
     private CompositionDrawingSurface CreateMaskSurface(byte[] pixels, Size size)
@@ -332,32 +332,24 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         _lastMask = null;
     }
 
-    private static Rectangle GetHostBounds(RevealVisualState visual, int blurPadding)
+    private static byte[] CreateMaskPixels(CircleRegion templateCore, int featherWidthPx, Size surfaceSize)
     {
-        var localBounds = RevealGeometry.GetBounds(
-            RevealGeometry.Expand(visual.CoreRegion, visual.FeatherWidthPx + blurPadding));
-        localBounds.Offset(visual.WindowBounds.Location);
-        return Rectangle.Intersect(localBounds, visual.WindowBounds);
-    }
-
-    private static byte[] CreateMaskPixels(RevealVisualState visual, Rectangle hostBounds)
-    {
-        var byteCount = checked(hostBounds.Width * hostBounds.Height * 4);
+        var byteCount = checked(surfaceSize.Width * surfaceSize.Height * 4);
         var pixels = new byte[byteCount];
-        for (var y = 0; y < hostBounds.Height; y++)
+        for (var y = 0; y < surfaceSize.Height; y++)
         {
-            var localY = hostBounds.Top + y + 0.5F - visual.WindowBounds.Top;
-            for (var x = 0; x < hostBounds.Width; x++)
+            var localY = y + 0.5F;
+            for (var x = 0; x < surfaceSize.Width; x++)
             {
-                var localX = hostBounds.Left + x + 0.5F - visual.WindowBounds.Left;
-                var distance = RevealGeometry.SignedDistanceFromBoundary(visual.CoreRegion, localX, localY);
-                var opacity = RevealGeometry.GetFeatherOpacity(distance, visual.FeatherWidthPx);
+                var localX = x + 0.5F;
+                var distance = RevealGeometry.SignedDistanceFromBoundary(templateCore, localX, localY);
+                var opacity = RevealGeometry.GetFeatherOpacity(distance, featherWidthPx);
                 if (opacity <= 0F)
                 {
                     continue;
                 }
 
-                var offset = ((y * hostBounds.Width) + x) * 4;
+                var offset = ((y * surfaceSize.Width) + x) * 4;
                 SetMaskPixel(pixels, offset, opacity);
             }
         }
@@ -496,15 +488,6 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
     private static extern int CreateDispatcherQueueController(
         DispatcherQueueOptions options,
         out nint dispatcherQueueController);
-
-    private sealed record MaskKey(
-        Size HostSize,
-        Point CoreOffset,
-        int CoreDiameterPx,
-        RevealShape Shape,
-        int CornerRadiusPx,
-        int FeatherWidthPx,
-        float BlurAmountPx);
 
 }
 #pragma warning restore CA1416

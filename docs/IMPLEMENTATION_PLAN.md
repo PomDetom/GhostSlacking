@@ -124,7 +124,7 @@ Phase 4  Advanced Rendering     Composition 外扩羽化原型已实现，验收
 
 #### 4.2.3 WindowTracker
 
-- 以 30–60 Hz 轮询 HWND、rect、最小化和进程身份；
+- 以约 60 Hz 轮询 HWND、rect、最小化和进程身份；
 - 仅在光标或几何信息变化时请求 region 更新；
 - 目标失效时发出清理事件；
 - 目标移动、缩放、跨屏时保持 Reveal 位置正确。
@@ -275,6 +275,7 @@ Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可�
 - [已完成] 使用非激活、鼠标穿透的 Windows Composition overlay；
 - [已完成] 使用 `CompositionBackdropBrush` 和 Win2D 效果描述实时模糊，不读取或保存目标像素；
 - [已完成] 将目标内容 region 外扩到羽化宽度的 70%，用可选的单一 GPU 模糊等级在原始清晰边界之外平滑渐入、扩散和淡出；
+- [已完成] 使用 60 Hz 调度、首次/增量 Reveal 分流和位置无关遮罩缓存，消除连续移动中的重复显示、同步重绘与边缘资源重建；
 - [待验收] 比较 CPU、GPU、内存、延迟和兼容性；
 - [已完成] 保留 Region Backend 作为兼容和回退路径；
 - [已完成实现/待手工验收] 视觉层未改变 Trigger、Tracker、Recovery 和产品状态机。
@@ -297,7 +298,7 @@ Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可�
 | DPI 坐标混用 | Reveal 偏移 | Phase 0/2 | 进程级 DPI 感知，统一物理像素 |
 | 高权限目标不可控 | 部分用户无法使用 | Phase 2 | 提示并支持用户明确提升权限 |
 | 主进程崩溃遗留 region | 目标窗口异常 | Phase 2 | Watchdog + 安全恢复清单 |
-| 高频 region 更新消耗 CPU | 体验卡顿 | Phase 0/1 | 变化检测、节流和计数器 |
+| 高频 region 更新消耗 CPU | 体验卡顿 | Phase 0/1/4 | 60 Hz 变化检测、首次/增量分流、遮罩缓存和限频计数器 |
 | HWND 被系统复用 | 误恢复新窗口 | Phase 2 | PID + 启动标识校验 |
 | 全屏/受保护窗口不兼容 | 兼容性投诉 | Phase 1/2 | 明确非目标，提供失败反馈 |
 | 过早引入高级渲染 | 工期和复杂度失控 | 全阶段 | Phase 4 设进入条件 |
@@ -336,7 +337,7 @@ Phase 4 不是 V0.1 的必要条件；当前已根据用户对 Reveal 周边可�
 
 - Idle 运行 30 分钟：CPU、内存、句柄；
 - Ghost 运行 30 分钟：目标应用仍正常工作；
-- Reveal 持续移动 10 分钟：tick 耗时和 region 调用次数；
+- Reveal 持续移动 10 分钟：有效帧率接近 60 Hz，P95 tick 不超过 16.7ms，并记录 region 调用次数；
 - 长时间运行 2 小时：无持续资源增长；
 - 快速按下/抬起 Peek Key 1000 次：无状态卡死；
 - 快速移动/缩放窗口：无明显异常 region 或 UI 线程阻塞。

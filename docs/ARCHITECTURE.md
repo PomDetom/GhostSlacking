@@ -60,7 +60,7 @@ V0.1 不包含：
 
 ### 3.4 V0.1 保持简单
 
-主业务在一个 Avalonia UI/消息线程上运行，使用 33ms 定时器更新光标和窗口几何；低级键盘/鼠标 Hook 仅用于 Picker 输入拦截，Composition overlay 仅用于可选视觉层。两者都不注入目标进程，也不改变恢复契约。
+主业务在一个 Avalonia UI/消息线程上运行，使用约 16.7ms（60 Hz）的 Input 优先级定时器更新光标和窗口几何；低级键盘/鼠标 Hook 仅用于 Picker 输入拦截，Composition overlay 仅用于可选视觉层。两者都不注入目标进程，也不改变恢复契约。
 
 ## 4. 系统上下文
 
@@ -169,7 +169,7 @@ Picker 不应默认选择当前前台窗口，因为产品交互是“指向并�
 
 职责：维护目标 HWND 的生存性和几何信息。
 
-当前使用约 30 Hz（33ms）的轻量定时检查，不使用全局窗口事件 Hook。Picker 的鼠标/键盘低级 Hook 是独立的输入拦截路径。每次检查：
+当前使用约 60 Hz（16.7ms）的轻量定时检查，不使用全局窗口事件 Hook。Picker 的鼠标/键盘低级 Hook 是独立的输入拦截路径。每次检查：
 
 - `IsWindow(hwnd)` 是否仍有效；
 - `GetWindowRect` 是否变化；
@@ -237,7 +237,8 @@ SetWindowRgn(hwnd, region, true)
 - 区域坐标必须与 `SetWindowRgn` 所要求的窗口本地坐标一致；
 - 成功传给 `SetWindowRgn` 后，region 句柄的所有权由系统接管；失败时才由调用方释放；
 - 旧 region 的更新频率应与光标变化绑定，光标未变时不重复创建；
-- `SetWindowRgn` 负责可靠的二值裁剪；启用羽化时，目标内容 region 外扩到设置宽度的 70%，独立的鼠标穿透 Composition overlay 在原始清晰 Reveal 外侧实时模糊并淡出，不改变目标窗口输入。
+- `SetWindowRgn` 负责可靠的二值裁剪；首次显示保留显示前后两次 region 应用、同步重绘和 placement 校验，连续移动只应用并校验一次增量 region；
+- 启用羽化时，目标内容 region 外扩到设置宽度的 70%，独立的鼠标穿透 Composition overlay 在原始清晰 Reveal 外侧实时模糊并淡出，不改变目标窗口输入。
 
 ### 7.6 `RecoveryManager`
 
@@ -377,7 +378,7 @@ region 句柄封装为 `SafeHandle` 更安全。每次更新都必须有明确�
 - 目标窗口的原始 region 必须可可靠保存和恢复；
 - 它不等于安全隐私机制，不能承诺阻止所有捕获路径。
 
-当前羽化不替换上述裁剪机制：应用创建一个非激活、无任务栏项的 Composition overlay。原始 Reveal 保持完全清晰，目标内容 region 向外扩展到羽化宽度的 70%；一个 alpha 遮罩驱动一个 `CompositionBackdropBrush`，用用户选择的轻/中/强单一模糊半径从清晰边界平滑渐入，并在外侧 30% 淡出。Overlay 的系统窗口 region 是“外扩轮廓减去清晰核心”的环形区域，因此核心不会参与跨进程命中测试，点击和滚轮直接到达目标窗口。应用不读取或持久化窗口像素；overlay 或图形设备失败时，协调器立即把目标缩回原始硬边 Reveal。
+当前羽化不替换上述裁剪机制：应用创建一个非激活、无任务栏项且与目标窗口同 bounds 的 Composition overlay。原始 Reveal 保持完全清晰，目标内容 region 向外扩展到羽化宽度的 70%；一个 alpha 遮罩驱动一个 `CompositionBackdropBrush`，用用户选择的轻/中/强单一模糊半径从清晰边界平滑渐入，并在外侧 30% 淡出。遮罩按形状、尺寸、羽化宽度和模糊量缓存，光标移动只更新小型 visual 的 offset 和“外扩轮廓减去清晰核心”的系统窗口 region，因此窗口边缘裁剪不会重建 Composition 资源，清晰核心的点击和滚轮仍直接到达目标窗口。应用不读取或持久化窗口像素；overlay 或图形设备失败时，协调器立即把目标缩回原始硬边 Reveal。
 
 对目标窗口应用 Reveal region 后会立即读取校验。Chrome/Electron 在重绘消息交错时可能瞬时返回无 region，因此单次更新内部最多重施三次；若一整轮仍无法确认，协调器先安全隐藏目标并在下一 tick 重试，而不是立即向用户报错。连续三轮均失败才视为持续故障。
 
@@ -573,15 +574,17 @@ GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。
 | Reveal 状态 CPU | 通常低于 3%          |
 | 内存            | 小于 100 MB        |
 | 启动时间          | 通常小于 1 秒         |
-| 光标响应          | 30–60 Hz，有效更新时刷新 |
+| 光标响应          | 60 Hz，有效更新时刷新    |
 
 性能原则：
 
 - 不截图、不做 OCR、不引入浏览器运行时；
 - 光标和 rect 未变化时不重建 region；
+- 首次 Reveal 使用完整兼容路径，连续移动使用单次 region 增量更新；
+- Composition 遮罩与屏幕位置解耦，连续移动只更新 visual offset 和环形命中 region；
 - P/Invoke 失败不进入高频重试死循环；
-- 日志异步或批量写入，不能阻塞消息线程；
-- Phase 0 用计数器测量 `SetWindowRgn` 频率、tick 耗时和失败率。
+- 高频成功路径不逐帧写日志；Debug 模式每 120 个有效移动帧汇总有效 FPS、平均/P95/最大 tick 耗时和超预算帧数；
+- 用限频计数器和手工矩阵测量 `SetWindowRgn` 频率、tick 耗时和失败率。
 
 ## 18. 错误处理
 

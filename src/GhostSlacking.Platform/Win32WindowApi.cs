@@ -25,7 +25,9 @@ public sealed class Win32WindowApi : IWindowApi
             IsVisible = Win32NativeMethods.IsWindowVisible(hwnd),
             IsMinimized = Win32NativeMethods.IsIconic(hwnd),
             IsMaximized = Win32NativeMethods.IsZoomed(hwnd),
-            ProcessName = TryGetProcessName(pid)
+            // The coordinator does not consume the process name while polling.
+            // Avoid opening a process handle on every Reveal frame.
+            ProcessName = null
         };
     }
 
@@ -172,7 +174,8 @@ public sealed class Win32WindowApi : IWindowApi
     {
         try
         {
-            return Process.GetProcessById((int)pid).ProcessName;
+            using var process = Process.GetProcessById((int)pid);
+            return process.ProcessName;
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -184,7 +187,8 @@ public sealed class Win32WindowApi : IWindowApi
     {
         try
         {
-            return Process.GetProcessById((int)pid).StartTime.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            using var process = Process.GetProcessById((int)pid);
+            return process.StartTime.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
         {

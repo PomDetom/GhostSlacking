@@ -46,7 +46,7 @@ public sealed class Win32MessageWindowTests
         var inner = new CircleRegion(50, 50, 40, RevealShape.RoundedRectangle, 8);
 
         Assert.True(window.SetBounds(targetBounds).Success);
-        Assert.True(window.SetRingRegion(outer, inner, targetBounds, targetBounds).Success);
+        Assert.True(window.SetRingRegion(outer, inner).Success);
         Assert.True(window.ShowTopmostNoActivate().Success);
         window.Hide();
         window.Dispose();

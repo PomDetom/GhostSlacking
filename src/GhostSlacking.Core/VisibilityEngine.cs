@@ -25,6 +25,17 @@ public sealed class VisibilityEngine
         return result;
     }
 
+    public NativeResult UpdateReveal(GhostWindowProfile profile, CircleRegion region)
+    {
+        var result = _backend.UpdateRevealRegion(profile.Hwnd, region);
+        if (!result.Success)
+        {
+            Log(result, string.Empty);
+        }
+
+        return result;
+    }
+
     public NativeResult EnsureWindowPlacement(GhostWindowProfile profile)
     {
         var result = _backend.EnsureWindowPlacement(profile.Hwnd, profile.Original);

@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
+using System.Diagnostics;
 using System.Drawing;
 using GhostSlacking.Core;
 using GhostSlacking.Platform;
@@ -48,6 +49,8 @@ internal sealed class GhostApplicationController : IDisposable
     private bool _forceRestoreOnExit;
     private readonly PeekStateTracker _peekState = new();
     private readonly TrayDoubleClickDetector _trayDoubleClick = new(TimeSpan.FromMilliseconds(500));
+    private readonly RevealPerformanceTracker _revealPerformance = new();
+    private readonly Stopwatch _revealPerformanceClock = Stopwatch.StartNew();
     private SettingsWindow? _settingsWindow;
     private bool _disposed;
 
@@ -114,12 +117,10 @@ internal sealed class GhostApplicationController : IDisposable
         _recovery.ProfilesChanged += OnRecoveryProfilesChanged;
         PublishRecoveryManifest();
 
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
-        _timer.Tick += (_, _) =>
-        {
-            _peekDown = _peekState.Update(_windows.IsKeyDown(_settings.PeekVirtualKey), _settings.PeekTrigger);
-            _coordinator.UpdatePeek(_windows.GetCursorPosition(), _peekDown);
-        };
+        _timer = new DispatcherTimer(
+            TimeSpan.FromSeconds(1D / 60D),
+            DispatcherPriority.Input,
+            OnPeekTimerTick);
         _timer.Start();
 
         RegisterHotkeys();
@@ -130,6 +131,33 @@ internal sealed class GhostApplicationController : IDisposable
     {
         _logger.Log(LogLevel.Info, "Startup notification requested.");
         ShowInfo(UiText.Text(_settings.Language, "startupReady"));
+    }
+
+    private void OnPeekTimerTick(object? sender, EventArgs args)
+    {
+        _peekDown = _peekState.Update(_windows.IsKeyDown(_settings.PeekVirtualKey), _settings.PeekTrigger);
+        var cursor = _windows.GetCursorPosition();
+        var startedAt = Stopwatch.GetTimestamp();
+        _coordinator.UpdatePeek(cursor, _peekDown);
+        var updateDuration = Stopwatch.GetElapsedTime(startedAt);
+
+        if (_settings.MinimumLogLevel != LogLevel.Debug || !_peekDown || _coordinator.State != GhostState.Reveal)
+        {
+            _revealPerformance.Reset();
+            return;
+        }
+
+        var summary = _revealPerformance.Record(cursor, updateDuration, _revealPerformanceClock.Elapsed);
+        if (summary is null)
+        {
+            return;
+        }
+
+        _logger.Log(
+            LogLevel.Debug,
+            $"RevealPerformance frames={summary.FrameCount} effectiveFps={summary.EffectiveFramesPerSecond:F1} " +
+            $"averageMs={summary.AverageDuration.TotalMilliseconds:F2} p95Ms={summary.P95Duration.TotalMilliseconds:F2} " +
+            $"maximumMs={summary.MaximumDuration.TotalMilliseconds:F2} overBudget={summary.OverBudgetCount}");
     }
 
     private static NativeMenuItem CreateMenuItem(string header, Action? action, bool enabled = true)

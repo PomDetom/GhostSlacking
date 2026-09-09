@@ -86,7 +86,8 @@ public sealed class Win32WindowPicker
     {
         try
         {
-            return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;
+            using var process = System.Diagnostics.Process.GetProcessById((int)pid);
+            return process.ProcessName;
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

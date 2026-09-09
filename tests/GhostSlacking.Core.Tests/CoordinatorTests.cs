@@ -19,9 +19,12 @@ public sealed class CoordinatorTests
         // prevent a Peek reveal.
         api.Observation = api.Observation with { IsVisible = false };
         coordinator.UpdatePeek(new Point(200, 200), true);
+        api.Observation = api.Observation with { IsVisible = true };
         coordinator.UpdatePeek(new Point(201, 200), true);
 
         Assert.Equal(2, backend.RevealCalls);
+        Assert.Equal(1, backend.ApplyRevealCalls);
+        Assert.Equal(1, backend.UpdateRevealCalls);
         Assert.Equal(GhostState.Reveal, coordinator.State);
         coordinator.UpdatePeek(new Point(800, 800), true);
         Assert.Equal(GhostState.Ghost, coordinator.State);
@@ -29,6 +32,92 @@ public sealed class CoordinatorTests
         api.Observation = api.Observation with { IsVisible = true };
         CompleteRestore(coordinator);
         Assert.Equal(1, backend.RestoreCalls);
+    }
+
+    [Fact]
+    public void Unchanged_reveal_does_not_call_either_reveal_path_again()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        coordinator.UpdatePeek(new Point(200, 200), true);
+        api.Observation = api.Observation with { IsVisible = true };
+        coordinator.UpdatePeek(new Point(200, 200), true);
+
+        Assert.Equal(1, backend.ApplyRevealCalls);
+        Assert.Equal(0, backend.UpdateRevealCalls);
+    }
+
+    [Fact]
+    public void Hidden_active_reveal_uses_the_full_show_path_again()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        coordinator.UpdatePeek(new Point(200, 200), true);
+        api.Observation = api.Observation with { IsVisible = false };
+        coordinator.UpdatePeek(new Point(200, 200), true);
+
+        Assert.Equal(2, backend.ApplyRevealCalls);
+        Assert.Equal(0, backend.UpdateRevealCalls);
+    }
+
+    [Fact]
+    public void Incremental_reveal_validation_failure_is_hidden_and_retried_with_full_show()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        coordinator.UpdatePeek(new Point(200, 200), true);
+        api.Observation = api.Observation with { IsVisible = true };
+        backend.RevealResults.Enqueue(NativeResult.Failed(
+            "GetWindowRgn(Validate)",
+            0,
+            "The target window did not retain the Reveal region."));
+
+        coordinator.UpdatePeek(new Point(201, 200), true);
+
+        Assert.Equal(GhostState.Ghost, coordinator.State);
+        Assert.Equal(1, backend.UpdateRevealCalls);
+
+        api.Observation = api.Observation with { IsVisible = false };
+        coordinator.UpdatePeek(new Point(201, 200), true);
+
+        Assert.Equal(GhostState.Reveal, coordinator.State);
+        Assert.Equal(2, backend.ApplyRevealCalls);
+    }
+
+    [Fact]
+    public void Successful_incremental_reveal_does_not_log_per_frame_success()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var logger = new RecordingLogger();
+        var recovery = new RecoveryManager(api, backend, logger);
+        var coordinator = new GhostCoordinator(
+            api,
+            recovery,
+            new VisibilityEngine(backend, logger),
+            logger);
+
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        coordinator.UpdatePeek(new Point(200, 200), true);
+        api.Observation = api.Observation with { IsVisible = true };
+        var messageCountAfterInitialReveal = logger.Messages.Count;
+
+        coordinator.UpdatePeek(new Point(201, 200), true);
+
+        Assert.Equal(messageCountAfterInitialReveal, logger.Messages.Count);
+        Assert.Equal(1, backend.UpdateRevealCalls);
     }
 
     [Fact]
@@ -497,7 +586,9 @@ public sealed class CoordinatorTests
             _calls = calls;
         }
 
-        public int RevealCalls { get; private set; }
+        public int ApplyRevealCalls { get; private set; }
+        public int UpdateRevealCalls { get; private set; }
+        public int RevealCalls => ApplyRevealCalls + UpdateRevealCalls;
         public int GhostCalls { get; private set; }
         public int RestoreCalls { get; private set; }
         public int EnsurePlacementCalls { get; private set; }
@@ -509,10 +600,17 @@ public sealed class CoordinatorTests
         public NativeResult ApplyReveal(nint hwnd, CircleRegion region, WindowSnapshot snapshot)
         {
             _calls?.Add("Reveal");
-            RevealCalls++;
+            ApplyRevealCalls++;
             LastReveal = region;
             LastExpectedSnapshot = snapshot;
             return RevealResults.TryDequeue(out var result) ? result : NativeResult.Ok("Reveal");
+        }
+        public NativeResult UpdateRevealRegion(nint hwnd, CircleRegion region)
+        {
+            _calls?.Add("UpdateReveal");
+            UpdateRevealCalls++;
+            LastReveal = region;
+            return RevealResults.TryDequeue(out var result) ? result : NativeResult.Ok("UpdateReveal");
         }
         public NativeResult EnsureWindowPlacement(nint hwnd, WindowSnapshot snapshot) { EnsurePlacementCalls++; LastExpectedSnapshot = snapshot; return EnsurePlacementResult; }
         public NativeResult Restore(nint hwnd, WindowSnapshot snapshot) { RestoreCalls++; return NativeResult.Ok("Restore"); }
@@ -549,6 +647,16 @@ public sealed class CoordinatorTests
         public void Hide()
         {
             HideCalls++;
+        }
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        public List<string> Messages { get; } = [];
+
+        public void Log(LogLevel level, string message, Exception? exception = null)
+        {
+            Messages.Add(message);
         }
     }
 }

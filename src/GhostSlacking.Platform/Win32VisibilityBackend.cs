@@ -92,6 +92,16 @@ public sealed class Win32VisibilityBackend : IVisibilityBackend
         return EnsureWindowPlacement(hwnd, snapshot);
     }
 
+    public NativeResult UpdateRevealRegion(nint hwnd, CircleRegion region)
+    {
+        if (!Win32NativeMethods.IsWindow(hwnd))
+        {
+            return Failure("SetWindowRgn(RevealUpdate)", "The target window no longer exists.");
+        }
+
+        return ApplyRevealRegion(hwnd, region);
+    }
+
     public NativeResult EnsureWindowPlacement(nint hwnd, WindowSnapshot snapshot)
     {
         if (!Win32NativeMethods.IsWindow(hwnd))

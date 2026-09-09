@@ -186,7 +186,8 @@ public sealed class GhostCoordinator
         }
 
         var region = RevealGeometry.CreateReveal(observation.ScreenBounds, cursorScreen, _current.Reveal);
-        if (!cursorChanged &&
+        if (observation.IsVisible &&
+            !cursorChanged &&
             !geometryChanged &&
             _state == GhostState.Reveal &&
             _lastReveal == region &&
@@ -203,7 +204,10 @@ public sealed class GhostCoordinator
             _current.Reveal.BlurLevel);
         var useFeather = TryPrepareRevealVisual(visual);
         var appliedRegion = useFeather ? visual.ContentRegion : visual.CoreRegion;
-        var revealed = _visibility.ApplyReveal(_current, appliedRegion);
+        var requiresFullReveal = _state != GhostState.Reveal || !observation.IsVisible;
+        var revealed = requiresFullReveal
+            ? _visibility.ApplyReveal(_current, appliedRegion)
+            : _visibility.UpdateReveal(_current, appliedRegion);
         if (revealed.Success)
         {
             if (useFeather)
@@ -215,7 +219,7 @@ public sealed class GhostCoordinator
                         LogLevel.Warning,
                         $"Reveal feather presentation failed; using hard edge. operation={presented.Operation} error={presented.ErrorCode} {presented.ErrorMessage}");
                     HideRevealVisual();
-                    revealed = _visibility.ApplyReveal(_current, visual.CoreRegion);
+                    revealed = _visibility.UpdateReveal(_current, visual.CoreRegion);
                     useFeather = false;
                 }
             }
