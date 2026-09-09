@@ -62,8 +62,8 @@ public sealed class CoordinatorTests
         var backend = new FakeVisibilityBackend();
         var recovery = new RecoveryManager(api, backend);
         var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
-        var userErrors = 0;
-        coordinator.UserError += (_, _) => userErrors++;
+        var userErrors = new List<UserErrorEventArgs>();
+        coordinator.UserErrorOccurred += (_, error) => userErrors.Add(error);
         backend.RevealResults.Enqueue(NativeResult.Failed(
             "GetWindowRgn(Validate)",
             0,
@@ -74,13 +74,13 @@ public sealed class CoordinatorTests
         coordinator.UpdatePeek(new Point(200, 200), true);
 
         Assert.Equal(GhostState.Ghost, coordinator.State);
-        Assert.Equal(0, userErrors);
+        Assert.Empty(userErrors);
 
         coordinator.UpdatePeek(new Point(200, 200), true);
 
         Assert.Equal(GhostState.Reveal, coordinator.State);
         Assert.Equal(2, backend.RevealCalls);
-        Assert.Equal(0, userErrors);
+        Assert.Empty(userErrors);
     }
 
     [Fact]
@@ -90,8 +90,8 @@ public sealed class CoordinatorTests
         var backend = new FakeVisibilityBackend();
         var recovery = new RecoveryManager(api, backend);
         var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
-        var userErrors = 0;
-        coordinator.UserError += (_, _) => userErrors++;
+        var userErrors = new List<UserErrorEventArgs>();
+        coordinator.UserErrorOccurred += (_, error) => userErrors.Add(error);
         for (var attempt = 0; attempt < 3; attempt++)
         {
             backend.RevealResults.Enqueue(NativeResult.Failed(
@@ -107,7 +107,9 @@ public sealed class CoordinatorTests
         coordinator.UpdatePeek(new Point(200, 200), true);
 
         Assert.Equal(GhostState.Ghost, coordinator.State);
-        Assert.Equal(1, userErrors);
+        var error = Assert.Single(userErrors);
+        Assert.Equal(UserErrorKind.RevealWindowFailed, error.Kind);
+        Assert.Equal("The target window did not retain the Reveal region.", error.TechnicalMessage);
     }
 
     [Fact]

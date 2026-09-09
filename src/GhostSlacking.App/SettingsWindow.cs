@@ -5,12 +5,11 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Media;
-using Avalonia.Platform;
+using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using FluentAvalonia.UI.Windowing;
 using GhostSlacking.Core;
 using Button = Avalonia.Controls.Button;
-using Brush = Avalonia.Media.Brush;
 using ComboBox = Avalonia.Controls.ComboBox;
 using Control = Avalonia.Controls.Control;
 using HorizontalAlignment = Avalonia.Layout.HorizontalAlignment;
@@ -25,20 +24,22 @@ internal sealed class SettingsWindow : AppWindow
     private const string RevealPage = "reveal";
     private const string HotkeysPage = "hotkeys";
     private const string GeneralPage = "general";
+    private static readonly TimeSpan SavedStatusDuration = TimeSpan.FromMilliseconds(2500);
     private static readonly AppSettings DefaultSettings = new();
-    private static readonly IBrush CanvasBrush = Brush.Parse("#F5F7FA");
-    private static readonly IBrush CardBrush = Brush.Parse("#FFFFFF");
-    private static readonly IBrush FieldBorderBrush = Brush.Parse("#E4E9F0");
-    private static readonly IBrush PrimaryBrush = Brush.Parse("#172033");
-    private static readonly IBrush SecondaryBrush = Brush.Parse("#667085");
-    private static readonly IBrush AccentBrush = Brush.Parse("#087F78");
-    private static readonly IBrush ErrorBrush = Brush.Parse("#C42B1C");
+    private readonly SolidColorBrush _canvasBrush = new();
+    private readonly SolidColorBrush _cardBrush = new();
+    private readonly SolidColorBrush _fieldBrush = new();
+    private readonly SolidColorBrush _fieldBorderBrush = new();
+    private readonly SolidColorBrush _primaryBrush = new();
+    private readonly SolidColorBrush _secondaryBrush = new();
+    private readonly SolidColorBrush _accentBrush = new();
+    private readonly SolidColorBrush _errorBrush = new();
 
     private readonly Func<AppSettings, bool> _save;
     private readonly List<(TextBlock Text, string Key)> _localizedText = [];
     private readonly List<(Button Button, string Key)> _localizedButtons = [];
     private readonly Dictionary<string, Control> _pages = [];
-    private readonly AppSettings _initialSettings;
+    private readonly SettingsEditState _editState;
     private readonly NavigationView _navigation;
     private readonly NavigationViewItem _revealItem;
     private readonly NavigationViewItem _hotkeysItem;
@@ -55,6 +56,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly ComboBox _peekMode;
     private readonly Button _peekKeyButton;
     private readonly ComboBox _language;
+    private readonly ComboBox _themeMode;
     private readonly ComboBox _logLevel;
     private readonly ToggleSwitch _restoreOnExit;
     private readonly ToggleSwitch _startWithWindows;
@@ -66,26 +68,30 @@ internal sealed class SettingsWindow : AppWindow
     private readonly HotkeyEditor _exitHotkey;
     private readonly HotkeyEditor _diameterIncreaseHotkey;
     private readonly HotkeyEditor _diameterDecreaseHotkey;
+    private readonly DispatcherTimer _savedStatusTimer;
     private HotkeyEditor? _activeHotkeyEditor;
     private int _peekVirtualKey;
     private bool _capturingPeekKey;
     private bool _updatingLanguage;
+    private bool _initializing = true;
     private string _selectedPage = RevealPage;
 
     public SettingsWindow(AppSettings settings, Func<AppSettings, bool> save)
     {
-        _initialSettings = settings;
+        _editState = new SettingsEditState(settings);
         _save = save;
         _peekVirtualKey = settings.PeekVirtualKey;
 
+        ApplyThemePalette();
+
         Title = UiText.Text(settings.Language, "title");
-        Width = 1020;
-        Height = 740;
+        Width = 840;
+        Height = 640;
         MinWidth = 840;
         MinHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = CanvasBrush;
-        ((Window)this).Icon = CreateWindowIcon();
+        Background = _canvasBrush;
+        Icon = AppIcon.TitleBarImage;
 
         _diameter = CreateNumberBox(settings.RevealDiameterPx, 64, 800, 8);
         _diameterStep = CreateNumberBox(settings.RevealDiameterStepPx, 8, 256, 8);
@@ -94,6 +100,7 @@ internal sealed class SettingsWindow : AppWindow
         _shape = CreateComboBox();
         _peekMode = CreateComboBox();
         _language = CreateComboBox();
+        _themeMode = CreateComboBox();
         _logLevel = CreateComboBox();
         _restoreOnExit = new ToggleSwitch { IsChecked = settings.RestoreOnExit };
         _startWithWindows = new ToggleSwitch { IsChecked = settings.StartWithWindows };
@@ -116,12 +123,12 @@ internal sealed class SettingsWindow : AppWindow
         {
             FontSize = 28,
             FontWeight = FontWeight.SemiBold,
-            Foreground = PrimaryBrush
+            Foreground = _primaryBrush
         };
         _pageDescription = new TextBlock
         {
             FontSize = 14,
-            Foreground = SecondaryBrush,
+            Foreground = _secondaryBrush,
             Margin = new Thickness(0, 6, 0, 0),
             TextWrapping = TextWrapping.Wrap
         };
@@ -129,8 +136,14 @@ internal sealed class SettingsWindow : AppWindow
         _infoBar = new InfoBar
         {
             IsOpen = false,
-            Margin = new Thickness(32, 0, 32, 12)
+            IsClosable = false,
+            Height = 32,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            ClipToBounds = true
         };
+        _savedStatusTimer = new DispatcherTimer { Interval = SavedStatusDuration };
+        _savedStatusTimer.Tick += OnSavedStatusTimerTick;
 
         _revealItem = CreateNavigationItem(RevealPage, Symbol.View);
         _hotkeysItem = CreateNavigationItem(HotkeysPage, Symbol.Keyboard);
@@ -138,6 +151,7 @@ internal sealed class SettingsWindow : AppWindow
         _navigation = new NavigationView
         {
             PaneDisplayMode = NavigationViewPaneDisplayMode.Left,
+            IsPaneOpen = false,
             IsBackButtonVisible = false,
             IsSettingsVisible = false,
             IsPaneToggleButtonVisible = true,
@@ -145,7 +159,7 @@ internal sealed class SettingsWindow : AppWindow
             CompactPaneLength = 52,
             OpenPaneLength = 220,
             PaneTitle = "GhostSlacking",
-            Background = CanvasBrush
+            Background = _canvasBrush
         };
         _navigation.MenuItems.Add(_revealItem);
         _navigation.MenuItems.Add(_hotkeysItem);
@@ -160,27 +174,26 @@ internal sealed class SettingsWindow : AppWindow
         Content = _navigation;
 
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+        ActualThemeVariantChanged += OnActualThemeVariantChanged;
+        Closed += OnClosed;
         _language.SelectionChanged += (_, _) =>
         {
             if (!_updatingLanguage)
             {
                 ApplyLanguage(CurrentLanguage);
+                OnSettingsEdited();
             }
         };
 
         ApplyLanguage(settings.Language);
         UpdateHotkeyConflicts();
-    }
-
-    private static WindowIcon? CreateWindowIcon()
-    {
-        return AppIcon.Instance;
+        SubscribeToSettingChanges();
+        _initializing = false;
     }
 
     private Control CreateContentShell(UiLanguage language)
     {
         var root = new Grid();
-        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         root.RowDefinitions.Add(new RowDefinition(GridLength.Star));
         root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
@@ -193,23 +206,28 @@ internal sealed class SettingsWindow : AppWindow
         Grid.SetRow(header, 0);
         root.Children.Add(header);
 
-        Grid.SetRow(_infoBar, 1);
-        root.Children.Add(_infoBar);
-
-        Grid.SetRow(_pageHost, 2);
+        Grid.SetRow(_pageHost, 1);
         root.Children.Add(_pageHost);
 
         var footer = new Border
         {
-            Background = CardBrush,
-            BorderBrush = FieldBorderBrush,
+            Background = _cardBrush,
+            BorderBrush = _fieldBorderBrush,
             BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(34, 14)
         };
+        var footerContent = new Grid();
+        footerContent.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star) { MinWidth = 0 });
+        footerContent.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        _infoBar.MaxWidth = 560;
+        _infoBar.Margin = new Thickness(0, 0, 20, 0);
+        footerContent.Children.Add(_infoBar);
+
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
             Spacing = 10
         };
         var cancel = CreateTextButton(language, "cancel");
@@ -219,8 +237,10 @@ internal sealed class SettingsWindow : AppWindow
         save.Click += OnSaveClicked;
         buttons.Children.Add(cancel);
         buttons.Children.Add(save);
-        footer.Child = buttons;
-        Grid.SetRow(footer, 3);
+        Grid.SetColumn(buttons, 1);
+        footerContent.Children.Add(buttons);
+        footer.Child = footerContent;
+        Grid.SetRow(footer, 2);
         root.Children.Add(footer);
         return root;
     }
@@ -271,6 +291,7 @@ internal sealed class SettingsWindow : AppWindow
             ]),
             CreateSection(language, "languageAndDiagnostics",
             [
+                CreateSettingRow(language, "theme", "themeDescription", _themeMode),
                 CreateSettingRow(language, "interfaceLanguage", "languageDescription", _language),
                 CreateSettingRow(language, "logLevel", "logLevelDescription", _logLevel)
             ])
@@ -303,7 +324,7 @@ internal sealed class SettingsWindow : AppWindow
         var heading = LocalizedText(language, titleKey);
         heading.FontSize = 12;
         heading.FontWeight = FontWeight.SemiBold;
-        heading.Foreground = AccentBrush;
+        heading.Foreground = _accentBrush;
         heading.Margin = new Thickness(4, 0, 0, 0);
         root.Children.Add(heading);
 
@@ -334,10 +355,10 @@ internal sealed class SettingsWindow : AppWindow
         var title = LocalizedText(language, titleKey);
         title.FontSize = 15;
         title.FontWeight = FontWeight.SemiBold;
-        title.Foreground = PrimaryBrush;
+        title.Foreground = _primaryBrush;
         var description = LocalizedText(language, descriptionKey);
         description.FontSize = 12.5;
-        description.Foreground = SecondaryBrush;
+        description.Foreground = _secondaryBrush;
         description.TextWrapping = TextWrapping.Wrap;
         copy.Children.Add(title);
         copy.Children.Add(description);
@@ -351,8 +372,8 @@ internal sealed class SettingsWindow : AppWindow
 
         return new Border
         {
-            Background = CardBrush,
-            BorderBrush = FieldBorderBrush,
+            Background = _cardBrush,
+            BorderBrush = _fieldBorderBrush,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(18, 15),
@@ -396,6 +417,7 @@ internal sealed class SettingsWindow : AppWindow
             CancelKeyCapture();
             _peekVirtualKey = DefaultSettings.PeekVirtualKey;
             RefreshKeyDisplays();
+            OnSettingsEdited();
         };
         Grid.SetColumn(reset, 1);
         grid.Children.Add(reset);
@@ -427,6 +449,7 @@ internal sealed class SettingsWindow : AppWindow
             editor.Binding = HotkeyBinding.Disabled;
             RefreshKeyDisplays();
             UpdateHotkeyConflicts();
+            OnSettingsEdited();
         };
         reset.Click += (_, _) =>
         {
@@ -434,17 +457,18 @@ internal sealed class SettingsWindow : AppWindow
             editor.Binding = editor.DefaultBinding;
             RefreshKeyDisplays();
             UpdateHotkeyConflicts();
+            OnSettingsEdited();
         };
         return editor;
     }
 
-    private static Button CreateCaptureButton() => new()
+    private Button CreateCaptureButton() => new()
     {
         MinHeight = 36,
         HorizontalContentAlignment = HorizontalAlignment.Left,
         Padding = new Thickness(12, 6),
-        Background = Brush.Parse("#F8FAFC"),
-        BorderBrush = FieldBorderBrush,
+        Background = _fieldBrush,
+        BorderBrush = _fieldBorderBrush,
         BorderThickness = new Thickness(1)
     };
 
@@ -506,6 +530,7 @@ internal sealed class SettingsWindow : AppWindow
     private void PopulateChoices(AppSettings settings)
     {
         PopulateLocalizedChoices(settings.Language, settings.RevealBlurLevel, settings.RevealShape, settings.PeekTrigger);
+        PopulateThemeChoices(settings.Language, settings.ThemeMode);
         _language.ItemsSource = new[]
         {
             new Choice<UiLanguage>(UiLanguage.Chinese, "中文"),
@@ -516,6 +541,17 @@ internal sealed class SettingsWindow : AppWindow
             .Select(level => new Choice<LogLevel>(level, level.ToString()))
             .ToArray();
         SelectChoice(_logLevel, settings.MinimumLogLevel);
+    }
+
+    private void PopulateThemeChoices(UiLanguage language, UiThemeMode themeMode)
+    {
+        _themeMode.ItemsSource = new[]
+        {
+            new Choice<UiThemeMode>(UiThemeMode.System, UiText.Text(language, "themeSystem")),
+            new Choice<UiThemeMode>(UiThemeMode.Light, UiText.Text(language, "themeLight")),
+            new Choice<UiThemeMode>(UiThemeMode.Dark, UiText.Text(language, "themeDark"))
+        };
+        SelectChoice(_themeMode, themeMode);
     }
 
     private void PopulateLocalizedChoices(
@@ -559,7 +595,7 @@ internal sealed class SettingsWindow : AppWindow
     private static T SelectedChoice<T>(ComboBox comboBox, T fallback) where T : struct, Enum =>
         comboBox.SelectedItem is Choice<T> choice ? choice.Value : fallback;
 
-    private UiLanguage CurrentLanguage => SelectedChoice(_language, _initialSettings.Language);
+    private UiLanguage CurrentLanguage => SelectedChoice(_language, _editState.SavedSettings.Language);
 
     private void OnNavigationSelectionChanged(object? sender, NavigationViewSelectionChangedEventArgs args)
     {
@@ -604,10 +640,12 @@ internal sealed class SettingsWindow : AppWindow
                 button.Content = UiText.Text(language, key);
             }
 
-            var blur = SelectedChoice(_blurLevel, _initialSettings.RevealBlurLevel);
-            var shape = SelectedChoice(_shape, _initialSettings.RevealShape);
-            var trigger = SelectedChoice(_peekMode, _initialSettings.PeekTrigger);
+            var blur = SelectedChoice(_blurLevel, _editState.SavedSettings.RevealBlurLevel);
+            var shape = SelectedChoice(_shape, _editState.SavedSettings.RevealShape);
+            var trigger = SelectedChoice(_peekMode, _editState.SavedSettings.PeekTrigger);
+            var themeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode);
             PopulateLocalizedChoices(language, blur, shape, trigger);
+            PopulateThemeChoices(language, themeMode);
             foreach (var button in this.GetLogicalDescendants().OfType<Button>())
             {
                 if (button.Tag is string tooltipKey)
@@ -618,7 +656,7 @@ internal sealed class SettingsWindow : AppWindow
 
             UpdatePageHeader(language);
             RefreshKeyDisplays();
-            _infoBar.IsOpen = false;
+            RefreshStatusText();
         }
         finally
         {
@@ -631,19 +669,21 @@ internal sealed class SettingsWindow : AppWindow
         var duplicate = FindDuplicateHotkey();
         if (duplicate is not null)
         {
-            _infoBar.Title = UiText.Text(CurrentLanguage, "hotkeySettings");
-            _infoBar.Message = string.Format(
+            var message = string.Format(
                 UiText.Text(CurrentLanguage, "duplicateHotkey"),
                 UiText.ShortcutName(CurrentLanguage, duplicate.Value));
-            _infoBar.Severity = InfoBarSeverity.Warning;
-            _infoBar.IsOpen = true;
+            ShowStatus(
+                SettingsStatus.Warning,
+                UiText.Text(CurrentLanguage, "hotkeySettings"),
+                message,
+                InfoBarSeverity.Warning);
 
             var dialog = new ContentDialog
             {
                 Title = UiText.Text(CurrentLanguage, "hotkeySettings"),
                 Content = new TextBlock
                 {
-                    Text = _infoBar.Message,
+                    Text = message,
                     TextWrapping = TextWrapping.Wrap,
                     MaxWidth = 440
                 },
@@ -657,29 +697,30 @@ internal sealed class SettingsWindow : AppWindow
         var updated = GetSettings().Normalize();
         if (!_save(updated))
         {
-            _infoBar.Title = UiText.Text(CurrentLanguage, "title");
-            _infoBar.Message = UiText.Text(CurrentLanguage, "settingsSaveFailed");
-            _infoBar.Severity = InfoBarSeverity.Error;
-            _infoBar.IsOpen = true;
+            ShowStatus(
+                SettingsStatus.Error,
+                UiText.Text(CurrentLanguage, "title"),
+                UiText.Text(CurrentLanguage, "settingsSaveFailed"),
+                InfoBarSeverity.Error);
             return;
         }
 
-        _infoBar.Title = UiText.Text(CurrentLanguage, "saveSucceeded");
-        _infoBar.Message = UiText.Text(CurrentLanguage, "settingsHint");
-        _infoBar.Severity = InfoBarSeverity.Success;
-        _infoBar.IsOpen = true;
+        _editState.MarkSaved(updated);
+        AppTheme.Apply(updated.ThemeMode);
+        ShowSavedStatus();
     }
 
-    private AppSettings GetSettings() => _initialSettings with
+    private AppSettings GetSettings() => _editState.SavedSettings with
     {
         RevealDiameterPx = (int)_diameter.Value,
         RevealDiameterStepPx = (int)_diameterStep.Value,
         RevealSoftEdgeWidthPx = (int)_softEdgeWidth.Value,
-        RevealBlurLevel = SelectedChoice(_blurLevel, _initialSettings.RevealBlurLevel),
-        RevealShape = SelectedChoice(_shape, _initialSettings.RevealShape),
-        PeekTrigger = SelectedChoice(_peekMode, _initialSettings.PeekTrigger),
+        RevealBlurLevel = SelectedChoice(_blurLevel, _editState.SavedSettings.RevealBlurLevel),
+        RevealShape = SelectedChoice(_shape, _editState.SavedSettings.RevealShape),
+        PeekTrigger = SelectedChoice(_peekMode, _editState.SavedSettings.PeekTrigger),
         PeekVirtualKey = _peekVirtualKey,
         Language = CurrentLanguage,
+        ThemeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode),
         PickHotkey = _pickHotkey.Binding,
         WindowToggleVirtualKey = _windowToggleHotkey.Binding.VirtualKey,
         WindowToggleHotkey = _windowToggleHotkey.Binding,
@@ -691,8 +732,140 @@ internal sealed class SettingsWindow : AppWindow
         RevealDiameterDecreaseHotkey = _diameterDecreaseHotkey.Binding,
         RestoreOnExit = _restoreOnExit.IsChecked == true,
         StartWithWindows = _startWithWindows.IsChecked == true,
-        MinimumLogLevel = SelectedChoice(_logLevel, _initialSettings.MinimumLogLevel)
+        MinimumLogLevel = SelectedChoice(_logLevel, _editState.SavedSettings.MinimumLogLevel)
     };
+
+    private void SubscribeToSettingChanges()
+    {
+        foreach (var numberBox in new[] { _diameter, _diameterStep, _softEdgeWidth })
+        {
+            numberBox.ValueChanged += (_, _) => OnSettingsEdited();
+        }
+
+        foreach (var comboBox in new[] { _blurLevel, _shape, _peekMode, _themeMode, _logLevel })
+        {
+            comboBox.SelectionChanged += (_, _) => OnSettingsEdited();
+        }
+
+        _restoreOnExit.IsCheckedChanged += (_, _) => OnSettingsEdited();
+        _startWithWindows.IsCheckedChanged += (_, _) => OnSettingsEdited();
+    }
+
+    private void OnSettingsEdited()
+    {
+        if (_initializing || _updatingLanguage)
+        {
+            return;
+        }
+
+        _savedStatusTimer.Stop();
+        if (_editState.Refresh(GetSettings()) == SettingsStatus.None)
+        {
+            HideStatus();
+            return;
+        }
+
+        ShowStatus(
+            SettingsStatus.Modified,
+            UiText.Text(CurrentLanguage, "settingsModified"),
+            UiText.Text(CurrentLanguage, "settingsHint"),
+            InfoBarSeverity.Warning);
+    }
+
+    private void ShowSavedStatus()
+    {
+        ShowStatus(
+            SettingsStatus.Saved,
+            UiText.Text(CurrentLanguage, "saveSucceeded"),
+            string.Empty,
+            InfoBarSeverity.Success);
+        _savedStatusTimer.Start();
+    }
+
+    private void ShowStatus(SettingsStatus status, string title, string message, InfoBarSeverity severity)
+    {
+        _savedStatusTimer.Stop();
+        _editState.SetStatus(status);
+        _infoBar.Title = StatusText(title, message);
+        _infoBar.Message = string.Empty;
+        _infoBar.Severity = severity;
+        ToolTip.SetTip(_infoBar, StatusText(title, message));
+        _infoBar.IsOpen = true;
+    }
+
+    private void HideStatus()
+    {
+        _savedStatusTimer.Stop();
+        _editState.SetStatus(SettingsStatus.None);
+        _infoBar.IsOpen = false;
+    }
+
+    private void RefreshStatusText()
+    {
+        switch (_editState.Status)
+        {
+            case SettingsStatus.Modified:
+                _infoBar.Title = StatusText(
+                    UiText.Text(CurrentLanguage, "settingsModified"),
+                    UiText.Text(CurrentLanguage, "settingsHint"));
+                _infoBar.Message = string.Empty;
+                ToolTip.SetTip(_infoBar, _infoBar.Title);
+                break;
+            case SettingsStatus.Saved:
+                _infoBar.Title = UiText.Text(CurrentLanguage, "saveSucceeded");
+                _infoBar.Message = string.Empty;
+                ToolTip.SetTip(_infoBar, _infoBar.Title);
+                break;
+        }
+    }
+
+    private static string StatusText(string title, string message) =>
+        string.IsNullOrEmpty(message) ? title : $"{title} · {message}";
+
+    private void OnSavedStatusTimerTick(object? sender, EventArgs args)
+    {
+        if (_editState.ExpireSaved())
+        {
+            _savedStatusTimer.Stop();
+            _infoBar.IsOpen = false;
+        }
+    }
+
+    private void OnActualThemeVariantChanged(object? sender, EventArgs args) => ApplyThemePalette();
+
+    private void ApplyThemePalette()
+    {
+        var dark = AppTheme.IsDark(ActualThemeVariant);
+        _canvasBrush.Color = Color.Parse(dark ? "#000000" : "#F5F9FC");
+        _cardBrush.Color = Color.Parse(dark ? "#0A0A0A" : "#FFFFFF");
+        _fieldBrush.Color = Color.Parse(dark ? "#111111" : "#F8FAFC");
+        _fieldBorderBrush.Color = Color.Parse(dark ? "#2A2A2A" : "#DCE7EF");
+        _primaryBrush.Color = Color.Parse(dark ? "#F5F5F5" : "#172033");
+        _secondaryBrush.Color = Color.Parse(dark ? "#A3A3A3" : "#667085");
+        _accentBrush.Color = AppTheme.AccentColor;
+        _errorBrush.Color = Color.Parse(dark ? "#FF8A80" : "#C42B1C");
+
+        TitleBar.BackgroundColor = _canvasBrush.Color;
+        TitleBar.ForegroundColor = _primaryBrush.Color;
+        TitleBar.InactiveBackgroundColor = _canvasBrush.Color;
+        TitleBar.InactiveForegroundColor = _secondaryBrush.Color;
+        TitleBar.ButtonBackgroundColor = _canvasBrush.Color;
+        TitleBar.ButtonForegroundColor = _primaryBrush.Color;
+        TitleBar.ButtonHoverBackgroundColor = Color.Parse(dark ? "#262626" : "#DDF7F5");
+        TitleBar.ButtonHoverForegroundColor = _primaryBrush.Color;
+        TitleBar.ButtonPressedBackgroundColor = Color.Parse(dark ? "#333333" : "#BFECE8");
+        TitleBar.ButtonPressedForegroundColor = _primaryBrush.Color;
+        TitleBar.ButtonInactiveBackgroundColor = _canvasBrush.Color;
+        TitleBar.ButtonInactiveForegroundColor = _secondaryBrush.Color;
+    }
+
+    private void OnClosed(object? sender, EventArgs args)
+    {
+        _savedStatusTimer.Stop();
+        _savedStatusTimer.Tick -= OnSavedStatusTimerTick;
+        ActualThemeVariantChanged -= OnActualThemeVariantChanged;
+        Closed -= OnClosed;
+    }
 
     private void BeginPeekKeyCapture()
     {
@@ -762,12 +935,14 @@ internal sealed class SettingsWindow : AppWindow
             _activeHotkeyEditor = null;
             RefreshKeyDisplays();
             UpdateHotkeyConflicts();
+            OnSettingsEdited();
             return;
         }
 
         _peekVirtualKey = virtualKey;
         _capturingPeekKey = false;
         RefreshKeyDisplays();
+        OnSettingsEdited();
     }
 
     private void RefreshKeyDisplays()
@@ -807,8 +982,8 @@ internal sealed class SettingsWindow : AppWindow
         foreach (var editor in GetHotkeyEditors())
         {
             var conflict = duplicateBindings.Contains(editor.Binding);
-            editor.Display.BorderBrush = conflict ? ErrorBrush : FieldBorderBrush;
-            editor.Display.Foreground = conflict ? ErrorBrush : PrimaryBrush;
+            editor.Display.BorderBrush = conflict ? _errorBrush : _fieldBorderBrush;
+            editor.Display.Foreground = conflict ? _errorBrush : _primaryBrush;
             editor.Display.BorderThickness = new Thickness(conflict ? 2 : 1);
         }
     }

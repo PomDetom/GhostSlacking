@@ -31,6 +31,9 @@
         Type="raw"
         Bitness="always64" />
     </Property>
+    <!-- CloseApplication sets Property only when the target is still running after
+         processing that row. This detection-only row therefore captures whether
+         the app was running before the following row safely closes it. -->
     <util:CloseApplication
       Id="DetectGhostSlackingBeforeUpgrade"
       Target="GhostSlacking.App.exe"
@@ -80,6 +83,7 @@
     <Property Id="ARPPRODUCTICON" Value="GhostSlacking.exe" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="INSTALLLEVEL" Value="1" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <Property Id="INSTALLFOLDER">
       <RegistrySearch
         Id="PreviousInstallFolder"
@@ -98,7 +102,13 @@
       Value="[INSTALLFOLDER]GhostSlacking.App.exe"
       Before="RestartGhostSlackingAfterUpgrade"
       Sequence="execute"
-      Condition="WIX_UPGRADE_DETECTED AND GHOSTSLACKING_WAS_RUNNING AND UILevel &gt;= 4 AND NOT REMOVE" />
+      Condition="WIX_UPGRADE_DETECTED AND GHOSTSLACKING_WAS_RUNNING AND UILevel &gt;= 4 AND NOT Installed" />
+    <CustomAction
+      Id="LaunchGhostSlackingAfterInstall"
+      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+      DllEntry="WixUnelevatedShellExec"
+      Execute="immediate"
+      Return="ignore" />
     <CustomAction
       Id="RestartGhostSlackingAfterUpgrade"
       BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
@@ -120,7 +130,7 @@
       <Custom
         Action="RestartGhostSlackingAfterUpgrade"
         After="InstallFinalize"
-        Condition="WIX_UPGRADE_DETECTED AND GHOSTSLACKING_WAS_RUNNING AND UILevel &gt;= 4 AND NOT REMOVE" />
+        Condition="WIX_UPGRADE_DETECTED AND GHOSTSLACKING_WAS_RUNNING AND UILevel &gt;= 4 AND NOT Installed" />
     </InstallExecuteSequence>
 
     <StandardDirectory Id="ProgramFiles6432Folder">

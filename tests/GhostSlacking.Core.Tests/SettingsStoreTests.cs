@@ -18,7 +18,7 @@ public sealed class SettingsStoreTests
 
         var normalized = settings.Normalize();
 
-        Assert.Equal(3, normalized.SchemaVersion);
+        Assert.Equal(4, normalized.SchemaVersion);
         Assert.Equal(800, normalized.RevealDiameterPx);
         Assert.Equal(8, normalized.RevealDiameterStepPx);
         Assert.Equal(128, normalized.RevealSoftEdgeWidthPx);
@@ -132,7 +132,7 @@ public sealed class SettingsStoreTests
 
             var settings = new SettingsStore(path).Load();
 
-            Assert.Equal(3, settings.SchemaVersion);
+            Assert.Equal(4, settings.SchemaVersion);
             Assert.Equal(320, settings.RevealDiameterPx);
             Assert.Equal(16, settings.RevealDiameterStepPx);
             Assert.Equal(16, settings.RevealSoftEdgeWidthPx);
@@ -163,7 +163,7 @@ public sealed class SettingsStoreTests
 
             var settings = new SettingsStore(path).Load();
 
-            Assert.Equal(3, settings.SchemaVersion);
+            Assert.Equal(4, settings.SchemaVersion);
             Assert.Equal(64, settings.RevealSoftEdgeWidthPx);
             Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
         }
@@ -184,6 +184,46 @@ public sealed class SettingsStoreTests
         Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
         Assert.Equal(RevealShape.RoundedRectangle, settings.RevealShape);
         Assert.Equal(PeekTrigger.Toggle, settings.PeekTrigger);
+        Assert.Equal(UiThemeMode.System, settings.ThemeMode);
+    }
+
+    [Theory]
+    [InlineData(UiThemeMode.System)]
+    [InlineData(UiThemeMode.Light)]
+    [InlineData(UiThemeMode.Dark)]
+    public void Valid_theme_modes_are_preserved(UiThemeMode themeMode)
+    {
+        var settings = new AppSettings { ThemeMode = themeMode };
+
+        Assert.Equal(themeMode, settings.Normalize().ThemeMode);
+    }
+
+    [Fact]
+    public void Unknown_theme_mode_falls_back_to_system()
+    {
+        var settings = new AppSettings { ThemeMode = (UiThemeMode)999 };
+
+        Assert.Equal(UiThemeMode.System, settings.Normalize().ThemeMode);
+    }
+
+    [Fact]
+    public void Theme_mode_is_persisted()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"GhostSlacking-{Guid.NewGuid():N}.json");
+        try
+        {
+            var store = new SettingsStore(path);
+
+            Assert.True(store.Save(new AppSettings { ThemeMode = UiThemeMode.Dark }));
+
+            var settings = store.Load();
+            Assert.Equal(4, settings.SchemaVersion);
+            Assert.Equal(UiThemeMode.Dark, settings.ThemeMode);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]
@@ -197,7 +237,7 @@ public sealed class SettingsStoreTests
             Assert.True(store.Save(new AppSettings { RevealBlurLevel = RevealBlurLevel.High }));
 
             var settings = store.Load();
-            Assert.Equal(3, settings.SchemaVersion);
+            Assert.Equal(4, settings.SchemaVersion);
             Assert.Equal(RevealBlurLevel.High, settings.RevealBlurLevel);
         }
         finally

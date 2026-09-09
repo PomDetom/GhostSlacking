@@ -8,11 +8,18 @@ namespace GhostSlacking.App;
 
 internal sealed class GhostSlackingApplication : Avalonia.Application
 {
+    private static readonly TimeSpan StartupNotificationDelay = TimeSpan.FromMilliseconds(500);
     private GhostApplicationController? _controller;
+    private IDisposable? _startupNotificationRegistration;
 
     public override void Initialize()
     {
-        Styles.Add(new FluentAvaloniaTheme());
+        Styles.Add(new FluentAvaloniaTheme
+        {
+            PreferSystemTheme = true,
+            PreferUserAccentColor = false,
+            CustomAccentColor = AppTheme.AccentColor
+        });
         RequestedThemeVariant = ThemeVariant.Default;
     }
 
@@ -27,6 +34,20 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
         }
 
         base.OnFrameworkInitializationCompleted();
+
+        if (_controller is not null)
+        {
+            _startupNotificationRegistration = DispatcherTimer.RunOnce(
+                ShowStartupNotification,
+                StartupNotificationDelay,
+                DispatcherPriority.Normal);
+        }
+    }
+
+    private void ShowStartupNotification()
+    {
+        _startupNotificationRegistration = null;
+        _controller?.ShowStartupNotification();
     }
 
     private void OnUnhandledException(object? sender, DispatcherUnhandledExceptionEventArgs args)
@@ -37,6 +58,8 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
 
     private void OnExit(object? sender, ControlledApplicationLifetimeExitEventArgs args)
     {
+        _startupNotificationRegistration?.Dispose();
+        _startupNotificationRegistration = null;
         Dispatcher.UIThread.UnhandledException -= OnUnhandledException;
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime lifetime)
         {

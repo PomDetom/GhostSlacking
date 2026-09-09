@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build and publish MSI
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Validate release tag
+        id: version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
+              throw "Release tag must use the vMAJOR.MINOR.PATCH format: $tag"
+          }
+
+          "value=$($Matches[1])" >> $env:GITHUB_OUTPUT
+
+      - name: Build release package
+        shell: pwsh
+        run: .\build-release.ps1 -Version '${{ steps.version.outputs.value }}'
+
+      - name: Upload build records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GhostSlacking-${{ steps.version.outputs.value }}-build
+          path: artifacts/releases/${{ steps.version.outputs.value }}/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Ensure release does not already exist
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release view $env:RELEASE_TAG 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+              throw "GitHub Release $env:RELEASE_TAG already exists; published assets will not be overwritten."
+          }
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          $releaseDirectory = "artifacts\releases\$env:RELEASE_VERSION"
+          $installer = "$releaseDirectory\GhostSlacking-$env:RELEASE_VERSION-win-x64.msi"
+          $checksum = "$installer.sha256"
+          $manifest = "$releaseDirectory\release.json"
+
+          gh release create $env:RELEASE_TAG `
+              $installer `
+              $checksum `
+              $manifest `
+              --verify-tag `
+              --generate-notes `
+              --title "GhostSlacking $env:RELEASE_VERSION"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Failed to publish GitHub Release $env:RELEASE_TAG."
+          }

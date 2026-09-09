@@ -55,7 +55,7 @@
       Projects="..\GhostSlacking.Watchdog\GhostSlacking.Watchdog.csproj"
       Targets="Publish"
       BuildInParallel="false"
-      Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(WatchdogPublishDirectory);DebugSymbols=$(DebugSymbols);DebugType=$(DebugType)" />
+      Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(WatchdogPublishDirectory);DebugSymbols=$(DebugSymbols);DebugType=$(DebugType);Version=$(Version);AssemblyVersion=$(AssemblyVersion);FileVersion=$(FileVersion);InformationalVersion=$(InformationalVersion)" />
     <ItemGroup>
       <WatchdogPublishArtifact Include="$(WatchdogPublishDirectory)**\*" />
     </ItemGroup>

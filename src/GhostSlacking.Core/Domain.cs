@@ -75,6 +75,13 @@ public enum UiLanguage
     English
 }
 
+public enum UiThemeMode
+{
+    System,
+    Light,
+    Dark
+}
+
 // Kept as CircleRegion for compatibility with the V0.1 core API. The region
 // now carries the selected shape and is used for all Reveal geometries.
 public readonly record struct CircleRegion(
@@ -174,8 +181,9 @@ public sealed record GhostWindowProfile(WindowSnapshot Original, RevealSettings 
 
 public sealed record AppSettings
 {
-    public int SchemaVersion { get; init; } = 3;
+    public int SchemaVersion { get; init; } = 4;
     public UiLanguage Language { get; init; } = UiLanguage.Chinese;
+    public UiThemeMode ThemeMode { get; init; } = UiThemeMode.System;
     public int RevealDiameterPx { get; init; } = 144;
     public int RevealDiameterStepPx { get; init; } = 16;
     public int RevealSoftEdgeWidthPx { get; init; } = 16;
@@ -198,8 +206,11 @@ public sealed record AppSettings
 
     public AppSettings Normalize() => this with
     {
-        SchemaVersion = 3,
+        SchemaVersion = 4,
         Language = Language is UiLanguage.Chinese or UiLanguage.English ? Language : UiLanguage.Chinese,
+        ThemeMode = ThemeMode is UiThemeMode.System or UiThemeMode.Light or UiThemeMode.Dark
+            ? ThemeMode
+            : UiThemeMode.System,
         RevealDiameterPx = Math.Clamp(RevealDiameterPx, 64, 800),
         RevealDiameterStepPx = Math.Clamp(RevealDiameterStepPx, 8, 256),
         RevealSoftEdgeWidthPx = Math.Clamp(RevealSoftEdgeWidthPx, 0, 128),
@@ -272,6 +283,22 @@ public sealed record RestoreReport(IReadOnlyList<RestoreItemResult> Items)
 public sealed class StateChangedEventArgs(GhostState state) : EventArgs
 {
     public GhostState State { get; } = state;
+}
+
+public enum UserErrorKind
+{
+    SelectionStateCaptureFailed,
+    GhostActivationFailed,
+    WindowPlacementCorrectionFailed,
+    HideWindowFailed,
+    RevealWindowFailed,
+    RestoreFailed
+}
+
+public sealed class UserErrorEventArgs(UserErrorKind kind, string technicalMessage) : EventArgs
+{
+    public UserErrorKind Kind { get; } = kind;
+    public string TechnicalMessage { get; } = technicalMessage;
 }
 
 public interface ILogger

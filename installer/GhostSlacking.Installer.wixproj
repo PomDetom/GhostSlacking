@@ -6,7 +6,10 @@
     <DefineConstants>ProductVersion=$(ProductVersion);PublishDirectory=$(PublishDirectory)</DefineConstants>
     <OutputName>GhostSlacking-$(ProductVersion)-win-x64</OutputName>
     <OutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer</OutputPath>
-    <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer-obj\$(Configuration)</IntermediateOutputPath>
+    <!-- Keep WiX incremental state isolated by product version. Otherwise a version
+         bump can reuse the previous link cache while CopyFilesToOutputDirectory
+         already expects the new versioned MSI file name. -->
+    <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer-obj\$(Configuration)\$(ProductVersion)</IntermediateOutputPath>
     <DebugType>none</DebugType>
     <Cultures>zh-CN</Cultures>
     <!-- AllowSameVersionUpgrades intentionally makes the upgrade range inclusive. -->

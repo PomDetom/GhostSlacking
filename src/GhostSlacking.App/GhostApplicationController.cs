@@ -56,6 +56,7 @@ internal sealed class GhostApplicationController : IDisposable
         _lifetime = lifetime;
         _settingsStore = new SettingsStore();
         _settings = _settingsStore.Load();
+        AppTheme.Apply(_settings.ThemeMode);
         _logger = new FileLogger(_settings);
         _windows = new Win32WindowApi();
         _revealOverlay = new RevealEdgeOverlay(_logger);
@@ -107,7 +108,7 @@ internal sealed class GhostApplicationController : IDisposable
         _notifications = new AvaloniaNotificationService(_windows.GetCursorPosition, _logger);
 
         _coordinator.StateChanged += (_, _) => UpdateTrayStatus();
-        _coordinator.UserError += (_, message) => ShowError(message);
+        _coordinator.UserErrorOccurred += (_, error) => ShowCoreError(error.Kind);
         _coordinator.TargetClosed += (_, _) => UpdateTrayStatus();
         _watchdog = TryStartWatchdog();
         _recovery.ProfilesChanged += OnRecoveryProfilesChanged;
@@ -123,6 +124,12 @@ internal sealed class GhostApplicationController : IDisposable
 
         RegisterHotkeys();
         UpdateTrayStatus();
+    }
+
+    internal void ShowStartupNotification()
+    {
+        _logger.Log(LogLevel.Info, "Startup notification requested.");
+        ShowInfo(UiText.Text(_settings.Language, "startupReady"));
     }
 
     private static NativeMenuItem CreateMenuItem(string header, Action? action, bool enabled = true)
@@ -259,7 +266,7 @@ internal sealed class GhostApplicationController : IDisposable
         if (!_pickerActive)
         {
             CancelPicking();
-            ShowError("Could not start window picking.");
+            ShowError(UiText.Text(_settings.Language, "pickFailed"));
         }
         else
         {
@@ -283,7 +290,11 @@ internal sealed class GhostApplicationController : IDisposable
         args.Handled = true;
         if (decision.CancelPicking)
         {
-            Dispatcher.UIThread.Post(() => CancelPicking(waitForEscapeRelease: true));
+            Dispatcher.UIThread.Post(() =>
+            {
+                CancelPicking(waitForEscapeRelease: true);
+                ShowInfo(UiText.Text(_settings.Language, "pickCancelled"));
+            });
         }
         else if (decision.ReleaseKeyboardHook)
         {
@@ -361,11 +372,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void RestoreAll(string reason)
     {
-        var report = _coordinator.RestoreAll(reason);
-        if (report.HasFailures)
-        {
-            ShowError(UiText.Text(_settings.Language, "restoreSome"));
-        }
+        _coordinator.RestoreAll(reason);
         UpdateTrayStatus();
     }
 
@@ -395,7 +402,7 @@ internal sealed class GhostApplicationController : IDisposable
         {
             _settingsWindow = null;
             _logger.Log(LogLevel.Error, "The Avalonia settings window could not be shown.", exception);
-            ShowError(string.Format(UiText.Text(_settings.Language, "unexpected"), exception.Message));
+            ShowError(UiText.Text(_settings.Language, "settingsOpenFailed"));
             if (!_isExiting)
             {
                 RegisterHotkeys();
@@ -428,6 +435,7 @@ internal sealed class GhostApplicationController : IDisposable
         }
 
         _settings = updated;
+        AppTheme.Apply(_settings.ThemeMode);
         if (previousKey != _settings.PeekVirtualKey || previousTrigger != _settings.PeekTrigger)
         {
             _peekState.Reset(_windows.IsKeyDown(_settings.PeekVirtualKey));
@@ -497,7 +505,12 @@ internal sealed class GhostApplicationController : IDisposable
             return;
         }
 
-        _notifications.Show(UiText.Error(_settings.Language, message), UserNotificationSeverity.Error);
+        _notifications.Show(message, UserNotificationSeverity.Error);
+    }
+
+    private void ShowCoreError(UserErrorKind kind)
+    {
+        ShowError(UiText.Error(_settings.Language, kind));
     }
 
     private void ShowInfo(string message)
@@ -513,7 +526,7 @@ internal sealed class GhostApplicationController : IDisposable
     internal void ReportUnhandledException(Exception exception)
     {
         _logger.Log(LogLevel.Error, "An unexpected Avalonia UI error occurred.", exception);
-        ShowError(string.Format(UiText.Text(_settings.Language, "unexpected"), exception.Message));
+        ShowError(UiText.Text(_settings.Language, "unexpected"));
     }
 
     private void ExitApplication()

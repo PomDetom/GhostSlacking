@@ -1,8 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
-using FluentAvalonia.UI.Controls;
 using GhostSlacking.Core;
 using DrawingPoint = System.Drawing.Point;
 
@@ -144,7 +144,12 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
 
     private sealed class NotificationWindow : Window
     {
-        private readonly InfoBar _infoBar;
+        private readonly Border _surface;
+        private readonly Border _iconBadge;
+        private readonly TextBlock _icon;
+        private readonly TextBlock _title;
+        private readonly TextBlock _message;
+        private UserNotificationSeverity _severity;
 
         public NotificationWindow()
         {
@@ -155,25 +160,87 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             ShowInTaskbar = false;
             Topmost = true;
             SystemDecorations = SystemDecorations.None;
-            Background = Brushes.Transparent;
-            TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
-            _infoBar = new InfoBar
+            _icon = new TextBlock
             {
-                Title = "GhostSlacking",
-                IsOpen = true,
-                IsClosable = false,
-                Margin = new Thickness(8)
+                FontSize = 16,
+                FontWeight = FontWeight.Bold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
             };
-            Content = _infoBar;
+            _iconBadge = new Border
+            {
+                Width = 34,
+                Height = 34,
+                CornerRadius = new CornerRadius(17),
+                Margin = new Thickness(0, 0, 14, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = _icon
+            };
+            _title = new TextBlock
+            {
+                Text = "GhostSlacking",
+                FontSize = 14,
+                FontWeight = FontWeight.SemiBold
+            };
+            _message = new TextBlock
+            {
+                FontSize = 13,
+                Margin = new Thickness(0, 5, 0, 0),
+                TextWrapping = TextWrapping.Wrap
+            };
+
+            var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            copy.Children.Add(_title);
+            copy.Children.Add(_message);
+
+            var content = new Grid();
+            content.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            content.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            content.Children.Add(_iconBadge);
+            Grid.SetColumn(copy, 1);
+            content.Children.Add(copy);
+
+            _surface = new Border
+            {
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(16, 14),
+                Child = content
+            };
+            Content = _surface;
+            ActualThemeVariantChanged += (_, _) => ApplyPalette();
+            ApplyPalette();
         }
 
         public void Update(string message, UserNotificationSeverity severity)
         {
-            _infoBar.Message = message;
-            _infoBar.Severity = severity == UserNotificationSeverity.Error
-                ? InfoBarSeverity.Error
-                : InfoBarSeverity.Informational;
-            _infoBar.IsOpen = true;
+            _severity = severity;
+            _message.Text = message;
+            ApplyPalette();
+        }
+
+        private void ApplyPalette()
+        {
+            var dark = AppTheme.IsDark(ActualThemeVariant);
+            var error = _severity == UserNotificationSeverity.Error;
+            var background = Color.Parse(dark ? "#0A0A0A" : "#FFFFFF");
+            var border = error ? Color.Parse("#EF4444") : AppTheme.AccentColor;
+            var title = Color.Parse(dark ? "#F5F5F5" : "#172033");
+            var message = Color.Parse(dark ? "#A3A3A3" : "#667085");
+            var badge = Color.Parse(error
+                ? dark ? "#3F1010" : "#FEE2E2"
+                : dark ? "#103B37" : "#DDF7F5");
+            var accent = error ? Color.Parse("#EF4444") : AppTheme.AccentColor;
+
+            var backgroundBrush = new SolidColorBrush(background);
+            Background = backgroundBrush;
+            _surface.Background = backgroundBrush;
+            _surface.BorderBrush = new SolidColorBrush(border);
+            _iconBadge.Background = new SolidColorBrush(badge);
+            _icon.Foreground = new SolidColorBrush(accent);
+            _icon.Text = error ? "!" : "i";
+            _title.Foreground = new SolidColorBrush(title);
+            _message.Foreground = new SolidColorBrush(message);
         }
     }
 }

@@ -39,6 +39,7 @@ public sealed class GhostCoordinator
     public GhostWindowProfile? CurrentProfile => _current;
     public event EventHandler<StateChangedEventArgs>? StateChanged;
     public event EventHandler<string>? UserError;
+    public event EventHandler<UserErrorEventArgs>? UserErrorOccurred;
     public event EventHandler? TargetClosed;
 
     public bool BeginPicking()
@@ -82,7 +83,7 @@ public sealed class GhostCoordinator
         var registered = _recovery.CaptureAndRegister(target, settings);
         if (!registered.Success || registered.Value is null)
         {
-            Fail(registered.Error ?? "Could not save the target window state.");
+            Fail(UserErrorKind.SelectionStateCaptureFailed, registered.Error ?? "Could not save the target window state.");
             SetState(GhostState.Idle);
             return false;
         }
@@ -92,7 +93,7 @@ public sealed class GhostCoordinator
         if (!ghosted.Success)
         {
             RestoreSynchronously(profile, "ghost apply failed");
-            Fail(ghosted.ErrorMessage ?? "Could not make the target window ghosted.");
+            Fail(UserErrorKind.GhostActivationFailed, ghosted.ErrorMessage ?? "Could not make the target window ghosted.");
             SetState(GhostState.Idle);
             return false;
         }
@@ -141,7 +142,7 @@ public sealed class GhostCoordinator
             {
                 _lastReveal = null;
                 HideRevealVisual();
-                Fail(corrected.ErrorMessage ?? "Could not preserve the target window placement.");
+                Fail(UserErrorKind.WindowPlacementCorrectionFailed, corrected.ErrorMessage ?? "Could not preserve the target window placement.");
                 StartRestore(_current, "window placement correction failed", forgetOnSuccess: true, GhostState.Idle);
                 return;
             }
@@ -178,7 +179,7 @@ public sealed class GhostCoordinator
                 }
                 else
                 {
-                    Fail(hidden.ErrorMessage ?? "Could not leave Reveal mode.");
+                    Fail(UserErrorKind.HideWindowFailed, hidden.ErrorMessage ?? "Could not leave Reveal mode.");
                 }
             }
             return;
@@ -223,7 +224,7 @@ public sealed class GhostCoordinator
             {
                 HideRevealVisual();
                 _visibility.ApplyGhost(_current);
-                Fail(revealed.ErrorMessage ?? "Could not fall back to the hard-edge Reveal region.");
+                Fail(UserErrorKind.RevealWindowFailed, revealed.ErrorMessage ?? "Could not fall back to the hard-edge Reveal region.");
                 return;
             }
 
@@ -246,7 +247,7 @@ public sealed class GhostCoordinator
                     if (_consecutiveRevealValidationFailures >= RevealValidationFailureNotificationThreshold)
                     {
                         _consecutiveRevealValidationFailures = 0;
-                        Fail(revealed.ErrorMessage ?? "The target window repeatedly discarded the Reveal region.");
+                        Fail(UserErrorKind.RevealWindowFailed, revealed.ErrorMessage ?? "The target window repeatedly discarded the Reveal region.");
                     }
                     else
                     {
@@ -257,14 +258,14 @@ public sealed class GhostCoordinator
                     return;
                 }
 
-                Fail(hidden.ErrorMessage ?? "Could not safely hide the target after a Reveal validation failure.");
+                Fail(UserErrorKind.HideWindowFailed, hidden.ErrorMessage ?? "Could not safely hide the target after a Reveal validation failure.");
                 return;
             }
 
             _consecutiveRevealValidationFailures = 0;
             HideRevealVisual();
             _visibility.ApplyGhost(_current);
-            Fail(revealed.ErrorMessage ?? "Could not update Reveal region.");
+            Fail(UserErrorKind.RevealWindowFailed, revealed.ErrorMessage ?? "Could not update Reveal region.");
         }
     }
 
@@ -310,7 +311,7 @@ public sealed class GhostCoordinator
         }
         else
         {
-            Fail("One or more windows could not be restored.");
+            Fail(UserErrorKind.RestoreFailed, "One or more windows could not be restored.");
             SetState(GhostState.RecoveryError);
         }
 
@@ -340,7 +341,7 @@ public sealed class GhostCoordinator
                 return true;
             }
 
-            Fail(ghosted.ErrorMessage ?? "Could not hide the target window.");
+            Fail(UserErrorKind.HideWindowFailed, ghosted.ErrorMessage ?? "Could not hide the target window.");
             return false;
         }
 
@@ -369,7 +370,7 @@ public sealed class GhostCoordinator
         if (!restored.Success)
         {
             _pendingSelection = null;
-            Fail($"Restore failed: {restored.Reason}");
+            Fail(UserErrorKind.RestoreFailed, $"Restore failed: {restored.Reason}");
             SetState(GhostState.RecoveryError);
             return false;
         }
@@ -406,7 +407,7 @@ public sealed class GhostCoordinator
 
         if (!_windows.IsSameIdentity(session.Profile.Original, observation))
         {
-            Fail("Restore verification stopped because the target window identity changed.");
+            Fail(UserErrorKind.RestoreFailed, "Restore verification stopped because the target window identity changed.");
             _restoreSession = null;
             _pendingSelection = null;
             SetState(GhostState.RecoveryError);
@@ -426,7 +427,7 @@ public sealed class GhostCoordinator
         session.Stability.ObserveDrift();
         if (!session.Stability.CanCorrect)
         {
-            Fail("Restore did not stabilize after 10 placement corrections.");
+            Fail(UserErrorKind.RestoreFailed, "Restore did not stabilize after 10 placement corrections.");
             _restoreSession = null;
             _pendingSelection = null;
             SetState(GhostState.RecoveryError);
@@ -440,7 +441,7 @@ public sealed class GhostCoordinator
             forgetOnSuccess: false);
         if (!corrected.Success)
         {
-            Fail($"Restore stabilization failed: {corrected.Reason}");
+            Fail(UserErrorKind.RestoreFailed, $"Restore stabilization failed: {corrected.Reason}");
             _restoreSession = null;
             _pendingSelection = null;
             SetState(GhostState.RecoveryError);
@@ -522,10 +523,11 @@ public sealed class GhostCoordinator
         return new RestoreItemResult(profile.Hwnd, true, false, "Restored and stabilized.");
     }
 
-    private void Fail(string message)
+    private void Fail(UserErrorKind kind, string message)
     {
         _logger.Log(LogLevel.Error, message);
         UserError?.Invoke(this, message);
+        UserErrorOccurred?.Invoke(this, new UserErrorEventArgs(kind, message));
     }
 
     private bool TryPrepareRevealVisual(RevealVisualState visual)
