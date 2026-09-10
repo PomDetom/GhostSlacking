@@ -21,18 +21,20 @@ GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部
 - 支持跟随系统、浅色和深色主题。
 - 支持开机启动、退出时恢复窗口和日志级别设置。
 - 支持从设置页导出日志诊断包和当前已保存的配置。
+- 设置页包含“关于”，可查看版本、访问 GitHub 源代码并检查更新。
+- 每天自动检查一次 GitHub Releases；发现稳定版更新后由用户确认下载和安装。
 - 内置 Watchdog，在主程序异常终止后尝试安全恢复受控窗口。
 - 单实例运行，不会同时启动多个托盘进程。
 
 ## 系统要求
 
 - Windows 10 或 Windows 11，x64。
-- [.NET 8 Runtime x64](https://aka.ms/dotnet/8.0/runtime-win-x64.exe)。无需安装 .NET Desktop Runtime。
+- [.NET 8](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)：在页面的“运行应用 - 运行时”中找到“.NET 运行时”，下载 **Windows x64 安装程序**。无需下载 SDK、ASP.NET Core Runtime 或 .NET Desktop Runtime；如果已经安装 .NET 8 SDK 或 Desktop Runtime，则无需重复安装。
 - 控制以管理员身份运行的窗口时，GhostSlacking 通常也需要以相同权限运行。
 
 ## 安装
 
-从项目的 GitHub Releases 页面下载 `GhostSlacking-<版本>-win-x64.msi`，双击并按照安装向导完成安装。
+从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<版本>-win-x64.msi`，双击并按照安装向导完成安装。
 
 安装器支持选择安装位置，以及是否创建开始菜单和桌面快捷方式。普通卸载不会删除用户设置和日志。
 
@@ -70,6 +72,14 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 
 建议通过托盘菜单或 `Ctrl+Alt+Q` 正常退出。默认情况下，退出应用会恢复所有由 GhostSlacking 修改过的窗口。
 
+### 关于与软件更新
+
+设置窗口左侧底部的“关于”页面会显示当前版本；介绍卡中的“GitHub 项目”可打开[项目主页](https://github.com/PomDetom/GhostSlacking)，软件更新区域也可进入 [版本发布](https://github.com/PomDetom/GhostSlacking/releases) 页面。
+
+应用启动后会在距离上次成功检查满 24 小时时，通过 GitHub 的公开 Releases API 检查最新稳定版，不需要 GitHub 账号或访问令牌。发现更新时会显示轻量通知和托盘菜单入口，不会自动下载安装。进入“关于”页确认后，应用才会下载 MSI，并根据 Release 随附的清单和 SHA256 校验文件完整性；随后启动现有升级向导，Windows 会请求管理员授权。升级向导会安全恢复受控窗口、退出当前版本，并在升级成功后恢复运行。
+
+可以跳过当前版本；只有出现更高版本时才会再次提醒，也可以随时在“关于”页恢复提醒或手动检查。源码构建或未从 MSI 安装的副本只提供 Releases 页面入口，不执行应用内安装。SHA256 用于检查下载损坏和发布资产是否一致，不等同于代码签名。
+
 ## 配置、日志与数据
 
 应用数据保存在当前用户的本地应用数据目录：
@@ -77,6 +87,8 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 ```text
 %LOCALAPPDATA%\GhostSlacking\
 ├── settings.json
+├── update-state.json
+├── updates\
 └── logs\
     ├── ghostslacking.log
     ├── ghostslacking.1.log ... ghostslacking.4.log
@@ -85,6 +97,8 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 ```
 
 - `settings.json`：用户设置。
+- `update-state.json`：上次成功检查时间和用户跳过的版本，不包含在配置导出中。
+- `updates`：经用户确认后下载的升级安装包；不完整和过期文件会自动清理。
 - `ghostslacking.log`：主程序日志。
 - `watchdog.log`：异常恢复进程日志。
 
@@ -104,13 +118,13 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 ### 开发环境
 
 - Windows 10/11 x64。
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)。
+- [.NET 8 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)：在页面的“生成应用 - SDK”中下载 **Windows x64 安装程序**。
 - Git。
 
 在 PowerShell 中执行：
 
 ```powershell
-git clone <你的仓库地址>
+git clone https://github.com/PomDetom/GhostSlacking.git
 cd GhostSlacking
 
 dotnet restore GhostSlacking.sln

@@ -185,6 +185,13 @@ $legacyLaunchCondition = Get-MsiRows -Database $database -Table 'LaunchCondition
 Assert-Msi ($null -ne $legacyLaunchCondition -and
     $legacyLaunchCondition.Fields[1] -match '卸载所有 GhostSlacking 条目') 'The legacy-version uninstall prompt is missing.'
 
+$runtimeLaunchCondition = Get-MsiRows -Database $database -Table 'LaunchCondition' |
+    Where-Object { $_.Fields[0] -eq 'Installed OR DOTNETRUNTIMECHECK = 0' } |
+    Select-Object -First 1
+Assert-Msi ($null -ne $runtimeLaunchCondition -and
+    $runtimeLaunchCondition.Fields[1] -match 'https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0' -and
+    $runtimeLaunchCondition.Fields[1] -match 'Windows x64') 'The .NET 8 Runtime download guidance is missing or outdated.'
+
 $protocolRegistryRow = Get-MsiRows -Database $database -Table 'Registry' |
     Where-Object {
         $_.Fields[2] -eq 'Software\GhostSlacking' -and

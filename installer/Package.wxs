@@ -74,7 +74,7 @@
       RollForward="latestPatch" />
     <Launch
       Condition="Installed OR DOTNETRUNTIMECHECK = 0"
-      Message="GhostSlacking 需要安装 .NET 8 Runtime x64（不是 Desktop Runtime）。请先访问 https://aka.ms/dotnet/8.0/runtime-win-x64.exe 安装后重试。" />
+      Message="GhostSlacking 需要 .NET 8 Runtime x64。请访问 https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0，在“运行应用 - 运行时”的“.NET 运行时”中下载 Windows x64 安装程序；已安装 .NET 8 SDK 或 Desktop Runtime 时无需重复安装。" />
     <Launch
       Condition="NOT WIX_UPGRADE_DETECTED OR UPGRADE_PROTOCOL_VERSION = &quot;#1&quot;"
       Message="检测到不支持安全自动升级的旧版本。请先退出程序，并在 Windows 设置的“已安装的应用”中卸载所有 GhostSlacking 条目，然后重新运行此安装包。用户设置和日志不会被删除。" />
