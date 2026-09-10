@@ -35,6 +35,24 @@ Tests use xUnit and `[Fact]`. Name tests as behavior statements in `snake_case`,
 
 History is currently minimal, so use concise, imperative commit subjects such as `Add configurable Peek hotkey`; keep each commit focused. Pull requests should explain the user-visible behavior, list automated and manual validation, link relevant issues, and include screenshots for UI changes. Call out Win32 compatibility risks and any changes to restore behavior explicitly.
 
+## Branch and Release Workflow
+
+Use `dev` for day-to-day development and keep `master` releasable. Release changes must go through a GitHub Pull Request from `dev` to `master`; do not routinely merge locally and push directly to `master`. The PR must pass the `Release tests` GitHub Actions check before merging.
+
+After the PR is merged, create the release tag on the resulting `master` commit using the `vMAJOR.MINOR.PATCH` format, then push only that tag:
+
+```powershell
+git fetch origin
+git switch master
+git pull --ff-only origin master
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+The `v*.*.*` tag workflow is the source of truth for official MSI artifacts. It reruns Release tests, builds the Windows MSI, writes the SHA256 file and `release.json`, and publishes the GitHub Release. Do not create a release tag on `dev`, move or reuse a published tag, or replace a failed release asset under the same tag; use a new version after fixing the problem. Local packaging is for validation only.
+
+The GitHub repository should protect `master` with pull requests, the required `Release tests` status check, conversation resolution where practical, and disabled force-push/delete permissions. The current single-maintainer configuration leaves an administrator emergency bypass available; use it only for recovery. Review the detailed click-path and single-maintainer guidance in the README before changing these rules.
+
 ## Security & Recovery
 
 Never weaken the capture-before-mutation or identity-validation safeguards. Avoid persisting window content or stale HWNDs. Do not require elevation by default; handle higher-privilege targets with a clear failure instead.

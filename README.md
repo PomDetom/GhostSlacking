@@ -188,12 +188,37 @@ MSI 将生成到 `artifacts\installer\GhostSlacking-0.1.1-win-x64.msi`。WiX 依
 - 推送到 `master` 或创建 Pull Request 时运行 Release 测试。
 - 推送 `vMAJOR.MINOR.PATCH` 格式的标签时构建 MSI、生成 SHA256 与发布清单，并创建 GitHub Release。
 
-示例：
+正式发布采用“`dev` 开发 → Pull Request 合入 `master` → 从 `master` 打 tag → Actions 发布”的流程。不要在 `dev` 上直接打正式发布 tag，也不要把本地构建出的 MSI 当作正式发布产物。
+
+### 日常发布流程
+
+1. 在 `dev` 分支完成开发并推送到远端。
+2. 在 GitHub 创建 `dev` → `master` 的 Pull Request，等待 `Release tests` 通过。
+3. 检查变更说明、版本号和手工验收结果后合入 `master`。
+4. 在刚合入的 `master` 提交上创建版本 tag，例如 `v0.1.1`。
+5. 推送 tag，GitHub Actions 会在 Windows Runner 上重新运行测试、构建 MSI、生成 SHA256 和 `release.json`，并创建 GitHub Release。
+
+可以在 GitHub 网页上打开仓库的 **Releases → Draft a new release**，填写新 tag（例如 `v0.1.1`），并将 **Target** 选择为 `master` 最新提交；也可以使用 PowerShell：
 
 ```powershell
 git tag v0.1.1
 git push origin v0.1.1
 ```
+
+tag 一旦用于正式发布就不要移动或复用。版本必须是三段式 `vMAJOR.MINOR.PATCH`，且正式发布版本号应与安装包文件名一致。
+
+### GitHub 仓库配置
+
+在仓库的 **Settings → Branches → Branch protection rules** 中为 `master` 配置以下规则：
+
+- 开启 **Require a pull request before merging**，常规情况下禁止直接 push 到 `master`；当前保留管理员紧急 bypass 能力；
+- 开启 **Require status checks to pass before merging**，添加 `Release tests`，并要求分支与最新 `master` 保持同步；
+- 建议开启 **Require conversation resolution before merging**；
+- 不要允许修改或删除已发布的 tag；如组织策略支持，可限制 `v*.*.*` tag 的创建权限；
+- 单人维护时可以不强制审批人数；有协作者后建议要求至少 1 个 approval，并开启过期 approval 自动失效；
+- **Allow force pushes** 和 **Allow deletions** 保持关闭。
+
+配置完成后，日常只需通过 Pull Request 合入 `master`，正式构建则由版本 tag 触发。合入 `master` 的 CI 失败时不能发布；tag 对应的 Actions 失败时，先修复构建问题，再创建一个新的版本号，不要覆盖原 tag。
 
 ## 项目结构
 
