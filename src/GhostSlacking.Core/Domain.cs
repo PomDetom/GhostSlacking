@@ -35,6 +35,14 @@ public enum PeekTrigger
     Toggle
 }
 
+public enum PeekFrameRateLimit
+{
+    Auto,
+    Fps60,
+    Fps90,
+    Fps120
+}
+
 [Flags]
 public enum ShortcutModifiers
 {
@@ -183,7 +191,7 @@ public sealed record GhostWindowProfile(WindowSnapshot Original, RevealSettings 
 
 public sealed record AppSettings
 {
-    public int SchemaVersion { get; init; } = 4;
+    public int SchemaVersion { get; init; } = 5;
     public UiLanguage Language { get; init; } = UiLanguage.Chinese;
     public UiThemeMode ThemeMode { get; init; } = UiThemeMode.System;
     public int RevealDiameterPx { get; init; } = 144;
@@ -193,6 +201,7 @@ public sealed record AppSettings
     public RevealShape RevealShape { get; init; } = RevealShape.RoundedRectangle;
     public int PeekVirtualKey { get; init; } = 0x12;
     public PeekTrigger PeekTrigger { get; init; } = PeekTrigger.Toggle;
+    public PeekFrameRateLimit PeekFrameRateLimit { get; init; } = PeekFrameRateLimit.Auto;
     public HotkeyBinding PickHotkey { get; init; } = new(0x50, ShortcutModifiers.Control | ShortcutModifiers.Alt);
     public int WindowToggleVirtualKey { get; init; } = 0x47;
     public HotkeyBinding WindowToggleHotkey { get; init; } = new(0x47, ShortcutModifiers.Control | ShortcutModifiers.Alt);
@@ -208,7 +217,7 @@ public sealed record AppSettings
 
     public AppSettings Normalize() => this with
     {
-        SchemaVersion = 4,
+        SchemaVersion = 5,
         Language = Language is UiLanguage.Chinese or UiLanguage.English ? Language : UiLanguage.Chinese,
         ThemeMode = ThemeMode is UiThemeMode.System or UiThemeMode.Light or UiThemeMode.Dark
             ? ThemeMode
@@ -224,6 +233,12 @@ public sealed record AppSettings
             : RevealShape.RoundedRectangle,
         PeekVirtualKey = PeekVirtualKey is >= 1 and <= 255 ? PeekVirtualKey : 0x12,
         PeekTrigger = PeekTrigger is PeekTrigger.Hold or PeekTrigger.Toggle ? PeekTrigger : PeekTrigger.Toggle,
+        PeekFrameRateLimit = PeekFrameRateLimit is PeekFrameRateLimit.Auto or
+            PeekFrameRateLimit.Fps60 or
+            PeekFrameRateLimit.Fps90 or
+            PeekFrameRateLimit.Fps120
+                ? PeekFrameRateLimit
+                : PeekFrameRateLimit.Auto,
         PickHotkey = PickHotkey.Normalize(0x50, ShortcutModifiers.Control | ShortcutModifiers.Alt),
         WindowToggleVirtualKey = WindowToggleVirtualKey is >= 1 and <= 255 ? WindowToggleVirtualKey : 0x47,
         WindowToggleHotkey = NormalizeWindowToggleHotkey(),

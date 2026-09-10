@@ -57,6 +57,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly NumberBox _softEdgeWidth;
     private readonly ComboBox _blurLevel;
     private readonly ComboBox _shape;
+    private readonly ComboBox _peekFrameRateLimit;
     private readonly ComboBox _peekMode;
     private readonly Button _peekKeyButton;
     private readonly ComboBox _language;
@@ -113,6 +114,7 @@ internal sealed class SettingsWindow : AppWindow
         _softEdgeWidth = CreateNumberBox(settings.RevealSoftEdgeWidthPx, 0, 128, 4);
         _blurLevel = CreateComboBox();
         _shape = CreateComboBox();
+        _peekFrameRateLimit = CreateComboBox();
         _peekMode = CreateComboBox();
         _language = CreateComboBox();
         _themeMode = CreateComboBox();
@@ -278,6 +280,7 @@ internal sealed class SettingsWindow : AppWindow
             ]),
             CreateSection(language, "peekBehavior",
             [
+                CreateSettingRow(language, "peekFrameRateLimit", "peekFrameRateLimitDescription", CreateResettable(_peekFrameRateLimit, () => SelectChoice(_peekFrameRateLimit, DefaultSettings.PeekFrameRateLimit))),
                 CreateSettingRow(language, "peekMode", "peekModeDescription", CreateResettable(_peekMode, () => SelectChoice(_peekMode, DefaultSettings.PeekTrigger))),
                 CreateSettingRow(language, "peekKey", "peekKeyDescription", CreatePeekKeyEditor())
             ])
@@ -553,7 +556,12 @@ internal sealed class SettingsWindow : AppWindow
 
     private void PopulateChoices(AppSettings settings)
     {
-        PopulateLocalizedChoices(settings.Language, settings.RevealBlurLevel, settings.RevealShape, settings.PeekTrigger);
+        PopulateLocalizedChoices(
+            settings.Language,
+            settings.RevealBlurLevel,
+            settings.RevealShape,
+            settings.PeekTrigger,
+            settings.PeekFrameRateLimit);
         PopulateThemeChoices(settings.Language, settings.ThemeMode);
         _language.ItemsSource = new[]
         {
@@ -582,7 +590,8 @@ internal sealed class SettingsWindow : AppWindow
         UiLanguage language,
         RevealBlurLevel blur,
         RevealShape shape,
-        PeekTrigger trigger)
+        PeekTrigger trigger,
+        PeekFrameRateLimit frameRateLimit)
     {
         _blurLevel.ItemsSource = new[]
         {
@@ -604,6 +613,14 @@ internal sealed class SettingsWindow : AppWindow
             new Choice<PeekTrigger>(PeekTrigger.Toggle, UiText.Text(language, "togglePeek"))
         };
         SelectChoice(_peekMode, trigger);
+        _peekFrameRateLimit.ItemsSource = new[]
+        {
+            new Choice<PeekFrameRateLimit>(PeekFrameRateLimit.Auto, UiText.Text(language, "peekFrameRateAuto")),
+            new Choice<PeekFrameRateLimit>(PeekFrameRateLimit.Fps60, "60 FPS"),
+            new Choice<PeekFrameRateLimit>(PeekFrameRateLimit.Fps90, "90 FPS"),
+            new Choice<PeekFrameRateLimit>(PeekFrameRateLimit.Fps120, "120 FPS")
+        };
+        SelectChoice(_peekFrameRateLimit, frameRateLimit);
     }
 
     private static void SelectChoice<T>(ComboBox comboBox, T value) where T : struct, Enum
@@ -667,8 +684,11 @@ internal sealed class SettingsWindow : AppWindow
             var blur = SelectedChoice(_blurLevel, _editState.SavedSettings.RevealBlurLevel);
             var shape = SelectedChoice(_shape, _editState.SavedSettings.RevealShape);
             var trigger = SelectedChoice(_peekMode, _editState.SavedSettings.PeekTrigger);
+            var frameRateLimit = SelectedChoice(
+                _peekFrameRateLimit,
+                _editState.SavedSettings.PeekFrameRateLimit);
             var themeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode);
-            PopulateLocalizedChoices(language, blur, shape, trigger);
+            PopulateLocalizedChoices(language, blur, shape, trigger, frameRateLimit);
             PopulateThemeChoices(language, themeMode);
             foreach (var button in this.GetLogicalDescendants().OfType<Button>())
             {
@@ -815,6 +835,9 @@ internal sealed class SettingsWindow : AppWindow
         RevealBlurLevel = SelectedChoice(_blurLevel, _editState.SavedSettings.RevealBlurLevel),
         RevealShape = SelectedChoice(_shape, _editState.SavedSettings.RevealShape),
         PeekTrigger = SelectedChoice(_peekMode, _editState.SavedSettings.PeekTrigger),
+        PeekFrameRateLimit = SelectedChoice(
+            _peekFrameRateLimit,
+            _editState.SavedSettings.PeekFrameRateLimit),
         PeekVirtualKey = _peekVirtualKey,
         Language = CurrentLanguage,
         ThemeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode),
@@ -839,7 +862,7 @@ internal sealed class SettingsWindow : AppWindow
             numberBox.ValueChanged += (_, _) => OnSettingsEdited();
         }
 
-        foreach (var comboBox in new[] { _blurLevel, _shape, _peekMode, _logLevel })
+        foreach (var comboBox in new[] { _blurLevel, _shape, _peekFrameRateLimit, _peekMode, _logLevel })
         {
             comboBox.SelectionChanged += (_, _) => OnSettingsEdited();
         }

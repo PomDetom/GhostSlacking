@@ -4,6 +4,7 @@ namespace GhostSlacking.App;
 
 internal sealed record RevealPerformanceSummary(
     int FrameCount,
+    int TargetFramesPerSecond,
     double EffectiveFramesPerSecond,
     TimeSpan AverageDuration,
     TimeSpan P95Duration,
@@ -13,13 +14,24 @@ internal sealed record RevealPerformanceSummary(
 internal sealed class RevealPerformanceTracker
 {
     internal const int SampleWindowSize = 120;
-    private static readonly TimeSpan FrameBudget = TimeSpan.FromSeconds(1D / 60D);
     private readonly List<TimeSpan> _durations = new(SampleWindowSize);
     private Point? _lastCursor;
     private TimeSpan? _windowStartedAt;
+    private int? _targetFramesPerSecond;
 
-    public RevealPerformanceSummary? Record(Point cursor, TimeSpan updateDuration, TimeSpan observedAt)
+    public RevealPerformanceSummary? Record(
+        Point cursor,
+        TimeSpan updateDuration,
+        TimeSpan observedAt,
+        int targetFramesPerSecond)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(targetFramesPerSecond);
+        if (_targetFramesPerSecond != targetFramesPerSecond)
+        {
+            Reset();
+            _targetFramesPerSecond = targetFramesPerSecond;
+        }
+
         if (_lastCursor == cursor)
         {
             return null;
@@ -40,13 +52,15 @@ internal sealed class RevealPerformanceTracker
             ? (SampleWindowSize - 1) / elapsed.TotalSeconds
             : 0D;
         var p95Index = (int)Math.Ceiling(ordered.Length * 0.95D) - 1;
+        var frameBudget = TimeSpan.FromSeconds(1D / targetFramesPerSecond);
         var summary = new RevealPerformanceSummary(
             SampleWindowSize,
+            targetFramesPerSecond,
             effectiveFramesPerSecond,
             totalDuration / SampleWindowSize,
             ordered[p95Index],
             ordered[^1],
-            _durations.Count(duration => duration > FrameBudget));
+            _durations.Count(duration => duration > frameBudget));
 
         _durations.Clear();
         _windowStartedAt = null;
@@ -57,6 +71,7 @@ internal sealed class RevealPerformanceTracker
     {
         _lastCursor = null;
         _windowStartedAt = null;
+        _targetFramesPerSecond = null;
         _durations.Clear();
     }
 }

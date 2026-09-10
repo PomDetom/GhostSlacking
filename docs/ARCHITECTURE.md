@@ -60,7 +60,7 @@ V0.1 不包含：
 
 ### 3.4 V0.1 保持简单
 
-主业务在一个 Avalonia UI/消息线程上运行，使用约 16.7ms（60 Hz）的 Input 优先级定时器更新光标和窗口几何；低级键盘/鼠标 Hook 仅用于 Picker 输入拦截，Composition overlay 仅用于可选视觉层。两者都不注入目标进程，也不改变恢复契约。
+主业务在一个 Avalonia UI/消息线程上运行，使用 Input 优先级定时器更新光标和窗口几何。非 Reveal 状态保持约 16.7ms（60 Hz）；Reveal 根据鼠标所在显示器的当前刷新率和用户上限动态调整，最高 120 Hz。低级键盘/鼠标 Hook 仅用于 Picker 输入拦截，Composition overlay 仅用于可选视觉层。两者都不注入目标进程，也不改变恢复契约。
 
 ## 4. 系统上下文
 
@@ -169,7 +169,7 @@ Picker 不应默认选择当前前台窗口，因为产品交互是“指向并�
 
 职责：维护目标 HWND 的生存性和几何信息。
 
-当前使用约 60 Hz（16.7ms）的轻量定时检查，不使用全局窗口事件 Hook。Picker 的鼠标/键盘低级 Hook 是独立的输入拦截路径。每次检查：
+当前使用轻量定时检查，不使用全局窗口事件 Hook。Idle、Ghost 和恢复路径保持约 60 Hz（16.7ms）；Reveal 通过 `MonitorFromPoint`、`GetMonitorInfo` 和 `EnumDisplaySettingsEx` 跟随光标显示器刷新率，并受 Auto/60/90/120 FPS 上限约束。Picker 的鼠标/键盘低级 Hook 是独立的输入拦截路径。每次检查：
 
 - `IsWindow(hwnd)` 是否仍有效；
 - `GetWindowRect` 是否变化；
@@ -267,7 +267,7 @@ Settings
 Exit
 ```
 
-设置窗口使用 Avalonia + FluentAvalonia 控件，暴露 Peek Key、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。托盘、设置、提示浮层和主业务协调器运行在同一个 Avalonia STA UI 线程；主业务状态不存放在窗口控件中。
+设置窗口使用 Avalonia + FluentAvalonia 控件，暴露 Peek Key、最大 Peek 帧率、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。托盘、设置、提示浮层和主业务协调器运行在同一个 Avalonia STA UI 线程；主业务状态不存放在窗口控件中。
 
 ### 7.8 `Watchdog`
 
@@ -574,7 +574,7 @@ GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。
 | Reveal 状态 CPU | 通常低于 3%          |
 | 内存            | 小于 100 MB        |
 | 启动时间          | 通常小于 1 秒         |
-| 光标响应          | 60 Hz，有效更新时刷新    |
+| 光标响应          | Reveal 跟随显示器，最高 120 Hz；其他状态 60 Hz |
 
 性能原则：
 
@@ -584,6 +584,7 @@ GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。
 - Composition 遮罩与屏幕位置解耦，连续移动只更新 visual offset 和环形命中 region；
 - P/Invoke 失败不进入高频重试死循环；
 - 高频成功路径不逐帧写日志；Debug 模式每 120 个有效移动帧汇总有效 FPS、平均/P95/最大 tick 耗时和超预算帧数；
+- 显示模式查询按显示器缓存 2 秒，`WM_DISPLAYCHANGE` 立即失效缓存；刷新率不可用时安全回退到 60 Hz；
 - 用限频计数器和手工矩阵测量 `SetWindowRgn` 频率、tick 耗时和失败率。
 
 ## 18. 错误处理
@@ -613,6 +614,7 @@ GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。
 
 - 快捷键定义；
 - Peek Key；
+- 最大 Peek 帧率（Auto/60/90/120，Auto 最高 120 FPS）；
 - Reveal 直径、快捷键调整步长、软边宽度和形状；
 - 开机启动、退出恢复和日志级别；
 - 以后版本的 schema version。

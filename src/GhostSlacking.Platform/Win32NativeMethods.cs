@@ -27,6 +27,7 @@ internal static class Win32NativeMethods
     internal const int WH_MOUSE_LL = 14;
     internal const int WM_HOTKEY = 0x0312;
     internal const int WM_CLOSE = 0x0010;
+    internal const int WM_DISPLAYCHANGE = 0x007E;
     internal const int WM_ERASEBKGND = 0x0014;
     internal const int WM_NCHITTEST = 0x0084;
     internal const int HTTRANSPARENT = -1;
@@ -59,6 +60,8 @@ internal static class Win32NativeMethods
     internal const uint MOD_SHIFT = 0x0004;
     internal const uint MOD_NOREPEAT = 0x4000;
     internal const uint ERROR_SUCCESS = 0;
+    internal const uint MONITOR_DEFAULTTONEAREST = 2;
+    internal const int ENUM_CURRENT_SETTINGS = -1;
     internal const uint DWMWA_SYSTEMBACKDROP_TYPE = 38;
     internal const uint DWMWA_NCRENDERING_POLICY = 2;
     internal const uint DWMWA_WINDOW_CORNER_PREFERENCE = 33;
@@ -87,6 +90,64 @@ internal static class Win32NativeMethods
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct MONITORINFOEX
+    {
+        public uint Size;
+        public RECT Monitor;
+        public RECT WorkArea;
+        public uint Flags;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string DeviceName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct POINTL
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct DEVMODE
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string DeviceName;
+
+        public ushort SpecVersion;
+        public ushort DriverVersion;
+        public ushort Size;
+        public ushort DriverExtra;
+        public uint Fields;
+        public POINTL Position;
+        public uint DisplayOrientation;
+        public uint DisplayFixedOutput;
+        public short Color;
+        public short Duplex;
+        public short YResolution;
+        public short TTOption;
+        public short Collate;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string FormName;
+
+        public ushort LogPixels;
+        public uint BitsPerPixel;
+        public uint PixelsWidth;
+        public uint PixelsHeight;
+        public uint DisplayFlags;
+        public uint DisplayFrequency;
+        public uint IcmMethod;
+        public uint IcmIntent;
+        public uint MediaType;
+        public uint DitherType;
+        public uint Reserved1;
+        public uint Reserved2;
+        public uint PanningWidth;
+        public uint PanningHeight;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -142,6 +203,21 @@ internal static class Win32NativeMethods
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    internal static extern nint MonitorFromPoint(POINT point, uint flags);
+
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetMonitorInfo(nint monitor, ref MONITORINFOEX monitorInfo);
+
+    [DllImport("user32.dll", EntryPoint = "EnumDisplaySettingsExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumDisplaySettingsEx(
+        string deviceName,
+        int modeNumber,
+        ref DEVMODE deviceMode,
+        uint flags);
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern nint GetAncestor(nint hwnd, uint flags);

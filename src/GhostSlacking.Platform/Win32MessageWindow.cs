@@ -47,6 +47,8 @@ public sealed class Win32MessageWindow : IDisposable
 
     public event Action? CloseRequested;
 
+    public event Action? DisplayConfigurationChanged;
+
     private static void EnsureWindowClass()
     {
         lock (ClassGate)
@@ -84,6 +86,11 @@ public sealed class Win32MessageWindow : IDisposable
         if (message == Win32NativeMethods.WM_HOTKEY)
         {
             instance?.HotkeyPressed?.Invoke(wParam.ToInt32());
+        }
+
+        if (message == Win32NativeMethods.WM_DISPLAYCHANGE)
+        {
+            instance?.DisplayConfigurationChanged?.Invoke();
         }
 
         if (message == Win32NativeMethods.WM_CLOSE && instance is not null)

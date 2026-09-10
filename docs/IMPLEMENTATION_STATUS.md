@@ -1,6 +1,6 @@
 # Implementation status
 
-> 更新基准：2026-09-09，依据当前工作区代码、解决方案项目清单和 Debug 构建/测试结果整理。代码已实现不等于真实窗口兼容性验收已完成；后者仍以 Windows 手工矩阵为准。
+> 更新基准：2026-09-10，依据当前工作区代码、解决方案项目清单和 Debug/Release 构建测试结果整理。代码已实现不等于真实窗口兼容性验收已完成；后者仍以 Windows 手工矩阵为准。
 
 ## 当前总览
 
@@ -10,12 +10,12 @@
 | Phase 1 Ghost Core | 已完成实现 | 单窗口闭环、托盘宿主、设置、快捷键和自动化测试已在当前解决方案中。 |
 | Phase 2 Reliability | Watchdog v1 已完成，其余进行中 | 异常恢复协议和独立进程已落地；注销/关机、权限诊断、DPI 热插拔和长时间观测仍待验证或补齐。 |
 | Phase 3 Productization | 主要代码已完成，发布验收待补 | Avalonia 设置、配置、反馈、单实例、开机启动、MSI 和 GitHub Actions 已存在；诊断导出、签名和干净系统验收仍未完成。 |
-| Phase 4 Advanced Rendering | Composition 原型与 60 Hz 热路径优化已实现，兼容性验收待补 | 非抓屏 Composition 外扩羽化/模糊、位置无关遮罩缓存和硬边回退已接入；真实设备/窗口性能仍需实测。 |
+| Phase 4 Advanced Rendering | Composition 原型与自适应刷新率热路径优化已实现，兼容性验收待补 | 非抓屏 Composition 外扩羽化/模糊、位置无关遮罩缓存、最高 120 Hz 的显示器刷新率自适应和硬边回退已接入；真实设备/窗口性能仍需实测。 |
 
 ## 当前验证结果
 
 - `dotnet build GhostSlacking.sln --configuration Debug`：0 个警告，0 个错误。
-- `dotnet test GhostSlacking.sln --configuration Debug/Release`：162 个测试通过（Core 108，App 54），两个配置均为 0 个失败、0 个跳过。
+- `dotnet test GhostSlacking.sln --configuration Debug/Release`：192 个测试通过（Core 114，App 78），两个配置均为 0 个失败、0 个跳过。
 - 解决方案当前包含 4 个生产项目：`Core`、`Platform`、`App`、`Watchdog`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
 
 ## 已完成：Phase 1 Core Demo 与 App 宿主基线
@@ -36,9 +36,9 @@
 - Ghost/Reveal 期间临时置顶目标窗口，避免 Alt+Tab 后目标位于其他窗口下方；Restore 时恢复原始 TopMost 状态。
 - Ghost、Reveal 和 Restore 使用完整 placement 做状态感知校正；普通/Snap 恢复坐标与尺寸，最大化/最小化恢复对应状态。Restore 经过约 16.7ms 周期的三次连续匹配才释放恢复资料，最多纠正十次 Chrome/Electron 延迟漂移。
 - Reveal 默认使用 144px 圆角矩形、16px 羽化和轻度模糊；保留原始清晰核心，并把目标内容 region 外扩到羽化宽度的 70%。非激活的 Windows Composition overlay 固定覆盖目标 bounds，位置无关遮罩按视觉参数缓存，光标移动仅更新 visual offset 和羽化外环 region；清晰核心的点击和滚轮直接落到目标窗口。渲染或设备失败时立即缩回硬边 region。
-- Peek 使用约 60 Hz 的 Input 优先级轮询；Debug 日志每 120 个有效移动帧输出一次 FPS、平均/P95/最大耗时和超出 16.7ms 的帧数，不逐帧写入成功日志。
+- Peek 使用 Input 优先级轮询：非 Reveal 保持 60 Hz，Reveal 按鼠标所在显示器的当前模式动态调度，并受 Auto/60/90/120 FPS 设置和全局 120 FPS 上限约束。显示查询按显示器缓存 2 秒并由 `WM_DISPLAYCHANGE` 失效，失败时回退 60 Hz；Debug 日志每 120 个有效移动帧输出目标/有效 FPS、平均/P95/最大耗时和超出动态帧预算的帧数，不逐帧写入成功日志。
 - 全局热键、低级键盘 Peek 状态和拾取用低级鼠标钩子。
-- 设置页支持捕获自定义 Peek 按键，避免 Alt/Shift 对浏览器或其他前台应用产生快捷键副作用。
+- 设置页支持捕获自定义 Peek 按键，并提供 Auto/60/90/120 最大 Peek 帧率选择，避免 Alt/Shift 对浏览器或其他前台应用产生快捷键副作用。
 - Peek 支持“按住显示”和“按下切换”两种模式，默认按下切换；切换模式按下沿翻转状态，按键重复不会重复切换。
 - 支持配置窗口显隐快捷键；当前目标可在隐藏和完整显示之间切换，最终恢复仍由 Restore 快捷键负责。
 - 所有全局功能均可在设置页配置快捷键：选择窗口、窗口显隐、增大/减小 Reveal 直径、恢复当前窗口、恢复所有窗口、打开设置和退出应用；直径调整使用默认 16px 的可配置共用步长，设置页支持捕获 Ctrl/Alt/Shift 组合键，并为所有输入提供单项恢复默认按钮。

@@ -29,6 +29,7 @@ internal sealed class GhostApplicationController : IDisposable
     private readonly IWatchdogClient? _watchdog;
     private readonly Win32WindowPicker _picker;
     private readonly Win32MessageWindow _messageWindow;
+    private readonly IDisplayRefreshRateProvider _displayRefreshRates;
     private readonly Win32HotkeyManager _hotkeys;
     private readonly LowLevelMouseHook _mouseHook;
     private readonly LowLevelKeyboardHook _keyboardHook;
@@ -51,6 +52,7 @@ internal sealed class GhostApplicationController : IDisposable
     private readonly PeekStateTracker _peekState = new();
     private readonly TrayDoubleClickDetector _trayDoubleClick = new(TimeSpan.FromMilliseconds(500));
     private readonly RevealPerformanceTracker _revealPerformance = new();
+    private readonly RevealFrameRateScheduler _revealFrameRate = new();
     private readonly Stopwatch _revealPerformanceClock = Stopwatch.StartNew();
     private SettingsWindow? _settingsWindow;
     private bool _disposed;
@@ -69,9 +71,11 @@ internal sealed class GhostApplicationController : IDisposable
         _recovery = new RecoveryManager(_windows, backend, _logger);
         var visibility = new VisibilityEngine(backend, _logger);
         _coordinator = new GhostCoordinator(_windows, _recovery, visibility, _logger, _revealOverlay);
+        _displayRefreshRates = new Win32DisplayRefreshRateProvider();
         _messageWindow = new Win32MessageWindow();
         _messageWindow.HotkeyPressed += OnHotkeyPressed;
         _messageWindow.CloseRequested += OnCloseRequested;
+        _messageWindow.DisplayConfigurationChanged += OnDisplayConfigurationChanged;
         _hotkeys = new Win32HotkeyManager(_messageWindow.Handle);
         _mouseHook = new LowLevelMouseHook();
         _mouseHook.LeftButtonDown += OnPickerClick;
@@ -120,7 +124,7 @@ internal sealed class GhostApplicationController : IDisposable
         PublishRecoveryManifest();
 
         _timer = new DispatcherTimer(
-            TimeSpan.FromSeconds(1D / 60D),
+            _revealFrameRate.Current.Interval,
             DispatcherPriority.Input,
             OnPeekTimerTick);
         _timer.Start();
@@ -141,15 +145,21 @@ internal sealed class GhostApplicationController : IDisposable
         var cursor = _windows.GetCursorPosition();
         var startedAt = Stopwatch.GetTimestamp();
         _coordinator.UpdatePeek(cursor, _peekDown);
+        var revealActive = _peekDown && _coordinator.State == GhostState.Reveal;
+        UpdateRevealFrameRate(cursor, revealActive);
         var updateDuration = Stopwatch.GetElapsedTime(startedAt);
 
-        if (_settings.MinimumLogLevel != LogLevel.Debug || !_peekDown || _coordinator.State != GhostState.Reveal)
+        if (_settings.MinimumLogLevel != LogLevel.Debug || !revealActive)
         {
             _revealPerformance.Reset();
             return;
         }
 
-        var summary = _revealPerformance.Record(cursor, updateDuration, _revealPerformanceClock.Elapsed);
+        var summary = _revealPerformance.Record(
+            cursor,
+            updateDuration,
+            _revealPerformanceClock.Elapsed,
+            _revealFrameRate.Current.TargetFramesPerSecond);
         if (summary is null)
         {
             return;
@@ -157,9 +167,40 @@ internal sealed class GhostApplicationController : IDisposable
 
         _logger.Log(
             LogLevel.Debug,
-            $"RevealPerformance frames={summary.FrameCount} effectiveFps={summary.EffectiveFramesPerSecond:F1} " +
+            $"RevealPerformance frames={summary.FrameCount} targetFps={summary.TargetFramesPerSecond} " +
+            $"effectiveFps={summary.EffectiveFramesPerSecond:F1} " +
             $"averageMs={summary.AverageDuration.TotalMilliseconds:F2} p95Ms={summary.P95Duration.TotalMilliseconds:F2} " +
             $"maximumMs={summary.MaximumDuration.TotalMilliseconds:F2} overBudget={summary.OverBudgetCount}");
+    }
+
+    private void UpdateRevealFrameRate(Point cursor, bool revealActive)
+    {
+        var display = revealActive ? _displayRefreshRates.GetForPoint(cursor) : null;
+        var transition = _revealFrameRate.Update(revealActive, _settings.PeekFrameRateLimit, display);
+        if (transition.IntervalChanged)
+        {
+            _timer.Interval = transition.Decision.Interval;
+        }
+
+        if (!transition.ContextChanged)
+        {
+            return;
+        }
+
+        _revealPerformance.Reset();
+        var detected = transition.Decision.DetectedRefreshRate?.ToString() ?? "unavailable";
+        var displayId = transition.Decision.DisplayId ?? "unknown";
+        _logger.Log(
+            LogLevel.Debug,
+            $"RevealFrameRate active={transition.Decision.IsRevealActive} " +
+            $"targetFps={transition.Decision.TargetFramesPerSecond} detectedHz={detected} " +
+            $"limit={transition.Decision.Limit} display={displayId} fallback={transition.Decision.UsesFallback}");
+    }
+
+    private void OnDisplayConfigurationChanged()
+    {
+        _displayRefreshRates.Invalidate();
+        _logger.Log(LogLevel.Debug, "Display configuration changed; refresh-rate cache invalidated.");
     }
 
     private static NativeMenuItem CreateMenuItem(string header, Action? action, bool enabled = true)
@@ -634,6 +675,7 @@ internal sealed class GhostApplicationController : IDisposable
 
         _watchdog?.Dispose();
         _messageWindow.CloseRequested -= OnCloseRequested;
+        _messageWindow.DisplayConfigurationChanged -= OnDisplayConfigurationChanged;
         _messageWindow.Dispose();
         _logger.Log(LogLevel.Info, "Application exited.");
         _logger.Dispose();

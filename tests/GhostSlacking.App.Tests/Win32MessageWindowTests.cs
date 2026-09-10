@@ -38,6 +38,18 @@ public sealed class Win32MessageWindowTests
     }
 
     [Fact]
+    public void Display_change_message_invalidates_display_configuration()
+    {
+        using var window = new Win32MessageWindow();
+        var notifications = 0;
+        window.DisplayConfigurationChanged += () => notifications++;
+
+        SendMessage(window.Handle, 0x007E, 0, 0);
+
+        Assert.Equal(1, notifications);
+    }
+
+    [Fact]
     public void Overlay_window_applies_ring_and_disposes_repeatedly()
     {
         var window = new Win32OverlayWindow();

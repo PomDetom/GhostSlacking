@@ -16,11 +16,13 @@ public sealed class RevealPerformanceTrackerTests
             summary = tracker.Record(
                 new Point(index, 0),
                 duration,
-                TimeSpan.FromSeconds(index / 60D));
+                TimeSpan.FromSeconds(index / 60D),
+                60);
         }
 
         Assert.NotNull(summary);
         Assert.Equal(120, summary.FrameCount);
+        Assert.Equal(60, summary.TargetFramesPerSecond);
         Assert.Equal(60D, summary.EffectiveFramesPerSecond, 3);
         Assert.Equal(TimeSpan.FromMilliseconds(20), summary.P95Duration);
         Assert.Equal(TimeSpan.FromMilliseconds(20), summary.MaximumDuration);
@@ -38,7 +40,8 @@ public sealed class RevealPerformanceTrackerTests
             summary = tracker.Record(
                 new Point(10, 10),
                 TimeSpan.FromMilliseconds(1),
-                TimeSpan.FromSeconds(index / 60D));
+                TimeSpan.FromSeconds(index / 60D),
+                60);
         }
 
         Assert.Null(summary);
@@ -50,11 +53,49 @@ public sealed class RevealPerformanceTrackerTests
         var tracker = new RevealPerformanceTracker();
         for (var index = 0; index < RevealPerformanceTracker.SampleWindowSize - 1; index++)
         {
-            tracker.Record(new Point(index, 0), TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(index / 60D));
+            tracker.Record(
+                new Point(index, 0),
+                TimeSpan.FromMilliseconds(1),
+                TimeSpan.FromSeconds(index / 60D),
+                60);
         }
 
         tracker.Reset();
 
-        Assert.Null(tracker.Record(new Point(500, 0), TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(5)));
+        Assert.Null(tracker.Record(
+            new Point(500, 0),
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromSeconds(5),
+            60));
+    }
+
+    [Fact]
+    public void Target_change_resets_samples_and_uses_the_new_frame_budget()
+    {
+        var tracker = new RevealPerformanceTracker();
+        for (var index = 0; index < RevealPerformanceTracker.SampleWindowSize - 1; index++)
+        {
+            tracker.Record(
+                new Point(index, 0),
+                TimeSpan.FromMilliseconds(9),
+                TimeSpan.FromSeconds(index / 60D),
+                60);
+        }
+
+        Assert.Null(tracker.Record(new Point(500, 0), TimeSpan.FromMilliseconds(9), TimeSpan.Zero, 120));
+
+        RevealPerformanceSummary? summary = null;
+        for (var index = 1; index < RevealPerformanceTracker.SampleWindowSize; index++)
+        {
+            summary = tracker.Record(
+                new Point(500 + index, 0),
+                TimeSpan.FromMilliseconds(9),
+                TimeSpan.FromSeconds(index / 120D),
+                120);
+        }
+
+        Assert.NotNull(summary);
+        Assert.Equal(120, summary.TargetFramesPerSecond);
+        Assert.Equal(RevealPerformanceTracker.SampleWindowSize, summary.OverBudgetCount);
     }
 }

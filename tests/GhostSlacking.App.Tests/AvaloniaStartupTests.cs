@@ -25,6 +25,7 @@ public sealed class AvaloniaStartupTests
                 var settingsWindow = new SettingsWindow(new AppSettings(), _ => true);
                 Assert.Same(AppIcon.TitleBarImage, settingsWindow.Icon);
                 AssertDefaultSettingsWindowLayout(settingsWindow);
+                AssertPeekFrameRateSetting(settingsWindow);
                 AssertThemePreviewLifecycle();
                 AssertSavedSettingsExport();
                 using var trayIcon = new TrayIcon
@@ -145,6 +146,25 @@ public sealed class AvaloniaStartupTests
         content.Measure(new Avalonia.Size(settingsWindow.Width, settingsWindow.Height));
         Assert.Equal(closedHeight, footer.DesiredSize.Height);
         infoBar.IsOpen = false;
+    }
+
+    private static void AssertPeekFrameRateSetting(SettingsWindow settingsWindow)
+    {
+        var frameRate = GetPrivateField<ComboBox>(settingsWindow, "_peekFrameRateLimit");
+        Assert.Equal(
+            ["自动（最高 120 FPS）", "60 FPS", "90 FPS", "120 FPS"],
+            frameRate.Items.Select(item => item?.ToString() ?? string.Empty).ToArray());
+        Assert.Equal(0, frameRate.SelectedIndex);
+
+        frameRate.SelectedIndex = 2;
+        GetPrivateField<ComboBox>(settingsWindow, "_language").SelectedIndex = 1;
+
+        Assert.Equal(2, frameRate.SelectedIndex);
+        Assert.Equal("Auto (up to 120 FPS)", frameRate.Items[0]?.ToString());
+        InvokeSave(settingsWindow);
+        Assert.Equal(
+            PeekFrameRateLimit.Fps90,
+            GetPrivateField<SettingsEditState>(settingsWindow, "_editState").SavedSettings.PeekFrameRateLimit);
     }
 
     private static void AssertNotificationWindowComposition(AvaloniaNotificationService notifications)

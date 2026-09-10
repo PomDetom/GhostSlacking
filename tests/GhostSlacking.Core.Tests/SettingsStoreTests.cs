@@ -18,7 +18,7 @@ public sealed class SettingsStoreTests
 
         var normalized = settings.Normalize();
 
-        Assert.Equal(4, normalized.SchemaVersion);
+        Assert.Equal(5, normalized.SchemaVersion);
         Assert.Equal(800, normalized.RevealDiameterPx);
         Assert.Equal(8, normalized.RevealDiameterStepPx);
         Assert.Equal(128, normalized.RevealSoftEdgeWidthPx);
@@ -132,7 +132,7 @@ public sealed class SettingsStoreTests
 
             var settings = new SettingsStore(path).Load();
 
-            Assert.Equal(4, settings.SchemaVersion);
+            Assert.Equal(5, settings.SchemaVersion);
             Assert.Equal(320, settings.RevealDiameterPx);
             Assert.Equal(16, settings.RevealDiameterStepPx);
             Assert.Equal(16, settings.RevealSoftEdgeWidthPx);
@@ -163,7 +163,7 @@ public sealed class SettingsStoreTests
 
             var settings = new SettingsStore(path).Load();
 
-            Assert.Equal(4, settings.SchemaVersion);
+            Assert.Equal(5, settings.SchemaVersion);
             Assert.Equal(64, settings.RevealSoftEdgeWidthPx);
             Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
         }
@@ -184,6 +184,7 @@ public sealed class SettingsStoreTests
         Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
         Assert.Equal(RevealShape.RoundedRectangle, settings.RevealShape);
         Assert.Equal(PeekTrigger.Toggle, settings.PeekTrigger);
+        Assert.Equal(PeekFrameRateLimit.Auto, settings.PeekFrameRateLimit);
         Assert.Equal(UiThemeMode.System, settings.ThemeMode);
         Assert.Equal(LogLevel.Info, settings.MinimumLogLevel);
     }
@@ -194,6 +195,42 @@ public sealed class SettingsStoreTests
         var settings = new AppSettings { MinimumLogLevel = (LogLevel)999 };
 
         Assert.Equal(LogLevel.Info, settings.Normalize().MinimumLogLevel);
+    }
+
+    [Fact]
+    public void Schema_four_settings_receive_the_default_peek_frame_rate_limit()
+    {
+        var restored = AppSettingsJson.Deserialize("""
+            {
+              "SchemaVersion": 4,
+              "PeekTrigger": "Hold"
+            }
+            """);
+
+        Assert.Equal(5, restored.SchemaVersion);
+        Assert.Equal(PeekTrigger.Hold, restored.PeekTrigger);
+        Assert.Equal(PeekFrameRateLimit.Auto, restored.PeekFrameRateLimit);
+    }
+
+    [Theory]
+    [InlineData(PeekFrameRateLimit.Auto)]
+    [InlineData(PeekFrameRateLimit.Fps60)]
+    [InlineData(PeekFrameRateLimit.Fps90)]
+    [InlineData(PeekFrameRateLimit.Fps120)]
+    public void Valid_peek_frame_rate_limits_round_trip(PeekFrameRateLimit limit)
+    {
+        var restored = AppSettingsJson.Deserialize(AppSettingsJson.Serialize(
+            new AppSettings { PeekFrameRateLimit = limit }));
+
+        Assert.Equal(limit, restored.PeekFrameRateLimit);
+    }
+
+    [Fact]
+    public void Unknown_peek_frame_rate_limit_falls_back_to_auto()
+    {
+        var settings = new AppSettings { PeekFrameRateLimit = (PeekFrameRateLimit)999 };
+
+        Assert.Equal(PeekFrameRateLimit.Auto, settings.Normalize().PeekFrameRateLimit);
     }
 
     [Fact]
@@ -262,7 +299,7 @@ public sealed class SettingsStoreTests
             Assert.True(store.Save(new AppSettings { ThemeMode = UiThemeMode.Dark }));
 
             var settings = store.Load();
-            Assert.Equal(4, settings.SchemaVersion);
+            Assert.Equal(5, settings.SchemaVersion);
             Assert.Equal(UiThemeMode.Dark, settings.ThemeMode);
         }
         finally
@@ -282,7 +319,7 @@ public sealed class SettingsStoreTests
             Assert.True(store.Save(new AppSettings { RevealBlurLevel = RevealBlurLevel.High }));
 
             var settings = store.Load();
-            Assert.Equal(4, settings.SchemaVersion);
+            Assert.Equal(5, settings.SchemaVersion);
             Assert.Equal(RevealBlurLevel.High, settings.RevealBlurLevel);
         }
         finally
