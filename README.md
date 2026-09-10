@@ -150,22 +150,22 @@ artifacts\releases\<版本>\
 
 ```powershell
 # 指定版本并执行完整构建
-.\build-release.ps1 -Version 0.1.0
+.\build-release.ps1 -Version 0.1.1
 
 # 自动递增补丁版本
 .\build-release.ps1 -Increment Patch
 
 # 仅在临时排查时跳过测试
-.\build-release.ps1 -Version 0.1.0 -SkipTests
+.\build-release.ps1 -Version 0.1.1 -SkipTests
 ```
 
 如只需直接生成 MSI：
 
 ```powershell
-.\installer\build-installer.ps1 -Version 0.1.0
+.\installer\build-installer.ps1 -Version 0.1.1
 ```
 
-MSI 将生成到 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。WiX 依赖由项目在还原和构建时自动获取。
+MSI 将生成到 `artifacts\installer\GhostSlacking-0.1.1-win-x64.msi`。WiX 依赖由项目在还原和构建时自动获取。
 
 ## 发布到 GitHub
 
@@ -177,8 +177,8 @@ MSI 将生成到 `artifacts\installer\GhostSlacking-0.1.0-win-x64.msi`。WiX 依
 示例：
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 ## 项目结构
