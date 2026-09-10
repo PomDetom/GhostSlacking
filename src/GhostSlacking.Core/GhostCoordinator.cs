@@ -186,12 +186,14 @@ public sealed class GhostCoordinator
         }
 
         var region = RevealGeometry.CreateReveal(observation.ScreenBounds, cursorScreen, _current.Reveal);
+        var featherRequested = _current.Reveal.SoftEdgeWidthPx > 0 && _revealVisualHost is not null;
+        var featherStateStable = !featherRequested || _featherActive == _revealVisualHost!.IsAvailable;
         if (observation.IsVisible &&
             !cursorChanged &&
             !geometryChanged &&
             _state == GhostState.Reveal &&
             _lastReveal == region &&
-            (!_featherActive || _revealVisualHost?.IsAvailable == true))
+            featherStateStable)
         {
             return;
         }
