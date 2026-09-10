@@ -382,6 +382,15 @@ internal sealed class SettingsWindow : AppWindow
         _lastUpdateCheckText.Foreground = _secondaryBrush;
         _updateStatusText.Foreground = _secondaryBrush;
 
+        var projectButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            Margin = new Thickness(0, 12, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Children = { _sourceRepositoryButton, _releasePageButton }
+        };
+
         var identity = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -402,13 +411,11 @@ internal sealed class SettingsWindow : AppWindow
                             Foreground = _primaryBrush
                         },
                         LocalizedText(language, "aboutProductDescription"),
-                        _sourceRepositoryButton
+                        projectButtons
                     }
                 }
             }
         };
-        _sourceRepositoryButton.Margin = new Thickness(0, 12, 0, 0);
-        _sourceRepositoryButton.HorizontalAlignment = HorizontalAlignment.Left;
 
         var updateButtons = new StackPanel
         {
@@ -419,8 +426,7 @@ internal sealed class SettingsWindow : AppWindow
                 _checkUpdatesButton,
                 _installUpdateButton,
                 _skipUpdateButton,
-                _resumeUpdateButton,
-                _releasePageButton
+                _resumeUpdateButton
             }
         };
         var updatePanel = new StackPanel

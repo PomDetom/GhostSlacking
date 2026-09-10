@@ -208,7 +208,11 @@ public sealed class AvaloniaStartupTests
         Assert.True(install.IsVisible);
         Assert.True(skip.IsVisible);
         Assert.Equal("GitHub 项目", sourceRepository.Content);
-        Assert.Equal("版本发布", releasePage.Content);
+        Assert.Equal("发布页", releasePage.Content);
+        var projectButtons = Assert.IsType<StackPanel>(sourceRepository.Parent);
+        Assert.Same(projectButtons, releasePage.Parent);
+        Assert.Same(sourceRepository, projectButtons.Children[0]);
+        Assert.Same(releasePage, projectButtons.Children[1]);
         Assert.DoesNotContain("http", sourceRepository.Content?.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("http", releasePage.Content?.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(SettingsStatus.None, GetPrivateField<SettingsEditState>(window, "_editState").Status);
