@@ -9,8 +9,10 @@ namespace GhostSlacking.App;
 internal sealed class GhostSlackingApplication : Avalonia.Application
 {
     private static readonly TimeSpan StartupNotificationDelay = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan UpdateCheckDelay = TimeSpan.FromSeconds(3.5);
     private GhostApplicationController? _controller;
     private IDisposable? _startupNotificationRegistration;
+    private IDisposable? _updateCheckRegistration;
 
     public override void Initialize()
     {
@@ -41,6 +43,10 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
                 ShowStartupNotification,
                 StartupNotificationDelay,
                 DispatcherPriority.Normal);
+            _updateCheckRegistration = DispatcherTimer.RunOnce(
+                BeginAutomaticUpdateCheck,
+                UpdateCheckDelay,
+                DispatcherPriority.Background);
         }
     }
 
@@ -48,6 +54,12 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
     {
         _startupNotificationRegistration = null;
         _controller?.ShowStartupNotification();
+    }
+
+    private void BeginAutomaticUpdateCheck()
+    {
+        _updateCheckRegistration = null;
+        _controller?.BeginAutomaticUpdateCheck();
     }
 
     private void OnUnhandledException(object? sender, DispatcherUnhandledExceptionEventArgs args)
@@ -60,6 +72,8 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
     {
         _startupNotificationRegistration?.Dispose();
         _startupNotificationRegistration = null;
+        _updateCheckRegistration?.Dispose();
+        _updateCheckRegistration = null;
         Dispatcher.UIThread.UnhandledException -= OnUnhandledException;
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime lifetime)
         {

@@ -300,6 +300,40 @@ public sealed class CoordinatorTests
     }
 
     [Fact]
+    public void Recovering_compositor_waits_while_unavailable_and_restores_feather_without_cursor_movement()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var visualHost = new FakeRevealVisualHost();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(
+            api,
+            recovery,
+            new VisibilityEngine(backend),
+            revealVisualHost: visualHost);
+
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        coordinator.UpdatePeek(new Point(200, 200), true);
+        Assert.Equal(168, backend.LastReveal?.DiameterPx);
+        Assert.Equal(1, visualHost.PrepareCalls);
+
+        visualHost.IsAvailable = false;
+        coordinator.UpdatePeek(new Point(200, 200), true);
+        Assert.Equal(144, backend.LastReveal?.DiameterPx);
+
+        coordinator.UpdatePeek(new Point(200, 200), true);
+        Assert.Equal(2, backend.RevealCalls);
+        Assert.Equal(1, visualHost.PrepareCalls);
+
+        visualHost.IsAvailable = true;
+        coordinator.UpdatePeek(new Point(200, 200), true);
+
+        Assert.Equal(168, backend.LastReveal?.DiameterPx);
+        Assert.Equal(3, backend.RevealCalls);
+        Assert.Equal(2, visualHost.PrepareCalls);
+    }
+
+    [Fact]
     public void Leaving_reveal_hides_the_feather_visual()
     {
         var api = new FakeWindowApi();
@@ -630,10 +664,12 @@ public sealed class CoordinatorTests
         public NativeResult PresentResult { get; init; } = NativeResult.Ok("Present");
         public RevealVisualState? LastVisual { get; private set; }
         public int HideCalls { get; private set; }
+        public int PrepareCalls { get; private set; }
 
         public NativeResult Prepare(RevealVisualState visual)
         {
             _calls?.Add("Prepare");
+            PrepareCalls++;
             LastVisual = visual;
             return PrepareResult;
         }

@@ -29,6 +29,7 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
     private readonly ILogger _logger;
     private readonly Win32OverlayWindow _window;
     private readonly bool _operatingSystemSupported;
+    private readonly RevealRecoveryBackoff _recoveryBackoff = new();
     private DispatcherQueueController? _dispatcherQueueController;
     private Compositor? _compositor;
     private DesktopWindowTarget? _compositionTarget;
@@ -46,9 +47,11 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
     private CompositionMaskBrush? _mistMaskBrush;
     private CompositionDrawingSurface? _maskSurface;
     private RevealMaskKey? _lastMask;
+    private RevealVisualState? _lastRequestedVisual;
     private bool _initialized;
-    private volatile bool _failed;
-    private bool _failureLogged;
+    private int _recovering;
+    private int _recoveryPosted;
+    private IDisposable? _recoveryRegistration;
     private bool _disposed;
 
     public RevealEdgeOverlay(ILogger logger)
@@ -58,7 +61,10 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         _operatingSystemSupported = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041);
     }
 
-    public bool IsAvailable => _operatingSystemSupported && !_failed;
+    public bool IsAvailable =>
+        _operatingSystemSupported &&
+        !_disposed &&
+        Volatile.Read(ref _recovering) == 0;
 
     public NativeResult Prepare(RevealVisualState visual)
     {
@@ -70,31 +76,61 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
                 "Real-time Reveal feathering requires Windows 10 version 2004 or later.");
         }
 
-        if (_failed)
+        if (_disposed)
         {
-            return NativeResult.Failed("CompositionBackdropBrush", 0, "The compositor is unavailable for this session.");
+            return NativeResult.Failed("CompositionBackdropBrush", 0, "The Reveal compositor was disposed.");
         }
 
+        if (Volatile.Read(ref _recovering) != 0)
+        {
+            return NativeResult.Failed("CompositionBackdropBrush", 0, "The Reveal compositor is recovering.");
+        }
+
+        _lastRequestedVisual = visual;
         try
         {
             InitializeComposition();
-            return PrepareCore(visual);
+            var prepared = PrepareCore(visual);
+            if (!prepared.Success)
+            {
+                BeginRecovery(prepared.ErrorMessage ?? prepared.Operation);
+            }
+
+            return prepared;
         }
         catch (Exception exception) when (IsCompositionFailure(exception))
         {
-            Disable(exception.Message);
+            if (_canvasDevice?.IsDeviceLost(exception.HResult) == true)
+            {
+                try
+                {
+                    _canvasDevice.RaiseDeviceLost();
+                }
+                catch (Exception raiseException) when (IsCompositionFailure(raiseException))
+                {
+                    BeginRecovery(raiseException.Message);
+                }
+            }
+
+            BeginRecovery(exception.Message);
             return NativeResult.Failed("CompositionBackdropBrush", exception.HResult, exception.Message);
         }
     }
 
     public NativeResult Present()
     {
-        if (!_initialized || _failed || _window.Handle == 0)
+        if (!_initialized || Volatile.Read(ref _recovering) != 0 || _window.Handle == 0)
         {
             return NativeResult.Failed("SetWindowPos(RevealFeather)", 0, "The Reveal compositor is unavailable.");
         }
 
-        return _window.ShowTopmostNoActivate();
+        var presented = _window.ShowTopmostNoActivate();
+        if (!presented.Success)
+        {
+            BeginRecovery(presented.ErrorMessage ?? presented.Operation);
+        }
+
+        return presented;
     }
 
     void IRevealVisualHost.Hide() => HideVisual();
@@ -112,8 +148,10 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         }
 
         _disposed = true;
+        _recoveryRegistration?.Dispose();
+        _recoveryRegistration = null;
         HideVisual();
-        ReleaseVisualResources();
+        ReleaseDeviceResources();
         if (_root is not null)
         {
             _root.Children.RemoveAll();
@@ -123,15 +161,6 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
 
         _compositionTarget?.Dispose();
         _compositionTarget = null;
-        _graphicsDevice?.Dispose();
-        _graphicsDevice = null;
-        if (_canvasDevice is not null)
-        {
-            _canvasDevice.DeviceLost -= OnCanvasDeviceLost;
-            _canvasDevice.Dispose();
-            _canvasDevice = null;
-        }
-
         _compositor?.Dispose();
         _compositor = null;
         try
@@ -155,15 +184,33 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
             return;
         }
 
-        _dispatcherQueueController = EnsureDispatcherQueue();
-        _compositor = new Compositor();
-        _compositionTarget = CreateCompositionTarget(_compositor, _window.Handle);
-        _root = _compositor.CreateContainerVisual();
+        _dispatcherQueueController ??= EnsureDispatcherQueue();
+        _compositor ??= new Compositor();
+        _compositionTarget ??= CreateCompositionTarget(_compositor, _window.Handle);
+        _root ??= _compositor.CreateContainerVisual();
         _compositionTarget.Root = _root;
-        _canvasDevice = CanvasDevice.GetSharedDevice();
-        _canvasDevice.DeviceLost += OnCanvasDeviceLost;
-        _graphicsDevice = CanvasComposition.CreateCompositionGraphicsDevice(_compositor, _canvasDevice);
+        InitializeDeviceResources();
         _initialized = true;
+    }
+
+    private void InitializeDeviceResources()
+    {
+        if (_compositor is null)
+        {
+            throw new InvalidOperationException("The compositor was not initialized.");
+        }
+
+        if (_canvasDevice is null)
+        {
+            _canvasDevice = CanvasDevice.GetSharedDevice();
+            _canvasDevice.DeviceLost += OnCanvasDeviceLost;
+        }
+
+        if (_graphicsDevice is null)
+        {
+            _graphicsDevice = CanvasComposition.CreateCompositionGraphicsDevice(_compositor, _canvasDevice);
+            _graphicsDevice.RenderingDeviceReplaced += OnRenderingDeviceReplaced;
+        }
     }
 
     private NativeResult PrepareCore(RevealVisualState visual)
@@ -332,6 +379,26 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         _lastMask = null;
     }
 
+    private void ReleaseDeviceResources()
+    {
+        _initialized = false;
+        ReleaseVisualResources();
+        if (_graphicsDevice is not null)
+        {
+            _graphicsDevice.RenderingDeviceReplaced -= OnRenderingDeviceReplaced;
+            _graphicsDevice.Dispose();
+            _graphicsDevice = null;
+        }
+
+        if (_canvasDevice is not null)
+        {
+            _canvasDevice.DeviceLost -= OnCanvasDeviceLost;
+            // GetSharedDevice returns a process-wide object. Releasing our
+            // reference is sufficient; disposing it would affect other users.
+            _canvasDevice = null;
+        }
+    }
+
     private static byte[] CreateMaskPixels(CircleRegion templateCore, int featherWidthPx, Size surfaceSize)
     {
         var byteCount = checked(surfaceSize.Width * surfaceSize.Height * 4);
@@ -371,16 +438,27 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
 
     private void OnCanvasDeviceLost(CanvasDevice sender, object args)
     {
-        Disable("The graphics device was lost.");
+        BeginRecovery("The graphics device was lost.");
     }
 
-    private void Disable(string reason)
+    private void OnRenderingDeviceReplaced(
+        CompositionGraphicsDevice sender,
+        RenderingDeviceReplacedEventArgs args)
     {
-        _failed = true;
-        if (!_failureLogged)
+        BeginRecovery("The composition rendering device was replaced.");
+    }
+
+    private void BeginRecovery(string reason)
+    {
+        if (_disposed)
         {
-            _logger.Log(LogLevel.Warning, $"Reveal feather disabled; using hard edge: {reason}");
-            _failureLogged = true;
+            return;
+        }
+
+        var firstFailure = Interlocked.Exchange(ref _recovering, 1) == 0;
+        if (firstFailure)
+        {
+            _logger.Log(LogLevel.Warning, $"Reveal feather recovery started; using hard edge: {reason}");
         }
 
         if (!Dispatcher.UIThread.CheckAccess())
@@ -390,6 +468,66 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         else
         {
             HideVisual();
+        }
+
+        ScheduleRecovery();
+    }
+
+    private void ScheduleRecovery()
+    {
+        if (Interlocked.Exchange(ref _recoveryPosted, 1) != 0)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_disposed || Volatile.Read(ref _recovering) == 0)
+            {
+                Interlocked.Exchange(ref _recoveryPosted, 0);
+                return;
+            }
+
+            var delay = _recoveryBackoff.NextDelay();
+            _recoveryRegistration?.Dispose();
+            _recoveryRegistration = DispatcherTimer.RunOnce(() =>
+            {
+                Interlocked.Exchange(ref _recoveryPosted, 0);
+                TryRecover();
+            }, delay, DispatcherPriority.Input);
+        });
+    }
+
+    private void TryRecover()
+    {
+        if (_disposed || Volatile.Read(ref _recovering) == 0)
+        {
+            return;
+        }
+
+        HideVisual();
+        try
+        {
+            ReleaseDeviceResources();
+            InitializeComposition();
+            if (_lastRequestedVisual is RevealVisualState visual)
+            {
+                var prepared = PrepareCore(visual);
+                if (!prepared.Success)
+                {
+                    ScheduleRecovery();
+                    return;
+                }
+            }
+
+            _recoveryBackoff.Reset();
+            _recoveryRegistration = null;
+            Volatile.Write(ref _recovering, 0);
+            _logger.Log(LogLevel.Info, "Reveal feather graphics resources recovered.");
+        }
+        catch (Exception exception) when (IsCompositionFailure(exception))
+        {
+            ScheduleRecovery();
         }
     }
 

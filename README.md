@@ -21,18 +21,20 @@ GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部
 - 支持跟随系统、浅色和深色主题。
 - 支持开机启动、退出时恢复窗口和日志级别设置。
 - 支持从设置页导出日志诊断包和当前已保存的配置。
+- 设置页包含“关于”，可查看版本、访问 GitHub 源代码并检查更新。
+- 每次启动后异步检查 GitHub Releases；发现稳定版更新后由用户确认下载和安装。
 - 内置 Watchdog，在主程序异常终止后尝试安全恢复受控窗口。
 - 单实例运行，不会同时启动多个托盘进程。
 
 ## 系统要求
 
 - Windows 10 或 Windows 11，x64。
-- [.NET 8 Runtime x64](https://aka.ms/dotnet/8.0/runtime-win-x64.exe)。无需安装 .NET Desktop Runtime。
+- [.NET 8](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)：在页面的“运行应用 - 运行时”中找到“.NET 运行时”，下载 **Windows x64 安装程序**。无需下载 SDK、ASP.NET Core Runtime 或 .NET Desktop Runtime；如果已经安装 .NET 8 SDK 或 Desktop Runtime，则无需重复安装。
 - 控制以管理员身份运行的窗口时，GhostSlacking 通常也需要以相同权限运行。
 
 ## 安装
 
-从项目的 GitHub Releases 页面下载 `GhostSlacking-<版本>-win-x64.msi`，双击并按照安装向导完成安装。
+从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<版本>-win-x64.msi`，双击并按照安装向导完成安装。
 
 安装器支持选择安装位置，以及是否创建开始菜单和桌面快捷方式。普通卸载不会删除用户设置和日志。
 
@@ -70,6 +72,14 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 
 建议通过托盘菜单或 `Ctrl+Alt+Q` 正常退出。默认情况下，退出应用会恢复所有由 GhostSlacking 修改过的窗口。
 
+### 关于与软件更新
+
+设置窗口左侧底部的“关于”页面会显示当前版本和上次成功检查时间；介绍卡中的“GitHub 项目”可打开[项目主页](https://github.com/PomDetom/GhostSlacking)，软件更新区域也可进入 [版本发布](https://github.com/PomDetom/GhostSlacking/releases) 页面。
+
+应用每次启动后都会异步通过 GitHub 的公开 Releases API 检查最新稳定版，不需要 GitHub 账号或访问令牌。发现更新时会显示轻量通知和托盘菜单入口，不会自动下载安装。进入“关于”页确认后，应用才会下载 MSI，并根据 Release 随附的清单和 SHA256 校验文件完整性；随后启动现有升级向导，Windows 会请求管理员授权。升级向导会安全恢复受控窗口、退出当前版本，并在升级成功后恢复运行。
+
+可以跳过当前版本；跳过仅隐藏该版本的启动通知和托盘入口，“关于”页仍会显示并允许安装或恢复提醒。出现更高版本时会自动恢复通知，也可以随时手动检查。源码构建或未从 MSI 安装的副本只提供 Releases 页面入口，不执行应用内安装。SHA256 用于检查下载损坏和发布资产是否一致，不等同于代码签名。
+
 ## 配置、日志与数据
 
 应用数据保存在当前用户的本地应用数据目录：
@@ -77,6 +87,8 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 ```text
 %LOCALAPPDATA%\GhostSlacking\
 ├── settings.json
+├── update-state.json
+├── updates\
 └── logs\
     ├── ghostslacking.log
     ├── ghostslacking.1.log ... ghostslacking.4.log
@@ -85,6 +97,8 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 ```
 
 - `settings.json`：用户设置。
+- `update-state.json`：上次成功检查时间和用户跳过的版本，不包含在配置导出中。
+- `updates`：经用户确认后下载的升级安装包；不完整和过期文件会自动清理。
 - `ghostslacking.log`：主程序日志。
 - `watchdog.log`：异常恢复进程日志。
 
@@ -104,13 +118,13 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托
 ### 开发环境
 
 - Windows 10/11 x64。
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)。
+- [.NET 8 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)：在页面的“生成应用 - SDK”中下载 **Windows x64 安装程序**。
 - Git。
 
 在 PowerShell 中执行：
 
 ```powershell
-git clone <你的仓库地址>
+git clone https://github.com/PomDetom/GhostSlacking.git
 cd GhostSlacking
 
 dotnet restore GhostSlacking.sln
@@ -174,12 +188,37 @@ MSI 将生成到 `artifacts\installer\GhostSlacking-0.1.1-win-x64.msi`。WiX 依
 - 推送到 `master` 或创建 Pull Request 时运行 Release 测试。
 - 推送 `vMAJOR.MINOR.PATCH` 格式的标签时构建 MSI、生成 SHA256 与发布清单，并创建 GitHub Release。
 
-示例：
+正式发布采用“`dev` 开发 → Pull Request 合入 `master` → 从 `master` 打 tag → Actions 发布”的流程。不要在 `dev` 上直接打正式发布 tag，也不要把本地构建出的 MSI 当作正式发布产物。
+
+### 日常发布流程
+
+1. 在 `dev` 分支完成开发并推送到远端。
+2. 在 GitHub 创建 `dev` → `master` 的 Pull Request，等待 `Release tests` 通过。
+3. 检查变更说明、版本号和手工验收结果后合入 `master`。
+4. 在刚合入的 `master` 提交上创建版本 tag，例如 `v0.1.1`。
+5. 推送 tag，GitHub Actions 会在 Windows Runner 上重新运行测试、构建 MSI、生成 SHA256 和 `release.json`，并创建 GitHub Release。
+
+可以在 GitHub 网页上打开仓库的 **Releases → Draft a new release**，填写新 tag（例如 `v0.1.1`），并将 **Target** 选择为 `master` 最新提交；也可以使用 PowerShell：
 
 ```powershell
 git tag v0.1.1
 git push origin v0.1.1
 ```
+
+tag 一旦用于正式发布就不要移动或复用。版本必须是三段式 `vMAJOR.MINOR.PATCH`，且正式发布版本号应与安装包文件名一致。
+
+### GitHub 仓库配置
+
+在仓库的 **Settings → Branches → Branch protection rules** 中为 `master` 配置以下规则：
+
+- 开启 **Require a pull request before merging**，常规情况下禁止直接 push 到 `master`；当前保留管理员紧急 bypass 能力；
+- 开启 **Require status checks to pass before merging**，添加 `Release tests`，并要求分支与最新 `master` 保持同步；
+- 建议开启 **Require conversation resolution before merging**；
+- 不要允许修改或删除已发布的 tag；如组织策略支持，可限制 `v*.*.*` tag 的创建权限；
+- 单人维护时可以不强制审批人数；有协作者后建议要求至少 1 个 approval，并开启过期 approval 自动失效；
+- **Allow force pushes** 和 **Allow deletions** 保持关闭。
+
+配置完成后，日常只需通过 Pull Request 合入 `master`，正式构建则由版本 tag 触发。合入 `master` 的 CI 失败时不能发布；tag 对应的 Actions 失败时，先修复构建问题，再创建一个新的版本号，不要覆盖原 tag。
 
 ## 项目结构
 

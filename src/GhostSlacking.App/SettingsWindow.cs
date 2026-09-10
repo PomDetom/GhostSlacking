@@ -10,6 +10,7 @@ using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using FluentAvalonia.UI.Windowing;
 using GhostSlacking.Core;
+using System.Globalization;
 using Button = Avalonia.Controls.Button;
 using ComboBox = Avalonia.Controls.ComboBox;
 using Control = Avalonia.Controls.Control;
@@ -25,6 +26,7 @@ internal sealed class SettingsWindow : AppWindow
     private const string RevealPage = "reveal";
     private const string HotkeysPage = "hotkeys";
     private const string GeneralPage = "general";
+    private const string AboutPage = "about";
     private static readonly TimeSpan SavedStatusDuration = TimeSpan.FromMilliseconds(2500);
     private static readonly AppSettings DefaultSettings = new();
     private readonly SolidColorBrush _canvasBrush = new();
@@ -40,6 +42,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly Func<Stream, Task<DataExportResult>> _exportLogs;
     private readonly Func<AppSettings, Stream, Task<DataExportResult>> _exportSettings;
     private readonly Action<UiThemeMode> _applyTheme;
+    private readonly IApplicationUpdateManager? _updates;
     private readonly List<(TextBlock Text, string Key)> _localizedText = [];
     private readonly List<(Button Button, string Key)> _localizedButtons = [];
     private readonly Dictionary<string, Control> _pages = [];
@@ -48,6 +51,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly NavigationViewItem _revealItem;
     private readonly NavigationViewItem _hotkeysItem;
     private readonly NavigationViewItem _generalItem;
+    private readonly NavigationViewItem _aboutItem;
     private readonly TextBlock _pageTitle;
     private readonly TextBlock _pageDescription;
     private readonly ContentControl _pageHost;
@@ -65,6 +69,17 @@ internal sealed class SettingsWindow : AppWindow
     private readonly ComboBox _logLevel;
     private readonly Button _exportLogsButton;
     private readonly Button _exportSettingsButton;
+    private readonly TextBlock _currentVersionText;
+    private readonly TextBlock _latestVersionText;
+    private readonly TextBlock _lastUpdateCheckText;
+    private readonly TextBlock _updateStatusText;
+    private readonly ProgressBar _updateProgress;
+    private readonly Button _checkUpdatesButton;
+    private readonly Button _installUpdateButton;
+    private readonly Button _skipUpdateButton;
+    private readonly Button _resumeUpdateButton;
+    private readonly Button _sourceRepositoryButton;
+    private readonly Button _releasePageButton;
     private readonly ToggleSwitch _restoreOnExit;
     private readonly ToggleSwitch _startWithWindows;
     private readonly HotkeyEditor _pickHotkey;
@@ -83,19 +98,23 @@ internal sealed class SettingsWindow : AppWindow
     private bool _initializing = true;
     private string _selectedPage = RevealPage;
     private string? _exportStatusKey;
+    private CancellationTokenSource? _downloadCancellation;
 
     public SettingsWindow(
         AppSettings settings,
         Func<AppSettings, bool> save,
         Action<UiThemeMode>? applyTheme = null,
         Func<Stream, Task<DataExportResult>>? exportLogs = null,
-        Func<AppSettings, Stream, Task<DataExportResult>>? exportSettings = null)
+        Func<AppSettings, Stream, Task<DataExportResult>>? exportSettings = null,
+        IApplicationUpdateManager? updates = null,
+        string? initialPage = null)
     {
         _editState = new SettingsEditState(settings);
         _save = save;
         _applyTheme = applyTheme ?? AppTheme.Apply;
         _exportLogs = exportLogs ?? (_ => Task.FromResult(DataExportResult.Failure()));
         _exportSettings = exportSettings ?? ((_, _) => Task.FromResult(DataExportResult.Failure()));
+        _updates = updates;
         _peekVirtualKey = settings.PeekVirtualKey;
 
         ApplyThemePalette();
@@ -123,6 +142,23 @@ internal sealed class SettingsWindow : AppWindow
         _exportSettingsButton = CreateTextButton(settings.Language, "exportSettings");
         _exportLogsButton.Click += OnExportLogsClicked;
         _exportSettingsButton.Click += OnExportSettingsClicked;
+        _currentVersionText = new TextBlock();
+        _latestVersionText = new TextBlock();
+        _lastUpdateCheckText = new TextBlock();
+        _updateStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        _updateProgress = new ProgressBar { Minimum = 0, Maximum = 100, IsVisible = false };
+        _checkUpdatesButton = new Button { MinWidth = 120 };
+        _installUpdateButton = new Button { MinWidth = 120, IsVisible = false };
+        _skipUpdateButton = new Button { MinWidth = 110, IsVisible = false };
+        _resumeUpdateButton = new Button { MinWidth = 110, IsVisible = false };
+        _sourceRepositoryButton = CreateTextButton(settings.Language, "sourceRepository");
+        _releasePageButton = CreateTextButton(settings.Language, "releasePage");
+        _checkUpdatesButton.Click += OnCheckUpdatesClicked;
+        _installUpdateButton.Click += OnInstallUpdateClicked;
+        _skipUpdateButton.Click += OnSkipUpdateClicked;
+        _resumeUpdateButton.Click += OnResumeUpdateClicked;
+        _sourceRepositoryButton.Click += OnSourceRepositoryClicked;
+        _releasePageButton.Click += OnReleasePageClicked;
         _restoreOnExit = new ToggleSwitch { IsChecked = settings.RestoreOnExit };
         _startWithWindows = new ToggleSwitch { IsChecked = settings.StartWithWindows };
         _peekKeyButton = CreateCaptureButton();
@@ -169,6 +205,7 @@ internal sealed class SettingsWindow : AppWindow
         _revealItem = CreateNavigationItem(RevealPage, Symbol.View);
         _hotkeysItem = CreateNavigationItem(HotkeysPage, Symbol.Keyboard);
         _generalItem = CreateNavigationItem(GeneralPage, Symbol.Settings);
+        _aboutItem = CreateNavigationItem(AboutPage, Symbol.Help);
         _navigation = new NavigationView
         {
             PaneDisplayMode = NavigationViewPaneDisplayMode.Left,
@@ -185,6 +222,7 @@ internal sealed class SettingsWindow : AppWindow
         _navigation.MenuItems.Add(_revealItem);
         _navigation.MenuItems.Add(_hotkeysItem);
         _navigation.MenuItems.Add(_generalItem);
+        _navigation.FooterMenuItems.Add(_aboutItem);
         _navigation.SelectionChanged += OnNavigationSelectionChanged;
 
         PopulateChoices(settings);
@@ -197,6 +235,10 @@ internal sealed class SettingsWindow : AppWindow
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
         ActualThemeVariantChanged += OnActualThemeVariantChanged;
         Closed += OnClosed;
+        if (_updates is not null)
+        {
+            _updates.Changed += OnUpdateStateChanged;
+        }
         _language.SelectionChanged += (_, _) =>
         {
             if (!_updatingLanguage)
@@ -207,9 +249,14 @@ internal sealed class SettingsWindow : AppWindow
         };
 
         ApplyLanguage(settings.Language);
+        RefreshUpdateView();
         UpdateHotkeyConflicts();
         SubscribeToSettingChanges();
         _initializing = false;
+        if (string.Equals(initialPage, AboutPage, StringComparison.Ordinal))
+        {
+            NavigateToAbout();
+        }
     }
 
     private Control CreateContentShell(UiLanguage language)
@@ -323,7 +370,95 @@ internal sealed class SettingsWindow : AppWindow
                 CreateSettingRow(language, "exportSettings", "exportSettingsDescription", _exportSettingsButton)
             ])
         ]);
+
+        _pages[AboutPage] = CreateAboutPage(language);
     }
+
+    private Control CreateAboutPage(UiLanguage language)
+    {
+        _currentVersionText.Foreground = _primaryBrush;
+        _currentVersionText.FontWeight = FontWeight.SemiBold;
+        _latestVersionText.Foreground = _secondaryBrush;
+        _lastUpdateCheckText.Foreground = _secondaryBrush;
+        _updateStatusText.Foreground = _secondaryBrush;
+
+        var projectButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            Margin = new Thickness(0, 12, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Children = { _sourceRepositoryButton, _releasePageButton }
+        };
+
+        var identity = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 16,
+            Children =
+            {
+                new Image { Source = AppIcon.TitleBarImage, Width = 56, Height = 56 },
+                new StackPanel
+                {
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "GhostSlacking",
+                            FontSize = 22,
+                            FontWeight = FontWeight.SemiBold,
+                            Foreground = _primaryBrush
+                        },
+                        LocalizedText(language, "aboutProductDescription"),
+                        projectButtons
+                    }
+                }
+            }
+        };
+
+        var updateButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            Children =
+            {
+                _checkUpdatesButton,
+                _installUpdateButton,
+                _skipUpdateButton,
+                _resumeUpdateButton
+            }
+        };
+        var updatePanel = new StackPanel
+        {
+            Spacing = 10,
+            Children =
+            {
+                _currentVersionText,
+                _latestVersionText,
+                _lastUpdateCheckText,
+                _updateStatusText,
+                _updateProgress,
+                updateButtons
+            }
+        };
+
+        return CreatePage(
+        [
+            CreateSection(language, "aboutGhostSlacking", [WrapCard(identity)]),
+            CreateSection(language, "softwareUpdate", [WrapCard(updatePanel)])
+        ]);
+    }
+
+    private Border WrapCard(Control child) => new()
+    {
+        Background = _cardBrush,
+        BorderBrush = _fieldBorderBrush,
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(10),
+        Padding = new Thickness(18, 15),
+        Child = child
+    };
 
     private Control CreatePage(IEnumerable<Control> sections)
     {
@@ -657,6 +792,7 @@ internal sealed class SettingsWindow : AppWindow
         {
             HotkeysPage => ("hotkeySettings", "hotkeySettingsDescription"),
             GeneralPage => ("generalSettings", "generalSettingsDescription"),
+            AboutPage => ("about", "aboutDescription"),
             _ => ("revealSettings", "revealSettingsDescription")
         };
         _pageTitle.Text = UiText.Text(language, title);
@@ -672,6 +808,7 @@ internal sealed class SettingsWindow : AppWindow
             _revealItem.Content = UiText.Text(language, "revealSettings");
             _hotkeysItem.Content = UiText.Text(language, "hotkeySettings");
             _generalItem.Content = UiText.Text(language, "generalSettings");
+            _aboutItem.Content = UiText.Text(language, "about");
             foreach (var (text, key) in _localizedText)
             {
                 text.Text = UiText.Text(language, key);
@@ -701,6 +838,7 @@ internal sealed class SettingsWindow : AppWindow
             UpdatePageHeader(language);
             RefreshKeyDisplays();
             RefreshStatusText();
+            RefreshUpdateView();
         }
         finally
         {
@@ -775,6 +913,162 @@ internal sealed class SettingsWindow : AppWindow
 
     internal Task<DataExportResult> ExportSavedSettingsAsync(Stream destination) =>
         _exportSettings(_editState.SavedSettings, destination);
+
+    internal void NavigateToAbout()
+    {
+        _navigation.SelectedItem = _aboutItem;
+        _selectedPage = AboutPage;
+        _pageHost.Content = _pages[AboutPage];
+        UpdatePageHeader(CurrentLanguage);
+    }
+
+    private async void OnCheckUpdatesClicked(object? sender, RoutedEventArgs args)
+    {
+        if (_updates is null)
+        {
+            return;
+        }
+
+        await _updates.CheckAsync();
+    }
+
+    private async void OnInstallUpdateClicked(object? sender, RoutedEventArgs args)
+    {
+        if (_updates is null)
+        {
+            return;
+        }
+
+        if (_downloadCancellation is not null)
+        {
+            _downloadCancellation.Cancel();
+            return;
+        }
+
+        if (!_updates.CanInstallUpdates)
+        {
+            _updates.OpenReleasePage();
+            return;
+        }
+
+        var release = _updates.Snapshot.Release;
+        if (release is null)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = UiText.Text(CurrentLanguage, "installUpdateTitle"),
+            Content = new TextBlock
+            {
+                Text = string.Format(UiText.Text(CurrentLanguage, "installUpdateConfirmation"), release.VersionText),
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 460
+            },
+            PrimaryButtonText = UiText.Text(CurrentLanguage, "downloadAndInstall"),
+            CloseButtonText = UiText.Text(CurrentLanguage, "cancel"),
+            DefaultButton = ContentDialogButton.Primary
+        };
+        if (await dialog.ShowAsync(this) != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        _downloadCancellation = new CancellationTokenSource();
+        RefreshUpdateView();
+        try
+        {
+            var installerPath = await _updates.DownloadInstallerAsync(_downloadCancellation.Token);
+            if (installerPath is not null)
+            {
+                _updates.LaunchInstaller(installerPath);
+            }
+        }
+        finally
+        {
+            _downloadCancellation.Dispose();
+            _downloadCancellation = null;
+            RefreshUpdateView();
+        }
+    }
+
+    private void OnSkipUpdateClicked(object? sender, RoutedEventArgs args) => _updates?.SkipCurrentRelease();
+
+    private void OnResumeUpdateClicked(object? sender, RoutedEventArgs args) => _updates?.ResumeCurrentRelease();
+
+    private void OnSourceRepositoryClicked(object? sender, RoutedEventArgs args) => _updates?.OpenSourceRepository();
+
+    private void OnReleasePageClicked(object? sender, RoutedEventArgs args) => _updates?.OpenReleasePage();
+
+    private void OnUpdateStateChanged(object? sender, EventArgs args)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            RefreshUpdateView();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(RefreshUpdateView);
+        }
+    }
+
+    private void RefreshUpdateView()
+    {
+        var language = CurrentLanguage;
+        var snapshot = _updates?.Snapshot ?? new ApplicationUpdateSnapshot(
+            ApplicationUpdateStatus.Idle,
+            ApplicationVersionInfo.Current());
+        var releaseVersion = snapshot.Release?.VersionText;
+        _currentVersionText.Text = string.Format(UiText.Text(language, "currentVersion"), snapshot.CurrentVersion);
+        _latestVersionText.Text = releaseVersion is null
+            ? string.Empty
+            : string.Format(UiText.Text(language, "latestVersion"), releaseVersion);
+        _latestVersionText.IsVisible = releaseVersion is not null;
+        _lastUpdateCheckText.Text = snapshot.LastSuccessfulCheckUtc is { } lastSuccessfulCheck
+            ? string.Format(
+                UiText.Text(language, "lastSuccessfulUpdateCheck"),
+                lastSuccessfulCheck.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
+            : UiText.Text(language, "noSuccessfulUpdateCheck");
+        _updateStatusText.Text = snapshot.Status switch
+        {
+            ApplicationUpdateStatus.Checking => UiText.Text(language, "checkingUpdates"),
+            ApplicationUpdateStatus.UpToDate => UiText.Text(language, "upToDate"),
+            ApplicationUpdateStatus.Available => string.Format(UiText.Text(language, "updateAvailableDescription"), releaseVersion),
+            ApplicationUpdateStatus.Skipped => string.Format(UiText.Text(language, "updateSkippedDescription"), releaseVersion),
+            ApplicationUpdateStatus.Downloading => string.Format(UiText.Text(language, "downloadingUpdate"), snapshot.ProgressPercent ?? 0),
+            ApplicationUpdateStatus.Verifying => UiText.Text(language, "verifyingUpdate"),
+            ApplicationUpdateStatus.Ready => UiText.Text(language, "startingInstaller"),
+            ApplicationUpdateStatus.Error => UiText.Text(language, "updateFailed"),
+            _ => UiText.Text(language, "updateNotChecked")
+        };
+
+        var busy = snapshot.Status is ApplicationUpdateStatus.Checking or
+            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying;
+        _checkUpdatesButton.Content = UiText.Text(language, "checkUpdates");
+        _checkUpdatesButton.IsEnabled = !busy && _updates is not null;
+        _updateProgress.IsVisible = snapshot.Status == ApplicationUpdateStatus.Downloading;
+        _updateProgress.Value = snapshot.ProgressPercent ?? 0;
+
+        var updateKnown = snapshot.Release is not null && snapshot.Release.Version >
+            Version.Parse(snapshot.CurrentVersion);
+        _installUpdateButton.IsVisible = updateKnown &&
+            snapshot.Status is not ApplicationUpdateStatus.UpToDate;
+        _installUpdateButton.IsEnabled = snapshot.Status is ApplicationUpdateStatus.Available or
+            ApplicationUpdateStatus.Skipped or ApplicationUpdateStatus.Error or
+            ApplicationUpdateStatus.Downloading;
+        _installUpdateButton.Content = _downloadCancellation is not null
+            ? UiText.Text(language, "cancelDownload")
+            : _updates?.CanInstallUpdates == true
+                ? UiText.Text(language, "downloadAndInstall")
+                : UiText.Text(language, "viewRelease");
+        _skipUpdateButton.Content = UiText.Text(language, "skipVersion");
+        _skipUpdateButton.IsVisible = snapshot.Status == ApplicationUpdateStatus.Available;
+        _skipUpdateButton.IsEnabled = !busy;
+        _resumeUpdateButton.Content = UiText.Text(language, "resumeReminders");
+        _resumeUpdateButton.IsVisible = snapshot.Status == ApplicationUpdateStatus.Skipped;
+        _resumeUpdateButton.IsEnabled = !busy;
+    }
 
     private async Task ExportAsync(
         string extension,
@@ -1024,11 +1318,24 @@ internal sealed class SettingsWindow : AppWindow
 
     private void OnClosed(object? sender, EventArgs args)
     {
+        _downloadCancellation?.Cancel();
+        _downloadCancellation?.Dispose();
+        _downloadCancellation = null;
+        if (_updates is not null)
+        {
+            _updates.Changed -= OnUpdateStateChanged;
+        }
         _applyTheme(_editState.SavedSettings.ThemeMode);
         _savedStatusTimer.Stop();
         _savedStatusTimer.Tick -= OnSavedStatusTimerTick;
         _exportLogsButton.Click -= OnExportLogsClicked;
         _exportSettingsButton.Click -= OnExportSettingsClicked;
+        _checkUpdatesButton.Click -= OnCheckUpdatesClicked;
+        _installUpdateButton.Click -= OnInstallUpdateClicked;
+        _skipUpdateButton.Click -= OnSkipUpdateClicked;
+        _resumeUpdateButton.Click -= OnResumeUpdateClicked;
+        _sourceRepositoryButton.Click -= OnSourceRepositoryClicked;
+        _releasePageButton.Click -= OnReleasePageClicked;
         _themeMode.SelectionChanged -= OnThemeModeSelectionChanged;
         ActualThemeVariantChanged -= OnActualThemeVariantChanged;
         Closed -= OnClosed;

@@ -20,6 +20,7 @@ internal sealed class GhostApplicationController : IDisposable
     private const int DiameterDecreaseHotkey = 8;
     private readonly FileLogger _logger;
     private readonly DataExportService _dataExport;
+    private readonly IApplicationUpdateManager _updates;
     private readonly IClassicDesktopStyleApplicationLifetime _lifetime;
     private readonly IUserNotificationService _notifications;
     private readonly SettingsStore _settingsStore;
@@ -40,6 +41,7 @@ internal sealed class GhostApplicationController : IDisposable
     private readonly NativeMenuItem _pickItem;
     private readonly NativeMenuItem _toggleItem;
     private readonly NativeMenuItem _settingsItem;
+    private readonly NativeMenuItem _updateItem;
     private readonly NativeMenuItem _exitItem;
     private readonly NativeMenuItem _restoreItem;
     private readonly NativeMenuItem _restoreAllItem;
@@ -55,6 +57,7 @@ internal sealed class GhostApplicationController : IDisposable
     private readonly RevealFrameRateScheduler _revealFrameRate = new();
     private readonly Stopwatch _revealPerformanceClock = Stopwatch.StartNew();
     private SettingsWindow? _settingsWindow;
+    private readonly CancellationTokenSource _updateCancellation = new();
     private bool _disposed;
 
     public GhostApplicationController(IClassicDesktopStyleApplicationLifetime lifetime)
@@ -65,6 +68,7 @@ internal sealed class GhostApplicationController : IDisposable
         AppTheme.Apply(_settings.ThemeMode);
         _logger = new FileLogger(_settings);
         _dataExport = new DataExportService(_logger);
+        _updates = new GitHubApplicationUpdateManager(_logger);
         _windows = new Win32WindowApi();
         _revealOverlay = new RevealEdgeOverlay(_logger);
         var backend = new Win32VisibilityBackend(_logger);
@@ -88,7 +92,9 @@ internal sealed class GhostApplicationController : IDisposable
         _restoreAllItem = CreateMenuItem(UiText.Text(_settings.Language, "restoreAll"), () => RestoreAll("tray"));
         _pickItem = CreateMenuItem(UiText.Text(_settings.Language, "pick"), BeginPicking);
         _toggleItem = CreateMenuItem(UiText.Text(_settings.Language, "toggle"), ToggleWindowVisibility);
-        _settingsItem = CreateMenuItem(UiText.Text(_settings.Language, "settings"), OpenSettings);
+        _settingsItem = CreateMenuItem(UiText.Text(_settings.Language, "settings"), () => OpenSettings());
+        _updateItem = CreateMenuItem(string.Empty, () => OpenSettings("about"));
+        _updateItem.IsVisible = false;
         _exitItem = CreateMenuItem(UiText.Text(_settings.Language, "exit"), ExitApplication);
         var menu = new NativeMenu
         {
@@ -101,6 +107,7 @@ internal sealed class GhostApplicationController : IDisposable
                 _restoreItem,
                 _restoreAllItem,
                 _settingsItem,
+                _updateItem,
                 new NativeMenuItemSeparator(),
                 _exitItem
             }
@@ -115,6 +122,7 @@ internal sealed class GhostApplicationController : IDisposable
         };
         _trayIcon.Clicked += OnTrayIconClicked;
         _notifications = new AvaloniaNotificationService(_windows.GetCursorPosition, _logger);
+        _updates.Changed += OnUpdateStateChanged;
 
         _coordinator.StateChanged += (_, _) => UpdateTrayStatus();
         _coordinator.UserErrorOccurred += (_, error) => ShowCoreError(error.Kind);
@@ -137,6 +145,23 @@ internal sealed class GhostApplicationController : IDisposable
     {
         _logger.Log(LogLevel.Debug, "Startup notification requested.");
         ShowInfo(UiText.Text(_settings.Language, "startupReady"));
+    }
+
+    internal async void BeginAutomaticUpdateCheck()
+    {
+        try
+        {
+            var snapshot = await _updates.CheckAsync(_updateCancellation.Token);
+            if (snapshot.Status == ApplicationUpdateStatus.Available && snapshot.Release is not null && !_isExiting)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => ShowInfo(string.Format(
+                    UiText.Text(_settings.Language, "updateAvailableNotification"),
+                    snapshot.Release.VersionText)));
+            }
+        }
+        catch (OperationCanceledException) when (_updateCancellation.IsCancellationRequested)
+        {
+        }
     }
 
     private void OnPeekTimerTick(object? sender, EventArgs args)
@@ -447,13 +472,18 @@ internal sealed class GhostApplicationController : IDisposable
         UpdateTrayStatus();
     }
 
-    private void OpenSettings()
+    private void OpenSettings(string? initialPage = null)
     {
         if (_settingsWindow is not null)
         {
             if (_settingsWindow.WindowState == WindowState.Minimized)
             {
                 _settingsWindow.WindowState = WindowState.Normal;
+            }
+
+            if (string.Equals(initialPage, "about", StringComparison.Ordinal))
+            {
+                _settingsWindow.NavigateToAbout();
             }
 
             _settingsWindow.Activate();
@@ -467,7 +497,9 @@ internal sealed class GhostApplicationController : IDisposable
                 _settings,
                 SaveSettings,
                 exportLogs: stream => _dataExport.ExportLogsAsync(stream, _settings.MinimumLogLevel),
-                exportSettings: (settings, stream) => _dataExport.ExportSettingsAsync(stream, settings));
+                exportSettings: (settings, stream) => _dataExport.ExportSettingsAsync(stream, settings),
+                updates: _updates,
+                initialPage: initialPage);
             _settingsWindow = window;
             window.Closed += OnSettingsClosed;
             window.Show();
@@ -567,11 +599,34 @@ internal sealed class GhostApplicationController : IDisposable
         _restoreItem.Header = UiText.Text(_settings.Language, "restore");
         _restoreAllItem.Header = UiText.Text(_settings.Language, "restoreAll");
         _settingsItem.Header = UiText.Text(_settings.Language, "settings");
+        var update = _updates.Snapshot;
+        var showUpdate = update.Status == ApplicationUpdateStatus.Available && update.Release is not null;
+        _updateItem.IsVisible = showUpdate;
+        _updateItem.Header = showUpdate
+            ? string.Format(UiText.Text(_settings.Language, "updateAvailableTray"), update.Release!.VersionText)
+            : string.Empty;
         _exitItem.Header = UiText.Text(_settings.Language, "exit");
         _restoreItem.IsEnabled = profile is not null;
         _restoreAllItem.IsEnabled = profile is not null;
         _toggleItem.IsEnabled = profile is not null;
         _trayIcon.ToolTipText = $"GhostSlacking - {UiText.State(_settings.Language, _coordinator.State)}";
+    }
+
+    private void OnUpdateStateChanged(object? sender, EventArgs args)
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            UpdateTrayStatus();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(UpdateTrayStatus);
+        }
     }
 
     private void ShowError(string message)
@@ -640,6 +695,7 @@ internal sealed class GhostApplicationController : IDisposable
 
         _disposed = true;
         _isExiting = true;
+        _updateCancellation.Cancel();
         CancelPicking();
         RestoreReport? restoreReport = null;
         if (_settings.RestoreOnExit || _forceRestoreOnExit)
@@ -661,6 +717,9 @@ internal sealed class GhostApplicationController : IDisposable
         }
 
         _notifications.Dispose();
+        _updates.Changed -= OnUpdateStateChanged;
+        _updates.Dispose();
+        _updateCancellation.Dispose();
         _trayIcon.Clicked -= OnTrayIconClicked;
         _trayIcon.IsVisible = false;
         _trayIcon.Dispose();

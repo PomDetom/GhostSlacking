@@ -26,6 +26,7 @@ public sealed class AvaloniaStartupTests
                 Assert.Same(AppIcon.TitleBarImage, settingsWindow.Icon);
                 AssertDefaultSettingsWindowLayout(settingsWindow);
                 AssertPeekFrameRateSetting(settingsWindow);
+                AssertAboutPage();
                 AssertThemePreviewLifecycle();
                 AssertSavedSettingsExport();
                 using var trayIcon = new TrayIcon
@@ -167,6 +168,89 @@ public sealed class AvaloniaStartupTests
             GetPrivateField<SettingsEditState>(settingsWindow, "_editState").SavedSettings.PeekFrameRateLimit);
     }
 
+    private static void AssertAboutPage()
+    {
+        var localDate = new DateTime(2026, 9, 10, 16, 30, 0, DateTimeKind.Unspecified);
+        var lastSuccessfulCheck = new DateTimeOffset(localDate, TimeZoneInfo.Local.GetUtcOffset(localDate));
+        var release = new UpdateRelease(
+            new Version(1, 2, 0),
+            "1.2.0",
+            new Uri("https://github.com/PomDetom/GhostSlacking/releases/tag/v1.2.0"),
+            Asset("GhostSlacking-1.2.0-win-x64.msi"),
+            Asset("GhostSlacking-1.2.0-win-x64.msi.sha256"),
+            Asset("release.json"),
+            new string('A', 64));
+        using var updates = new TestUpdateManager(new ApplicationUpdateSnapshot(
+            ApplicationUpdateStatus.Available,
+            "1.1.0",
+            release,
+            LastSuccessfulCheckUtc: lastSuccessfulCheck));
+        var window = new SettingsWindow(new AppSettings(), _ => true, updates: updates, initialPage: "about");
+        var navigation = GetPrivateField<NavigationView>(window, "_navigation");
+        var aboutItem = GetPrivateField<NavigationViewItem>(window, "_aboutItem");
+        var pageTitle = GetPrivateField<TextBlock>(window, "_pageTitle");
+        var currentVersion = GetPrivateField<TextBlock>(window, "_currentVersionText");
+        var latestVersion = GetPrivateField<TextBlock>(window, "_latestVersionText");
+        var lastUpdateCheck = GetPrivateField<TextBlock>(window, "_lastUpdateCheckText");
+        var updateStatus = GetPrivateField<TextBlock>(window, "_updateStatusText");
+        var install = GetPrivateField<Button>(window, "_installUpdateButton");
+        var skip = GetPrivateField<Button>(window, "_skipUpdateButton");
+        var resume = GetPrivateField<Button>(window, "_resumeUpdateButton");
+        var sourceRepository = GetPrivateField<Button>(window, "_sourceRepositoryButton");
+        var releasePage = GetPrivateField<Button>(window, "_releasePageButton");
+
+        Assert.Contains(aboutItem, navigation.FooterMenuItems.Cast<object>());
+        Assert.Equal("关于", aboutItem.Content);
+        Assert.Equal("关于", pageTitle.Text);
+        Assert.Equal("当前版本：1.1.0", currentVersion.Text);
+        Assert.Equal("最新版本：1.2.0", latestVersion.Text);
+        Assert.Equal("上次成功检查：2026-09-10 16:30", lastUpdateCheck.Text);
+        Assert.True(install.IsVisible);
+        Assert.True(skip.IsVisible);
+        Assert.Equal("GitHub 项目", sourceRepository.Content);
+        Assert.Equal("发布页", releasePage.Content);
+        var projectButtons = Assert.IsType<StackPanel>(sourceRepository.Parent);
+        Assert.Same(projectButtons, releasePage.Parent);
+        Assert.Same(sourceRepository, projectButtons.Children[0]);
+        Assert.Same(releasePage, projectButtons.Children[1]);
+        Assert.DoesNotContain("http", sourceRepository.Content?.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("http", releasePage.Content?.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SettingsStatus.None, GetPrivateField<SettingsEditState>(window, "_editState").Status);
+
+        updates.SkipCurrentRelease();
+
+        Assert.True(install.IsVisible);
+        Assert.False(skip.IsVisible);
+        Assert.True(resume.IsVisible);
+        Assert.Equal(SettingsStatus.None, GetPrivateField<SettingsEditState>(window, "_editState").Status);
+
+        updates.SetStatus(ApplicationUpdateStatus.Error);
+
+        Assert.Equal("上次成功检查：2026-09-10 16:30", lastUpdateCheck.Text);
+        Assert.Equal(UiText.Text(UiLanguage.Chinese, "updateFailed"), updateStatus.Text);
+        window.Close();
+
+        using var uncheckedUpdates = new TestUpdateManager(new ApplicationUpdateSnapshot(
+            ApplicationUpdateStatus.Idle,
+            "1.1.0"));
+        var uncheckedWindow = new SettingsWindow(
+            new AppSettings { Language = UiLanguage.English },
+            _ => true,
+            updates: uncheckedUpdates,
+            initialPage: "about");
+
+        Assert.Equal(
+            "No successful update check yet",
+            GetPrivateField<TextBlock>(uncheckedWindow, "_lastUpdateCheckText").Text);
+        uncheckedWindow.Close();
+    }
+
+    private static UpdateAsset Asset(string name) => new(
+        name,
+        1,
+        new Uri($"https://github.com/PomDetom/GhostSlacking/releases/download/v1.2.0/{name}"),
+        null);
+
     private static void AssertNotificationWindowComposition(AvaloniaNotificationService notifications)
     {
         var field = typeof(AvaloniaNotificationService).GetField("_window", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -191,5 +275,35 @@ public sealed class AvaloniaStartupTests
         var method = typeof(SettingsWindow).GetMethod("OnSaveClicked", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
         method.Invoke(settingsWindow, [null, new Avalonia.Interactivity.RoutedEventArgs()]);
+    }
+
+    private sealed class TestUpdateManager(ApplicationUpdateSnapshot snapshot) : IApplicationUpdateManager
+    {
+        public ApplicationUpdateSnapshot Snapshot { get; private set; } = snapshot;
+        public bool CanInstallUpdates => true;
+        public event EventHandler? Changed;
+        public Task<ApplicationUpdateSnapshot> CheckAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(Snapshot);
+        public Task<string?> DownloadInstallerAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(null);
+        public bool LaunchInstaller(string installerPath) => true;
+        public void SkipCurrentRelease()
+        {
+            Snapshot = Snapshot with { Status = ApplicationUpdateStatus.Skipped };
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+        public void ResumeCurrentRelease()
+        {
+            Snapshot = Snapshot with { Status = ApplicationUpdateStatus.Available };
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+        public void SetStatus(ApplicationUpdateStatus status)
+        {
+            Snapshot = Snapshot with { Status = status };
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+        public bool OpenSourceRepository() => true;
+        public bool OpenReleasePage() => true;
+        public void Dispose() { }
     }
 }

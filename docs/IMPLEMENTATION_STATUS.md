@@ -9,13 +9,13 @@
 | Phase 0 Technical Spike | 实现基线已完成，手工验收待补 | `SetWindowRgn`、坐标、拾取、交互和恢复路径已沉淀到当前实现；没有单独保留 Spike 工程。 |
 | Phase 1 Ghost Core | 已完成实现 | 单窗口闭环、托盘宿主、设置、快捷键和自动化测试已在当前解决方案中。 |
 | Phase 2 Reliability | Watchdog v1 已完成，其余进行中 | 异常恢复协议和独立进程已落地；注销/关机、权限诊断、DPI 热插拔和长时间观测仍待验证或补齐。 |
-| Phase 3 Productization | 主要代码已完成，发布验收待补 | Avalonia 设置、配置、反馈、单实例、开机启动、MSI 和 GitHub Actions 已存在；诊断导出、签名和干净系统验收仍未完成。 |
+| Phase 3 Productization | 主要代码已完成，发布验收待补 | Avalonia 设置、配置、反馈、单实例、开机启动、GitHub Releases 更新、MSI 和 GitHub Actions 已存在；签名和干净系统验收仍未完成。 |
 | Phase 4 Advanced Rendering | Composition 原型与自适应刷新率热路径优化已实现，兼容性验收待补 | 非抓屏 Composition 外扩羽化/模糊、位置无关遮罩缓存、最高 120 Hz 的显示器刷新率自适应和硬边回退已接入；真实设备/窗口性能仍需实测。 |
 
 ## 当前验证结果
 
 - `dotnet build GhostSlacking.sln --configuration Debug`：0 个警告，0 个错误。
-- `dotnet test GhostSlacking.sln --configuration Debug/Release`：192 个测试通过（Core 114，App 78），两个配置均为 0 个失败、0 个跳过。
+- `dotnet test GhostSlacking.sln --configuration Debug/Release`：202 个测试通过（Core 114，App 88），两个配置均为 0 个失败、0 个跳过。
 - 解决方案当前包含 4 个生产项目：`Core`、`Platform`、`App`、`Watchdog`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
 
 ## 已完成：Phase 1 Core Demo 与 App 宿主基线
@@ -63,6 +63,7 @@
 ## 已实现：Phase 3 Productization 基线
 
 - Avalonia + FluentAvalonia 设置页、中文/English 文案、跟随系统/浅色/深色主题、主题实时预览与取消回滚、设置保存反馈和单项恢复默认按钮。
+- 左侧“关于”页、GitHub 项目/Release 入口、每次启动稳定版检查、仅抑制通知的跳过版本、上次成功检查时间、受校验的 MSI 下载，以及通过既有安全关闭协议启动交互式升级。
 - JSON 配置归一化、损坏配置回退、每类 2 MB × 5 文件且清理 30 天前备份的滚动日志、日志诊断 ZIP、已保存配置 JSON 导出、单实例互斥、HKCU 开机启动开关和退出时恢复选项。
 - WiX MSI 安装器、开始菜单/桌面快捷方式选项、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、发布、构建和 MSI 校验，GitHub Actions 已配置测试与标签发布流程。
 
