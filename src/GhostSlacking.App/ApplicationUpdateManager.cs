@@ -41,14 +41,15 @@ internal sealed record ApplicationUpdateSnapshot(
     ApplicationUpdateStatus Status,
     string CurrentVersion,
     UpdateRelease? Release = null,
-    int? ProgressPercent = null);
+    int? ProgressPercent = null,
+    DateTimeOffset? LastSuccessfulCheckUtc = null);
 
 internal interface IApplicationUpdateManager : IDisposable
 {
     ApplicationUpdateSnapshot Snapshot { get; }
     bool CanInstallUpdates { get; }
     event EventHandler? Changed;
-    Task<ApplicationUpdateSnapshot> CheckAsync(bool manual, CancellationToken cancellationToken = default);
+    Task<ApplicationUpdateSnapshot> CheckAsync(CancellationToken cancellationToken = default);
     Task<string?> DownloadInstallerAsync(CancellationToken cancellationToken = default);
     bool LaunchInstaller(string installerPath);
     void SkipCurrentRelease();
@@ -173,7 +174,6 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
     internal static readonly Uri SourceRepositoryUri = new("https://github.com/PomDetom/GhostSlacking");
     internal static readonly Uri ReleasesUri = new("https://github.com/PomDetom/GhostSlacking/releases");
     internal static readonly Uri LatestReleaseApiUri = new("https://api.github.com/repos/PomDetom/GhostSlacking/releases/latest");
-    internal static readonly TimeSpan AutomaticCheckInterval = TimeSpan.FromHours(24);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ILogger _logger;
@@ -214,7 +214,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         _currentVersion = Version.TryParse(versionText, out var parsedVersion) ? parsedVersion : new Version(0, 0, 0);
         _state = _stateStore.Load();
         CanInstallUpdates = (installationDetector ?? InstalledLocationMatchesCurrentApplication)();
-        Snapshot = new ApplicationUpdateSnapshot(ApplicationUpdateStatus.Idle, _currentVersion.ToString(3));
+        Snapshot = CreateSnapshot(ApplicationUpdateStatus.Idle);
         CleanupOldDownloads();
     }
 
@@ -224,24 +224,13 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
 
     public event EventHandler? Changed;
 
-    public async Task<ApplicationUpdateSnapshot> CheckAsync(
-        bool manual,
-        CancellationToken cancellationToken = default)
+    public async Task<ApplicationUpdateSnapshot> CheckAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!manual && _state.LastSuccessfulCheckUtc is { } lastCheck &&
-                _utcNow() - lastCheck < AutomaticCheckInterval)
-            {
-                return Snapshot;
-            }
-
-            SetSnapshot(new ApplicationUpdateSnapshot(
-                ApplicationUpdateStatus.Checking,
-                _currentVersion.ToString(3),
-                Snapshot.Release));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Checking, Snapshot.Release));
 
             try
             {
@@ -251,19 +240,13 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
 
                 if (release.Version <= _currentVersion)
                 {
-                    SetSnapshot(new ApplicationUpdateSnapshot(
-                        ApplicationUpdateStatus.UpToDate,
-                        _currentVersion.ToString(3),
-                        release));
+                    SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.UpToDate, release));
                     return Snapshot;
                 }
 
                 if (string.Equals(_state.SkippedVersion, release.VersionText, StringComparison.Ordinal))
                 {
-                    SetSnapshot(new ApplicationUpdateSnapshot(
-                        ApplicationUpdateStatus.Skipped,
-                        _currentVersion.ToString(3),
-                        release));
+                    SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Skipped, release));
                     return Snapshot;
                 }
 
@@ -273,27 +256,18 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
                     _stateStore.Save(_state);
                 }
 
-                SetSnapshot(new ApplicationUpdateSnapshot(
-                    ApplicationUpdateStatus.Available,
-                    _currentVersion.ToString(3),
-                    release));
+                SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Available, release));
                 return Snapshot;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                SetSnapshot(new ApplicationUpdateSnapshot(
-                    ApplicationUpdateStatus.Idle,
-                    _currentVersion.ToString(3),
-                    Snapshot.Release));
+                SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Idle, Snapshot.Release));
                 throw;
             }
             catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException or InvalidDataException or TaskCanceledException)
             {
                 _logger.Log(LogLevel.Warning, "GitHub update check failed.", exception);
-                SetSnapshot(new ApplicationUpdateSnapshot(
-                    ApplicationUpdateStatus.Error,
-                    _currentVersion.ToString(3),
-                    Snapshot.Release));
+                SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, Snapshot.Release));
                 return Snapshot;
             }
         }
@@ -322,11 +296,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             partialPath = $"{installerPath}.partial";
             File.Delete(partialPath);
 
-            SetSnapshot(new ApplicationUpdateSnapshot(
-                ApplicationUpdateStatus.Downloading,
-                _currentVersion.ToString(3),
-                release,
-                0));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Downloading, release, 0));
 
             using var response = await _httpClient.GetAsync(
                 release.Installer.DownloadUrl,
@@ -346,10 +316,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
                     .ConfigureAwait(false);
             }
 
-            SetSnapshot(new ApplicationUpdateSnapshot(
-                ApplicationUpdateStatus.Verifying,
-                _currentVersion.ToString(3),
-                release));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Verifying, release));
 
             var fileInfo = new FileInfo(partialPath);
             if (fileInfo.Length != release.Installer.Size)
@@ -380,11 +347,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
 
             File.Move(partialPath, installerPath, overwrite: true);
             partialPath = null;
-            SetSnapshot(new ApplicationUpdateSnapshot(
-                ApplicationUpdateStatus.Ready,
-                _currentVersion.ToString(3),
-                release,
-                100));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Ready, release, 100));
             return installerPath;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -394,10 +357,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
                 TryDelete(partialPath);
             }
 
-            SetSnapshot(new ApplicationUpdateSnapshot(
-                ApplicationUpdateStatus.Available,
-                _currentVersion.ToString(3),
-                Snapshot.Release));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Available, Snapshot.Release));
             return null;
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException or TaskCanceledException)
@@ -408,10 +368,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             }
 
             _logger.Log(LogLevel.Warning, "Update installer download or validation failed.", exception);
-            SetSnapshot(new ApplicationUpdateSnapshot(
-                ApplicationUpdateStatus.Error,
-                _currentVersion.ToString(3),
-                Snapshot.Release));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, Snapshot.Release));
             return null;
         }
         finally
@@ -434,19 +391,13 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
                 return true;
             }
 
-            SetSnapshot(new ApplicationUpdateSnapshot(
-                ApplicationUpdateStatus.Error,
-                _currentVersion.ToString(3),
-                Snapshot.Release));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, Snapshot.Release));
             return false;
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             _logger.Log(LogLevel.Warning, "The update installer could not be started.", exception);
-            SetSnapshot(new ApplicationUpdateSnapshot(
-                ApplicationUpdateStatus.Error,
-                _currentVersion.ToString(3),
-                Snapshot.Release));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, Snapshot.Release));
             return false;
         }
     }
@@ -461,10 +412,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
 
         _state = _state with { SkippedVersion = release.VersionText };
         _stateStore.Save(_state);
-        SetSnapshot(new ApplicationUpdateSnapshot(
-            ApplicationUpdateStatus.Skipped,
-            _currentVersion.ToString(3),
-            release));
+        SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Skipped, release));
     }
 
     public void ResumeCurrentRelease()
@@ -472,11 +420,10 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         var release = Snapshot.Release;
         _state = _state with { SkippedVersion = null };
         _stateStore.Save(_state);
-        SetSnapshot(new ApplicationUpdateSnapshot(
+        SetSnapshot(CreateSnapshot(
             release is not null && release.Version > _currentVersion
                 ? ApplicationUpdateStatus.Available
                 : ApplicationUpdateStatus.Idle,
-            _currentVersion.ToString(3),
             release));
     }
 
@@ -623,11 +570,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             if (percent != lastPercent)
             {
                 lastPercent = percent;
-                SetSnapshot(new ApplicationUpdateSnapshot(
-                    ApplicationUpdateStatus.Downloading,
-                    _currentVersion.ToString(3),
-                    Snapshot.Release,
-                    percent));
+                SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Downloading, Snapshot.Release, percent));
             }
         }
     }
@@ -685,6 +628,12 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         Snapshot = snapshot;
         Changed?.Invoke(this, EventArgs.Empty);
     }
+
+    private ApplicationUpdateSnapshot CreateSnapshot(
+        ApplicationUpdateStatus status,
+        UpdateRelease? release = null,
+        int? progressPercent = null) =>
+        new(status, _currentVersion.ToString(3), release, progressPercent, _state.LastSuccessfulCheckUtc);
 
     private static bool InstalledLocationMatchesCurrentApplication()
     {

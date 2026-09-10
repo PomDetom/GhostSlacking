@@ -151,7 +151,7 @@ internal sealed class GhostApplicationController : IDisposable
     {
         try
         {
-            var snapshot = await _updates.CheckAsync(manual: false, _updateCancellation.Token);
+            var snapshot = await _updates.CheckAsync(_updateCancellation.Token);
             if (snapshot.Status == ApplicationUpdateStatus.Available && snapshot.Release is not null && !_isExiting)
             {
                 await Dispatcher.UIThread.InvokeAsync(() => ShowInfo(string.Format(

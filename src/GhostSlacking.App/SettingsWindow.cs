@@ -10,6 +10,7 @@ using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using FluentAvalonia.UI.Windowing;
 using GhostSlacking.Core;
+using System.Globalization;
 using Button = Avalonia.Controls.Button;
 using ComboBox = Avalonia.Controls.ComboBox;
 using Control = Avalonia.Controls.Control;
@@ -70,6 +71,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly Button _exportSettingsButton;
     private readonly TextBlock _currentVersionText;
     private readonly TextBlock _latestVersionText;
+    private readonly TextBlock _lastUpdateCheckText;
     private readonly TextBlock _updateStatusText;
     private readonly ProgressBar _updateProgress;
     private readonly Button _checkUpdatesButton;
@@ -142,6 +144,7 @@ internal sealed class SettingsWindow : AppWindow
         _exportSettingsButton.Click += OnExportSettingsClicked;
         _currentVersionText = new TextBlock();
         _latestVersionText = new TextBlock();
+        _lastUpdateCheckText = new TextBlock();
         _updateStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap };
         _updateProgress = new ProgressBar { Minimum = 0, Maximum = 100, IsVisible = false };
         _checkUpdatesButton = new Button { MinWidth = 120 };
@@ -376,6 +379,7 @@ internal sealed class SettingsWindow : AppWindow
         _currentVersionText.Foreground = _primaryBrush;
         _currentVersionText.FontWeight = FontWeight.SemiBold;
         _latestVersionText.Foreground = _secondaryBrush;
+        _lastUpdateCheckText.Foreground = _secondaryBrush;
         _updateStatusText.Foreground = _secondaryBrush;
 
         var identity = new StackPanel
@@ -422,7 +426,15 @@ internal sealed class SettingsWindow : AppWindow
         var updatePanel = new StackPanel
         {
             Spacing = 10,
-            Children = { _currentVersionText, _latestVersionText, _updateStatusText, _updateProgress, updateButtons }
+            Children =
+            {
+                _currentVersionText,
+                _latestVersionText,
+                _lastUpdateCheckText,
+                _updateStatusText,
+                _updateProgress,
+                updateButtons
+            }
         };
 
         return CreatePage(
@@ -911,7 +923,7 @@ internal sealed class SettingsWindow : AppWindow
             return;
         }
 
-        await _updates.CheckAsync(manual: true);
+        await _updates.CheckAsync();
     }
 
     private async void OnInstallUpdateClicked(object? sender, RoutedEventArgs args)
@@ -1007,6 +1019,11 @@ internal sealed class SettingsWindow : AppWindow
             ? string.Empty
             : string.Format(UiText.Text(language, "latestVersion"), releaseVersion);
         _latestVersionText.IsVisible = releaseVersion is not null;
+        _lastUpdateCheckText.Text = snapshot.LastSuccessfulCheckUtc is { } lastSuccessfulCheck
+            ? string.Format(
+                UiText.Text(language, "lastSuccessfulUpdateCheck"),
+                lastSuccessfulCheck.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
+            : UiText.Text(language, "noSuccessfulUpdateCheck");
         _updateStatusText.Text = snapshot.Status switch
         {
             ApplicationUpdateStatus.Checking => UiText.Text(language, "checkingUpdates"),

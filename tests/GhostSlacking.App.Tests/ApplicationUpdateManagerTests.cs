@@ -12,16 +12,18 @@ public sealed class ApplicationUpdateManagerTests
     public async Task New_stable_release_is_reported_and_successful_check_is_persisted()
     {
         using var files = new TemporaryUpdateFiles();
+        var now = new DateTimeOffset(2026, 9, 10, 8, 0, 0, TimeSpan.Zero);
         var release = TestRelease.Create("1.2.0");
         using var client = new HttpClient(new ReleaseHandler(release));
-        using var manager = CreateManager(files, client, currentVersion: "1.1.0");
+        using var manager = CreateManager(files, client, "1.1.0", () => now);
 
-        var snapshot = await manager.CheckAsync(manual: true);
+        var snapshot = await manager.CheckAsync();
 
         Assert.Equal(ApplicationUpdateStatus.Available, snapshot.Status);
         Assert.Equal("1.2.0", snapshot.Release?.VersionText);
+        Assert.Equal(now, snapshot.LastSuccessfulCheckUtc);
         var state = new UpdateStateStore(files.StatePath).Load();
-        Assert.NotNull(state.LastSuccessfulCheckUtc);
+        Assert.Equal(now, state.LastSuccessfulCheckUtc);
     }
 
     [Fact]
@@ -31,7 +33,7 @@ public sealed class ApplicationUpdateManagerTests
         using var client = new HttpClient(new ReleaseHandler(TestRelease.Create("1.9.9")));
         using var manager = CreateManager(files, client, currentVersion: "2.0.0");
 
-        var snapshot = await manager.CheckAsync(manual: true);
+        var snapshot = await manager.CheckAsync();
 
         Assert.Equal(ApplicationUpdateStatus.UpToDate, snapshot.Status);
     }
@@ -43,25 +45,42 @@ public sealed class ApplicationUpdateManagerTests
         using var client = new HttpClient(new ReleaseHandler(TestRelease.Create("1.2")));
         using var manager = CreateManager(files, client, currentVersion: "1.1.0");
 
-        var snapshot = await manager.CheckAsync(manual: true);
+        var snapshot = await manager.CheckAsync();
 
         Assert.Equal(ApplicationUpdateStatus.Error, snapshot.Status);
     }
 
     [Fact]
-    public async Task Automatic_check_is_suppressed_for_twenty_four_hours_after_success()
+    public async Task Startup_check_queries_github_even_after_a_recent_successful_check()
     {
         using var files = new TemporaryUpdateFiles();
         var now = new DateTimeOffset(2026, 9, 10, 8, 0, 0, TimeSpan.Zero);
-        Assert.True(new UpdateStateStore(files.StatePath).Save(new UpdateState(now.AddHours(-23), null)));
+        var previousCheck = now.AddMinutes(-5);
+        Assert.True(new UpdateStateStore(files.StatePath).Save(new UpdateState(previousCheck, null)));
         var handler = new ReleaseHandler(TestRelease.Create("1.2.0"));
         using var client = new HttpClient(handler);
         using var manager = CreateManager(files, client, "1.1.0", () => now);
 
-        var snapshot = await manager.CheckAsync(manual: false);
+        Assert.Equal(previousCheck, manager.Snapshot.LastSuccessfulCheckUtc);
+        var snapshot = await manager.CheckAsync();
 
-        Assert.Equal(ApplicationUpdateStatus.Idle, snapshot.Status);
-        Assert.Equal(0, handler.RequestCount);
+        Assert.Equal(ApplicationUpdateStatus.Available, snapshot.Status);
+        Assert.Equal(now, snapshot.LastSuccessfulCheckUtc);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task Repeated_checks_each_query_github()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var handler = new ReleaseHandler(TestRelease.Create("1.2.0"));
+        using var client = new HttpClient(handler);
+        using var manager = CreateManager(files, client, currentVersion: "1.1.0");
+
+        await manager.CheckAsync();
+        await manager.CheckAsync();
+
+        Assert.Equal(4, handler.RequestCount);
     }
 
     [Fact]
@@ -71,14 +90,20 @@ public sealed class ApplicationUpdateManagerTests
         var handler = new ReleaseHandler(TestRelease.Create("1.2.0"));
         using var client = new HttpClient(handler);
         using var manager = CreateManager(files, client, currentVersion: "1.1.0");
-        await manager.CheckAsync(manual: true);
+        await manager.CheckAsync();
         manager.SkipCurrentRelease();
 
         Assert.Equal(ApplicationUpdateStatus.Skipped, manager.Snapshot.Status);
         Assert.Equal("1.2.0", new UpdateStateStore(files.StatePath).Load().SkippedVersion);
 
+        using var restartedManager = CreateManager(files, client, currentVersion: "1.1.0");
+        var skipped = await restartedManager.CheckAsync();
+
+        Assert.Equal(ApplicationUpdateStatus.Skipped, skipped.Status);
+        Assert.Equal("1.2.0", skipped.Release?.VersionText);
+
         handler.Release = TestRelease.Create("1.3.0");
-        var newer = await manager.CheckAsync(manual: true);
+        var newer = await restartedManager.CheckAsync();
 
         Assert.Equal(ApplicationUpdateStatus.Available, newer.Status);
         Assert.Equal("1.3.0", newer.Release?.VersionText);
@@ -94,7 +119,7 @@ public sealed class ApplicationUpdateManagerTests
         var launcher = new RecordingInstallerLauncher();
         var logger = new RecordingLogger();
         using var manager = CreateManager(files, client, "1.1.0", installerLauncher: launcher, logger: logger);
-        await manager.CheckAsync(manual: true);
+        await manager.CheckAsync();
 
         var installerPath = await manager.DownloadInstallerAsync();
 
@@ -113,7 +138,7 @@ public sealed class ApplicationUpdateManagerTests
         using var client = new HttpClient(new ReleaseHandler(release));
         var launcher = new RecordingInstallerLauncher();
         using var manager = CreateManager(files, client, "1.1.0", installerLauncher: launcher);
-        await manager.CheckAsync(manual: true);
+        await manager.CheckAsync();
 
         var installerPath = await manager.DownloadInstallerAsync();
 
@@ -130,7 +155,7 @@ public sealed class ApplicationUpdateManagerTests
         var handler = new ReleaseHandler(TestRelease.Create("1.2.0")) { PauseInstallerDownload = true };
         using var client = new HttpClient(handler);
         using var manager = CreateManager(files, client, currentVersion: "1.1.0");
-        await manager.CheckAsync(manual: true);
+        await manager.CheckAsync();
         using var cancellation = new CancellationTokenSource();
 
         var download = manager.DownloadInstallerAsync(cancellation.Token);
@@ -156,7 +181,7 @@ public sealed class ApplicationUpdateManagerTests
             "1.1.0",
             installerLauncher: launcher,
             installationDetector: () => false);
-        await manager.CheckAsync(manual: true);
+        await manager.CheckAsync();
 
         Assert.False(manager.CanInstallUpdates);
         Assert.Null(await manager.DownloadInstallerAsync());
@@ -168,14 +193,17 @@ public sealed class ApplicationUpdateManagerTests
     public async Task Malformed_or_incomplete_release_is_rejected_without_advancing_check_time()
     {
         using var files = new TemporaryUpdateFiles();
+        var previousCheck = new DateTimeOffset(2026, 9, 9, 8, 0, 0, TimeSpan.Zero);
+        Assert.True(new UpdateStateStore(files.StatePath).Save(new UpdateState(previousCheck, null)));
         var release = TestRelease.Create("1.2.0") with { OmitChecksumAsset = true };
         using var client = new HttpClient(new ReleaseHandler(release));
         using var manager = CreateManager(files, client, currentVersion: "1.1.0");
 
-        var snapshot = await manager.CheckAsync(manual: true);
+        var snapshot = await manager.CheckAsync();
 
         Assert.Equal(ApplicationUpdateStatus.Error, snapshot.Status);
-        Assert.Null(new UpdateStateStore(files.StatePath).Load().LastSuccessfulCheckUtc);
+        Assert.Equal(previousCheck, snapshot.LastSuccessfulCheckUtc);
+        Assert.Equal(previousCheck, new UpdateStateStore(files.StatePath).Load().LastSuccessfulCheckUtc);
     }
 
     private static GitHubApplicationUpdateManager CreateManager(

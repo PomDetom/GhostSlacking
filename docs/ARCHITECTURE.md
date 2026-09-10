@@ -267,11 +267,11 @@ Settings
 Exit
 ```
 
-设置窗口使用 Avalonia + FluentAvalonia 控件，暴露 Peek Key、最大 Peek 帧率、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。“关于”页展示版本、项目链接与更新状态。托盘、设置、提示浮层和主业务协调器运行在同一个 Avalonia STA UI 线程；主业务状态不存放在窗口控件中。
+设置窗口使用 Avalonia + FluentAvalonia 控件，暴露 Peek Key、最大 Peek 帧率、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。“关于”页展示版本、上次成功检查时间、项目入口与更新状态。托盘、设置、提示浮层和主业务协调器运行在同一个 Avalonia STA UI 线程；主业务状态不存放在窗口控件中。
 
 ### 7.8 GitHub Releases 更新
 
-更新管理器在启动后异步检查最新稳定版，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`。自动检查间隔为 24 小时，手动检查不受间隔限制。下载前要求 Release 的标签、`release.json`、MSI 文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许启动 MSI。
+更新管理器在每次启动后异步检查最新稳定版，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`；手动检查仍可随时发起。跳过版本只抑制完全相同版本的启动通知和托盘入口，“关于”页仍显示该版本并允许安装。下载前要求 Release 的标签、`release.json`、MSI 文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许启动 MSI。
 
 应用内安装仅对注册安装路径与当前程序目录一致的 per-machine MSI 安装生效。升级仍由安装器既有的安全关闭协议负责，不静默提权、不强制终止进程；源码或便携副本只打开 Releases 页面。
 

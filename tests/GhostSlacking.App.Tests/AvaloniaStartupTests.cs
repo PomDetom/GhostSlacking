@@ -170,6 +170,8 @@ public sealed class AvaloniaStartupTests
 
     private static void AssertAboutPage()
     {
+        var localDate = new DateTime(2026, 9, 10, 16, 30, 0, DateTimeKind.Unspecified);
+        var lastSuccessfulCheck = new DateTimeOffset(localDate, TimeZoneInfo.Local.GetUtcOffset(localDate));
         var release = new UpdateRelease(
             new Version(1, 2, 0),
             "1.2.0",
@@ -181,15 +183,19 @@ public sealed class AvaloniaStartupTests
         using var updates = new TestUpdateManager(new ApplicationUpdateSnapshot(
             ApplicationUpdateStatus.Available,
             "1.1.0",
-            release));
+            release,
+            LastSuccessfulCheckUtc: lastSuccessfulCheck));
         var window = new SettingsWindow(new AppSettings(), _ => true, updates: updates, initialPage: "about");
         var navigation = GetPrivateField<NavigationView>(window, "_navigation");
         var aboutItem = GetPrivateField<NavigationViewItem>(window, "_aboutItem");
         var pageTitle = GetPrivateField<TextBlock>(window, "_pageTitle");
         var currentVersion = GetPrivateField<TextBlock>(window, "_currentVersionText");
         var latestVersion = GetPrivateField<TextBlock>(window, "_latestVersionText");
+        var lastUpdateCheck = GetPrivateField<TextBlock>(window, "_lastUpdateCheckText");
+        var updateStatus = GetPrivateField<TextBlock>(window, "_updateStatusText");
         var install = GetPrivateField<Button>(window, "_installUpdateButton");
         var skip = GetPrivateField<Button>(window, "_skipUpdateButton");
+        var resume = GetPrivateField<Button>(window, "_resumeUpdateButton");
         var sourceRepository = GetPrivateField<Button>(window, "_sourceRepositoryButton");
         var releasePage = GetPrivateField<Button>(window, "_releasePageButton");
 
@@ -198,6 +204,7 @@ public sealed class AvaloniaStartupTests
         Assert.Equal("关于", pageTitle.Text);
         Assert.Equal("当前版本：1.1.0", currentVersion.Text);
         Assert.Equal("最新版本：1.2.0", latestVersion.Text);
+        Assert.Equal("上次成功检查：2026-09-10 16:30", lastUpdateCheck.Text);
         Assert.True(install.IsVisible);
         Assert.True(skip.IsVisible);
         Assert.Equal("GitHub 项目", sourceRepository.Content);
@@ -205,7 +212,33 @@ public sealed class AvaloniaStartupTests
         Assert.DoesNotContain("http", sourceRepository.Content?.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("http", releasePage.Content?.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(SettingsStatus.None, GetPrivateField<SettingsEditState>(window, "_editState").Status);
+
+        updates.SkipCurrentRelease();
+
+        Assert.True(install.IsVisible);
+        Assert.False(skip.IsVisible);
+        Assert.True(resume.IsVisible);
+        Assert.Equal(SettingsStatus.None, GetPrivateField<SettingsEditState>(window, "_editState").Status);
+
+        updates.SetStatus(ApplicationUpdateStatus.Error);
+
+        Assert.Equal("上次成功检查：2026-09-10 16:30", lastUpdateCheck.Text);
+        Assert.Equal(UiText.Text(UiLanguage.Chinese, "updateFailed"), updateStatus.Text);
         window.Close();
+
+        using var uncheckedUpdates = new TestUpdateManager(new ApplicationUpdateSnapshot(
+            ApplicationUpdateStatus.Idle,
+            "1.1.0"));
+        var uncheckedWindow = new SettingsWindow(
+            new AppSettings { Language = UiLanguage.English },
+            _ => true,
+            updates: uncheckedUpdates,
+            initialPage: "about");
+
+        Assert.Equal(
+            "No successful update check yet",
+            GetPrivateField<TextBlock>(uncheckedWindow, "_lastUpdateCheckText").Text);
+        uncheckedWindow.Close();
     }
 
     private static UpdateAsset Asset(string name) => new(
@@ -245,7 +278,7 @@ public sealed class AvaloniaStartupTests
         public ApplicationUpdateSnapshot Snapshot { get; private set; } = snapshot;
         public bool CanInstallUpdates => true;
         public event EventHandler? Changed;
-        public Task<ApplicationUpdateSnapshot> CheckAsync(bool manual, CancellationToken cancellationToken = default) =>
+        public Task<ApplicationUpdateSnapshot> CheckAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Snapshot);
         public Task<string?> DownloadInstallerAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<string?>(null);
@@ -258,6 +291,11 @@ public sealed class AvaloniaStartupTests
         public void ResumeCurrentRelease()
         {
             Snapshot = Snapshot with { Status = ApplicationUpdateStatus.Available };
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+        public void SetStatus(ApplicationUpdateStatus status)
+        {
+            Snapshot = Snapshot with { Status = status };
             Changed?.Invoke(this, EventArgs.Empty);
         }
         public bool OpenSourceRepository() => true;
