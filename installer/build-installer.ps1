@@ -7,12 +7,23 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $appProject = Join-Path $repositoryRoot 'src\GhostSlacking.App\GhostSlacking.App.csproj'
+$updaterProject = Join-Path $repositoryRoot 'src\GhostSlacking.Updater\GhostSlacking.Updater.csproj'
 $installerProject = Join-Path $PSScriptRoot 'GhostSlacking.Installer.wixproj'
 $publishRoot = Join-Path $repositoryRoot 'artifacts\installer-publish'
 $publishDirectory = Join-Path $publishRoot 'win-x64'
 $publishWork = Join-Path $repositoryRoot 'artifacts\installer-publish-work'
 $installerPath = Join-Path $repositoryRoot "artifacts\installer\GhostSlacking-$Version-win-x64.msi"
 $fileVersion = "$Version.0"
+
+# The updater is published by a custom MSBuild target from the app project,
+# but it is intentionally not a project reference. Restore it explicitly so
+# newer SDK artifact layouts have its project.assets.json before that target runs.
+dotnet restore $updaterProject `
+    --runtime win-x64 `
+    --artifacts-path $publishWork
+if ($LASTEXITCODE -ne 0) {
+    throw "GhostSlacking updater restore failed with exit code $LASTEXITCODE."
+}
 
 if (Test-Path -LiteralPath $publishDirectory) {
     $resolvedPublishRoot = [System.IO.Path]::GetFullPath($publishRoot) + [System.IO.Path]::DirectorySeparatorChar
