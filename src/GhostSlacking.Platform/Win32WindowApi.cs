@@ -108,6 +108,26 @@ public sealed class Win32WindowApi : IWindowApi
 
     public bool IsKeyDown(int virtualKey) => (Win32NativeMethods.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 
+    public NativeResult BringToForeground(nint hwnd)
+    {
+        if (!IsWindow(hwnd))
+        {
+            return NativeResult.Failed("SetForegroundWindow", 0, "The window is unavailable.");
+        }
+
+        if (Win32NativeMethods.IsIconic(hwnd))
+        {
+            Win32NativeMethods.ShowWindow(hwnd, Win32NativeMethods.SW_RESTORE);
+        }
+
+        return Win32NativeMethods.SetForegroundWindow(hwnd)
+            ? NativeResult.Ok("SetForegroundWindow")
+            : NativeResult.Failed(
+                "SetForegroundWindow",
+                Win32NativeMethods.LastError,
+                "Windows did not allow the window to move to the foreground.");
+    }
+
     private static byte[]? CaptureRegion(nint hwnd, out string? error)
     {
         error = null;

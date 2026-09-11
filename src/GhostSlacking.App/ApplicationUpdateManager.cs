@@ -28,6 +28,19 @@ internal enum ApplicationUpdateStatus
 
 internal sealed record UpdateAsset(string Name, long Size, Uri DownloadUrl, string? Digest);
 
+internal sealed record LocalizedReleaseNotes(string? Chinese, string? English)
+{
+    public string? For(UiLanguage language) => language == UiLanguage.Chinese
+        ? Chinese ?? English
+        : English ?? Chinese;
+}
+
+internal sealed record ReleaseNotesEntry(
+    Version Version,
+    string VersionText,
+    Uri ReleasePageUrl,
+    LocalizedReleaseNotes Notes);
+
 internal sealed record UpdateRelease(
     Version Version,
     string VersionText,
@@ -35,7 +48,9 @@ internal sealed record UpdateRelease(
     UpdateAsset Installer,
     UpdateAsset Checksum,
     UpdateAsset Manifest,
-    string ExpectedSha256);
+    string ExpectedSha256,
+    IReadOnlyList<ReleaseNotesEntry> ReleaseNotes,
+    bool ReleaseHistoryIncomplete = false);
 
 internal sealed record ApplicationUpdateSnapshot(
     ApplicationUpdateStatus Status,
@@ -49,9 +64,10 @@ internal interface IApplicationUpdateManager : IDisposable
     ApplicationUpdateSnapshot Snapshot { get; }
     bool CanInstallUpdates { get; }
     event EventHandler? Changed;
+    event EventHandler? InstallHandoffStarted;
     Task<ApplicationUpdateSnapshot> CheckAsync(CancellationToken cancellationToken = default);
     Task<string?> DownloadInstallerAsync(CancellationToken cancellationToken = default);
-    bool LaunchInstaller(string installerPath);
+    bool BeginAutomaticInstall(string installerPath);
     void SkipCurrentRelease();
     void ResumeCurrentRelease();
     bool OpenSourceRepository();
@@ -131,18 +147,23 @@ internal sealed class UpdateStateStore
 
 internal interface IUpdateInstallerLauncher
 {
-    bool Launch(string installerPath);
+    bool Launch(UpdateInstallRequest request);
 }
+
+internal sealed record UpdateInstallRequest(
+    string InstallerPath,
+    string Version,
+    string ApplicationPath,
+    int ParentProcessId,
+    long ParentStartTimeUtcTicks);
 
 internal interface IExternalLinkLauncher
 {
     bool Open(Uri uri);
 }
 
-internal sealed class ShellLauncher : IUpdateInstallerLauncher, IExternalLinkLauncher
+internal sealed class ShellLauncher : IExternalLinkLauncher
 {
-    public bool Launch(string installerPath) => Start(installerPath);
-
     public bool Open(Uri uri) => Start(uri.AbsoluteUri);
 
     private static bool Start(string target) => Process.Start(new ProcessStartInfo
@@ -150,6 +171,115 @@ internal sealed class ShellLauncher : IUpdateInstallerLauncher, IExternalLinkLau
         FileName = target,
         UseShellExecute = true
     }) is not null;
+}
+
+internal sealed class AutomatedUpdateLauncher(
+    ILogger logger,
+    string? updaterSourceDirectory = null) : IUpdateInstallerLauncher
+{
+    private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(5);
+    private readonly string _updaterSourceDirectory = updaterSourceDirectory ??
+        Path.Combine(AppContext.BaseDirectory, "Updater");
+
+    public bool Launch(UpdateInstallRequest request)
+    {
+        var stagingDirectory = Path.Combine(
+            Path.GetDirectoryName(request.InstallerPath) ?? throw new InvalidOperationException("The installer directory is unavailable."),
+            $"updater-{Guid.NewGuid():N}");
+        try
+        {
+            if (!Directory.Exists(_updaterSourceDirectory))
+            {
+                throw new DirectoryNotFoundException("The automatic updater files are missing.");
+            }
+
+            Directory.CreateDirectory(stagingDirectory);
+            foreach (var sourcePath in Directory.EnumerateFiles(_updaterSourceDirectory, "*", SearchOption.TopDirectoryOnly))
+            {
+                File.Copy(sourcePath, Path.Combine(stagingDirectory, Path.GetFileName(sourcePath)), overwrite: true);
+            }
+
+            var executablePath = Path.Combine(stagingDirectory, "GhostSlacking.Updater.exe");
+            if (!File.Exists(executablePath))
+            {
+                throw new FileNotFoundException("The automatic updater executable is missing.", executablePath);
+            }
+
+            var readyEventName = $@"Local\GhostSlacking.Updater.Ready.{Guid.NewGuid():N}";
+            using var readyEvent = new EventWaitHandle(
+                initialState: false,
+                EventResetMode.AutoReset,
+                readyEventName);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = executablePath,
+                WorkingDirectory = stagingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            AddArgument("--parent-pid", request.ParentProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            AddArgument("--parent-start-ticks", request.ParentStartTimeUtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            AddArgument("--installer", request.InstallerPath);
+            AddArgument("--version", request.Version);
+            AddArgument("--application", request.ApplicationPath);
+            AddArgument("--ready-event", readyEventName);
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                throw new InvalidOperationException("The automatic updater process did not start.");
+            }
+
+            if (readyEvent.WaitOne(ReadyTimeout))
+            {
+                return true;
+            }
+
+            logger.Log(LogLevel.Warning, "The automatic updater did not acknowledge the handoff.");
+            TryStop(process);
+            return false;
+
+            void AddArgument(string name, string value)
+            {
+                startInfo.ArgumentList.Add(name);
+                startInfo.ArgumentList.Add(value);
+            }
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            logger.Log(LogLevel.Warning, "The automatic updater could not be staged or started.", exception);
+            TryDeleteDirectory(stagingDirectory);
+            return false;
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryStop(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+        }
+    }
 }
 
 internal static partial class ApplicationVersionInfo
@@ -174,6 +304,13 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
     internal static readonly Uri SourceRepositoryUri = new("https://github.com/PomDetom/GhostSlacking");
     internal static readonly Uri ReleasesUri = new("https://github.com/PomDetom/GhostSlacking/releases");
     internal static readonly Uri LatestReleaseApiUri = new("https://api.github.com/repos/PomDetom/GhostSlacking/releases/latest");
+    internal static readonly Uri ReleasesApiUri = new("https://api.github.com/repos/PomDetom/GhostSlacking/releases");
+    private const int ReleasesPerPage = 100;
+    private const int MaximumReleaseHistoryPages = 20;
+    private const string ChineseNotesStart = "<!-- release-notes:zh:start -->";
+    private const string ChineseNotesEnd = "<!-- release-notes:zh:end -->";
+    private const string EnglishNotesStart = "<!-- release-notes:en:start -->";
+    private const string EnglishNotesEnd = "<!-- release-notes:en:end -->";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ILogger _logger;
@@ -206,10 +343,10 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GhostSlacking", currentVersion ?? ApplicationVersionInfo.Current()));
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         _stateStore = stateStore ?? new UpdateStateStore(logger: logger);
-        _installerLauncher = installerLauncher ?? new ShellLauncher();
         _linkLauncher = linkLauncher ?? new ShellLauncher();
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _updatesDirectory = updatesDirectory ?? Path.Combine(GhostSlackingDataPaths.RootDirectory, "updates");
+        _installerLauncher = installerLauncher ?? new AutomatedUpdateLauncher(logger);
         var versionText = currentVersion ?? ApplicationVersionInfo.Current();
         _currentVersion = Version.TryParse(versionText, out var parsedVersion) ? parsedVersion : new Version(0, 0, 0);
         _state = _stateStore.Load();
@@ -223,6 +360,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
     public bool CanInstallUpdates { get; }
 
     public event EventHandler? Changed;
+    public event EventHandler? InstallHandoffStarted;
 
     public async Task<ApplicationUpdateSnapshot> CheckAsync(CancellationToken cancellationToken = default)
     {
@@ -377,26 +515,48 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         }
     }
 
-    public bool LaunchInstaller(string installerPath)
+    public bool BeginAutomaticInstall(string installerPath)
     {
         try
         {
-            if (!CanInstallUpdates || !File.Exists(installerPath))
+            var release = Snapshot.Release;
+            if (!CanInstallUpdates || release is null || !File.Exists(installerPath))
             {
                 return false;
             }
 
-            if (_installerLauncher.Launch(installerPath))
+            var expectedInstallerPath = Path.GetFullPath(Path.Combine(
+                _updatesDirectory,
+                release.VersionText,
+                release.Installer.Name));
+            var fullInstallerPath = Path.GetFullPath(installerPath);
+            var applicationPath = Environment.ProcessPath;
+            if (!string.Equals(fullInstallerPath, expectedInstallerPath, StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(applicationPath))
             {
+                SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, release));
+                return false;
+            }
+
+            using var process = Process.GetCurrentProcess();
+            var request = new UpdateInstallRequest(
+                fullInstallerPath,
+                release.VersionText,
+                Path.GetFullPath(applicationPath),
+                Environment.ProcessId,
+                process.StartTime.ToUniversalTime().Ticks);
+            if (_installerLauncher.Launch(request))
+            {
+                InstallHandoffStarted?.Invoke(this, EventArgs.Empty);
                 return true;
             }
 
-            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, Snapshot.Release));
+            SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, release));
             return false;
         }
-        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            _logger.Log(LogLevel.Warning, "The update installer could not be started.", exception);
+            _logger.Log(LogLevel.Warning, "The automatic update handoff could not be started.", exception);
             SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, Snapshot.Release));
             return false;
         }
@@ -460,7 +620,8 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         }
 
         if (!Version.TryParse(apiRelease.TagName[1..], out var releaseVersion) ||
-            !Uri.TryCreate(apiRelease.HtmlUrl, UriKind.Absolute, out var releasePageUrl))
+            !Uri.TryCreate(apiRelease.HtmlUrl, UriKind.Absolute, out var releasePageUrl) ||
+            !IsReleasePageUrl(releasePageUrl, apiRelease.TagName))
         {
             throw new InvalidDataException("The latest GitHub release version or URL is invalid.");
         }
@@ -506,6 +667,15 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             throw new InvalidDataException("The GitHub asset digest and release manifest disagree.");
         }
 
+        var targetNotes = CreateReleaseNotesEntry(
+            releaseVersion,
+            versionText,
+            releasePageUrl,
+            apiRelease.Body);
+        var (releaseNotes, historyIncomplete) = releaseVersion > _currentVersion
+            ? await GetReleaseNotesHistoryAsync(targetNotes, releaseVersion, cancellationToken).ConfigureAwait(false)
+            : ([targetNotes], false);
+
         return new UpdateRelease(
             releaseVersion,
             versionText,
@@ -513,7 +683,124 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             installer,
             checksum,
             manifest,
-            expectedHash);
+            expectedHash,
+            releaseNotes,
+            historyIncomplete);
+    }
+
+    private async Task<(IReadOnlyList<ReleaseNotesEntry> Notes, bool Incomplete)> GetReleaseNotesHistoryAsync(
+        ReleaseNotesEntry targetNotes,
+        Version targetVersion,
+        CancellationToken cancellationToken)
+    {
+        var notesByVersion = new Dictionary<Version, ReleaseNotesEntry>
+        {
+            [targetNotes.Version] = targetNotes
+        };
+        var incomplete = false;
+
+        try
+        {
+            for (var page = 1; page <= MaximumReleaseHistoryPages; page++)
+            {
+                var pageUri = new Uri($"{ReleasesApiUri.AbsoluteUri}?per_page={ReleasesPerPage}&page={page}");
+                using var request = new HttpRequestMessage(HttpMethod.Get, pageUri);
+                request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
+                using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                var releases = await response.Content.ReadFromJsonAsync<IReadOnlyList<ApiRelease>>(
+                        JsonOptions,
+                        cancellationToken)
+                    .ConfigureAwait(false) ?? throw new InvalidDataException("GitHub returned empty release history.");
+
+                var reachedCurrentVersion = false;
+                foreach (var release in releases)
+                {
+                    if (release.Draft || release.Prerelease || release.TagName is null ||
+                        !ReleaseTagPattern().IsMatch(release.TagName) ||
+                        !Version.TryParse(release.TagName[1..], out var version))
+                    {
+                        continue;
+                    }
+
+                    if (version <= _currentVersion)
+                    {
+                        reachedCurrentVersion = true;
+                        continue;
+                    }
+
+                    if (version > targetVersion)
+                    {
+                        continue;
+                    }
+
+                    if (!Uri.TryCreate(release.HtmlUrl, UriKind.Absolute, out var releasePageUrl) ||
+                        !IsReleasePageUrl(releasePageUrl, release.TagName))
+                    {
+                        incomplete = true;
+                        continue;
+                    }
+
+                    notesByVersion.TryAdd(
+                        version,
+                        CreateReleaseNotesEntry(version, version.ToString(3), releasePageUrl, release.Body));
+                }
+
+                if (releases.Count < ReleasesPerPage || reachedCurrentVersion)
+                {
+                    return (notesByVersion.Values.OrderByDescending(entry => entry.Version).ToArray(), incomplete);
+                }
+            }
+
+            _logger.Log(LogLevel.Warning, "GitHub release history exceeded the supported pagination limit.");
+            return (notesByVersion.Values.OrderByDescending(entry => entry.Version).ToArray(), true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidDataException or TaskCanceledException)
+        {
+            _logger.Log(LogLevel.Warning, "GitHub release notes history could not be loaded; using the latest release notes only.", exception);
+            return (notesByVersion.Values.OrderByDescending(entry => entry.Version).ToArray(), true);
+        }
+    }
+
+    internal static LocalizedReleaseNotes ParseReleaseNotes(string? body) => new(
+        ExtractReleaseNotesSection(body, ChineseNotesStart, ChineseNotesEnd),
+        ExtractReleaseNotesSection(body, EnglishNotesStart, EnglishNotesEnd));
+
+    private static ReleaseNotesEntry CreateReleaseNotesEntry(
+        Version version,
+        string versionText,
+        Uri releasePageUrl,
+        string? body) => new(version, versionText, releasePageUrl, ParseReleaseNotes(body));
+
+    private static string? ExtractReleaseNotesSection(string? body, string startMarker, string endMarker)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        var start = body.IndexOf(startMarker, StringComparison.Ordinal);
+        if (start < 0 || body.IndexOf(startMarker, start + startMarker.Length, StringComparison.Ordinal) >= 0)
+        {
+            return null;
+        }
+
+        start += startMarker.Length;
+        var end = body.IndexOf(endMarker, start, StringComparison.Ordinal);
+        if (end < 0 || body.IndexOf(endMarker, end + endMarker.Length, StringComparison.Ordinal) >= 0)
+        {
+            return null;
+        }
+
+        var value = body[start..end]
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Trim();
+        return value.Length == 0 ? null : value;
     }
 
     private static UpdateAsset FindAsset(IReadOnlyList<ApiAsset>? assets, string name)
@@ -541,6 +828,11 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             throw new InvalidDataException("A release asset uses an unexpected download URL.");
         }
     }
+
+    private static bool IsReleasePageUrl(Uri uri, string tag) =>
+        uri.Scheme == Uri.UriSchemeHttps &&
+        string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(uri.AbsolutePath, $"/PomDetom/GhostSlacking/releases/tag/{tag}", StringComparison.Ordinal);
 
     private async Task CopyWithProgressAsync(
         Stream source,
@@ -728,6 +1020,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
     private sealed record ApiRelease(
         [property: JsonPropertyName("tag_name")] string? TagName,
         [property: JsonPropertyName("html_url")] string? HtmlUrl,
+        string? Body,
         bool Draft,
         bool Prerelease,
         IReadOnlyList<ApiAsset>? Assets);

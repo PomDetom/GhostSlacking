@@ -1,6 +1,6 @@
 # Implementation status
 
-> 更新基准：2026-09-10，依据当前工作区代码、解决方案项目清单和 Debug/Release 构建测试结果整理。代码已实现不等于真实窗口兼容性验收已完成；后者仍以 Windows 手工矩阵为准。
+> 更新基准：2026-09-11，依据当前工作区代码、解决方案项目清单和 Debug/Release 构建测试结果整理。代码已实现不等于真实窗口兼容性验收已完成；后者仍以 Windows 手工矩阵为准。
 
 ## 当前总览
 
@@ -15,12 +15,12 @@
 ## 当前验证结果
 
 - `dotnet build GhostSlacking.sln --configuration Debug`：0 个警告，0 个错误。
-- `dotnet test GhostSlacking.sln --configuration Debug/Release`：202 个测试通过（Core 114，App 88），两个配置均为 0 个失败、0 个跳过。
-- 解决方案当前包含 4 个生产项目：`Core`、`Platform`、`App`、`Watchdog`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
+- `dotnet test GhostSlacking.sln --configuration Debug/Release`：239 个测试通过（Core 115，App 124），两个配置均为 0 个失败、0 个跳过；发布元数据 PowerShell 测试另行通过。
+- 解决方案当前包含 5 个生产项目：`Core`、`Platform`、`App`、`Watchdog`、`Updater`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
 
 ## 已完成：Phase 1 Core Demo 与 App 宿主基线
 
-- 四个生产项目边界：`Core`、`Platform`、`App` 和独立的 `Watchdog`；Core 保持平台无关，Win32 细节位于 Platform。
+- 五个生产项目边界：`Core`、`Platform`、`App`、独立的 `Watchdog` 和 `Updater`；Core 保持平台无关，Win32 细节位于 Platform。
 - Per Monitor V2 DPI manifest 和 Avalonia Win32 平台初始化。
 - 顶层窗口拾取：`WindowFromPoint`、`GetAncestor`、可见性/系统窗口/自身进程过滤。
 - 原始窗口快照：HWND、PID、必需的进程启动标识、rect、完整 `WINDOWPLACEMENT`、可见/最小化/最大化状态、原始 region 数据和 style 快照；启动身份或 placement 不可读取时在修改前失败。
@@ -35,7 +35,7 @@
 - Ghost/Reveal 保留目标窗口的标题栏、缩放边框和系统按钮 style，避免 Chrome/Electron 因非客户区 style 变化重排；仍临时控制 Alt+Tab 扩展样式及 DWM 装饰，Restore 时还原原值。
 - Ghost/Reveal 期间临时置顶目标窗口，避免 Alt+Tab 后目标位于其他窗口下方；Restore 时恢复原始 TopMost 状态。
 - Ghost、Reveal 和 Restore 使用完整 placement 做状态感知校正；普通/Snap 恢复坐标与尺寸，最大化/最小化恢复对应状态。Restore 经过约 16.7ms 周期的三次连续匹配才释放恢复资料，最多纠正十次 Chrome/Electron 延迟漂移。
-- Reveal 默认使用 144px 圆角矩形、16px 羽化和轻度模糊；保留原始清晰核心，并把目标内容 region 外扩到羽化宽度的 70%。非激活的 Windows Composition overlay 固定覆盖目标 bounds，位置无关遮罩按视觉参数缓存，光标移动仅更新 visual offset 和羽化外环 region；清晰核心的点击和滚轮直接落到目标窗口。渲染或设备失败时立即缩回硬边 region。
+- Reveal 默认使用 144px 圆角矩形、16px 羽化和轻度模糊；保留原始清晰核心，并把目标内容 region 外扩到羽化宽度的 70%。非激活的 Windows Composition overlay 由当前目标窗口拥有并固定覆盖目标 bounds，确保目标因点击激活后羽化仍位于其上方；位置无关遮罩按视觉参数缓存，光标移动仅更新 visual offset 和羽化外环 region，清晰核心的点击和滚轮直接落到目标窗口。渲染或设备失败时立即缩回硬边 region。
 - Peek 使用 Input 优先级轮询：非 Reveal 保持 60 Hz，Reveal 按鼠标所在显示器的当前模式动态调度，并受 Auto/60/90/120 FPS 设置和全局 120 FPS 上限约束。显示查询按显示器缓存 2 秒并由 `WM_DISPLAYCHANGE` 失效，失败时回退 60 Hz；Debug 日志每 120 个有效移动帧输出目标/有效 FPS、平均/P95/最大耗时和超出动态帧预算的帧数，不逐帧写入成功日志。
 - 全局热键、低级键盘 Peek 状态和拾取用低级鼠标钩子。
 - 设置页支持捕获自定义 Peek 按键，并提供 Auto/60/90/120 最大 Peek 帧率选择，避免 Alt/Shift 对浏览器或其他前台应用产生快捷键副作用。
@@ -63,13 +63,14 @@
 ## 已实现：Phase 3 Productization 基线
 
 - Avalonia + FluentAvalonia 设置页、中文/English 文案、跟随系统/浅色/深色主题、主题实时预览与取消回滚、设置保存反馈和单项恢复默认按钮。
-- 左侧“关于”页、GitHub 项目/Release 入口、每次启动稳定版检查、仅抑制通知的跳过版本、上次成功检查时间、受校验的 MSI 下载，以及通过既有安全关闭协议启动交互式升级。
+- 左侧“关于”页、GitHub 项目/Release 入口、每次启动稳定版检查、可点击且支持悬停暂停的更新通知、可重复激活的独立更新窗口、中英双语及跨版本 Release 说明、跳过版本后关闭窗口、上次成功检查时间，以及受校验的一键 MSI 自动升级。
+- `Updater` 在应用安全退出后等待主进程和 Watchdog，显示 MSI 被动进度并负责重新启动应用；UAC 取消或安装失败时恢复可用应用，并通过一次性结果文件在下次启动反馈结果。
 - JSON 配置归一化、损坏配置回退、每类 2 MB × 5 文件且清理 30 天前备份的滚动日志、日志诊断 ZIP、已保存配置 JSON 导出、单实例互斥、HKCU 开机启动开关和退出时恢复选项。
-- WiX MSI 安装器、开始菜单/桌面快捷方式选项、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、发布、构建和 MSI 校验，GitHub Actions 已配置测试与标签发布流程。
+- WiX MSI 安装器、开始菜单/桌面快捷方式选项、首次安装和升级完成页的启动选择、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、发布、构建和 MSI 校验，GitHub Actions 已配置 Conventional Commits、双语发布 PR 元数据校验及标签发布流程。
 
 ## 已实现：Phase 4 Advanced Rendering 原型
 
-- `RevealEdgeOverlay` 使用非激活、鼠标穿透的 Windows Composition/Win2D overlay，在清晰核心外侧提供可配置羽化和单一模糊等级。
+- `RevealEdgeOverlay` 使用由当前目标窗口拥有、非激活且鼠标穿透的 Windows Composition/Win2D overlay，在清晰核心外侧提供可配置羽化和单一模糊等级；目标切换或销毁后重建宿主，避免激活导致的 Z 序遮挡和陈旧 HWND。
 - 目标内容 region 外扩到羽化宽度的 70%，overlay 只命中外环，清晰核心仍由目标窗口接收点击和滚轮。
 - Overlay 宿主与目标窗口同 bounds；遮罩 surface 与屏幕位置解耦并按视觉参数缓存，边缘/角落移动不再重建 Win2D 和 Composition 资源。
 - Composition 初始化、设备或渲染失败时回退到硬边 region；不读取、不保存目标窗口像素。

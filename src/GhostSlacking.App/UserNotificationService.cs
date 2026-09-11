@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
@@ -17,13 +18,14 @@ internal enum UserNotificationSeverity
 
 internal interface IUserNotificationService : IDisposable
 {
-    void Show(string message, UserNotificationSeverity severity);
+    void Show(string message, UserNotificationSeverity severity, Action? clickAction = null);
 }
 
 internal readonly record struct TransientNotification(
     string Message,
     UserNotificationSeverity Severity,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    Action? ClickAction);
 
 internal readonly record struct UserNotificationPalette(
     Color Surface,
@@ -35,28 +37,88 @@ internal readonly record struct UserNotificationPalette(
 
 internal sealed class TransientNotificationState(TimeSpan duration)
 {
-    public TransientNotification? Current { get; private set; }
+    private TimeSpan? _pausedRemaining;
 
-    public void Show(string message, UserNotificationSeverity severity, DateTimeOffset now)
+    public TransientNotification? Current { get; private set; }
+    public bool IsPaused => _pausedRemaining is not null;
+
+    public void Show(
+        string message,
+        UserNotificationSeverity severity,
+        DateTimeOffset now,
+        Action? clickAction = null,
+        TimeSpan? displayDuration = null)
     {
-        Current = new TransientNotification(message, severity, now.Add(duration));
+        var selectedDuration = displayDuration ?? duration;
+        if (selectedDuration <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(displayDuration));
+        }
+
+        _pausedRemaining = null;
+        Current = new TransientNotification(message, severity, now.Add(selectedDuration), clickAction);
     }
 
     public bool Expire(DateTimeOffset now)
     {
-        if (Current is null || now < Current.Value.ExpiresAt)
+        if (Current is null || IsPaused || now < Current.Value.ExpiresAt)
         {
             return false;
         }
 
+        _pausedRemaining = null;
         Current = null;
         return true;
+    }
+
+    public bool Pause(DateTimeOffset now)
+    {
+        if (Current is null || Current.Value.ClickAction is null || IsPaused)
+        {
+            return false;
+        }
+
+        var remaining = Current.Value.ExpiresAt - now;
+        if (remaining <= TimeSpan.Zero)
+        {
+            Current = null;
+            return false;
+        }
+
+        _pausedRemaining = remaining;
+        return true;
+    }
+
+    public TimeSpan? Resume(DateTimeOffset now)
+    {
+        if (Current is null || _pausedRemaining is not { } remaining)
+        {
+            return null;
+        }
+
+        Current = Current.Value with { ExpiresAt = now.Add(remaining) };
+        _pausedRemaining = null;
+        return remaining;
+    }
+
+    public Action? TakeClickAction()
+    {
+        var action = Current?.ClickAction;
+        if (action is null)
+        {
+            return null;
+        }
+
+        _pausedRemaining = null;
+        Current = null;
+        return action;
     }
 }
 
 internal sealed class AvaloniaNotificationService : IUserNotificationService
 {
     internal static readonly TimeSpan DisplayDuration = TimeSpan.FromMilliseconds(2500);
+    internal static readonly TimeSpan ClickableDisplayDuration = TimeSpan.FromMilliseconds(4500);
     private const double WindowWidth = 360;
     private const double WindowHeight = 116;
     private const int ScreenMarginPx = 16;
@@ -93,7 +155,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
         _timer.Tick += OnTimerTick;
     }
 
-    public void Show(string message, UserNotificationSeverity severity)
+    public void Show(string message, UserNotificationSeverity severity, Action? clickAction = null)
     {
         if (_disposed || string.IsNullOrWhiteSpace(message))
         {
@@ -102,16 +164,24 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
 
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => Show(message, severity));
+            Dispatcher.UIThread.Post(() => Show(message, severity, clickAction));
             return;
         }
 
         try
         {
             var now = DateTimeOffset.UtcNow;
-            _state.Show(message, severity, now);
-            _window ??= new NotificationWindow();
-            _window.Update(message, severity);
+            var displayDuration = clickAction is null ? DisplayDuration : ClickableDisplayDuration;
+            _state.Show(message, severity, now, clickAction, displayDuration);
+            if (_window is null)
+            {
+                _window = new NotificationWindow();
+                _window.Clicked += OnWindowClicked;
+                _window.PointerEntered += OnWindowPointerEntered;
+                _window.PointerExited += OnWindowPointerExited;
+            }
+
+            _window.Update(message, severity, clickAction is not null);
             PositionWindow(_window, _getCursorPosition());
             if (!_window.IsVisible)
             {
@@ -119,11 +189,36 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             }
 
             _timer.Stop();
+            _timer.Interval = displayDuration;
             _timer.Start();
+            if (clickAction is not null && _window.IsPointerOver && _state.Pause(now))
+            {
+                _timer.Stop();
+            }
         }
         catch (Exception exception)
         {
             _logger.Log(LogLevel.Warning, "Avalonia notification could not be shown.", exception);
+        }
+    }
+
+    private void OnWindowClicked(object? sender, EventArgs args)
+    {
+        try
+        {
+            var action = _state.TakeClickAction();
+            if (action is null)
+            {
+                return;
+            }
+
+            _timer.Stop();
+            _window?.Hide();
+            action();
+        }
+        catch (Exception exception)
+        {
+            _logger.Log(LogLevel.Warning, "Notification click action failed.", exception);
         }
     }
 
@@ -142,10 +237,50 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             screen.WorkingArea.Bottom - height - ScreenMarginPx);
     }
 
+    private void OnWindowPointerEntered(object? sender, PointerEventArgs args)
+    {
+        if (_state.Pause(DateTimeOffset.UtcNow))
+        {
+            _timer.Stop();
+            return;
+        }
+
+        if (_state.Current is null)
+        {
+            _timer.Stop();
+            _window?.Hide();
+        }
+    }
+
+    private void OnWindowPointerExited(object? sender, PointerEventArgs args)
+    {
+        var remaining = _state.Resume(DateTimeOffset.UtcNow);
+        if (remaining is null)
+        {
+            return;
+        }
+
+        _timer.Stop();
+        _timer.Interval = remaining.Value;
+        _timer.Start();
+    }
+
     private void OnTimerTick(object? sender, EventArgs args)
     {
-        if (!_state.Expire(DateTimeOffset.UtcNow))
+        var now = DateTimeOffset.UtcNow;
+        if (!_state.Expire(now))
         {
+            if (!_state.IsPaused && _state.Current is { } current)
+            {
+                var remaining = current.ExpiresAt - now;
+                if (remaining > TimeSpan.Zero)
+                {
+                    _timer.Stop();
+                    _timer.Interval = remaining;
+                    _timer.Start();
+                }
+            }
+
             return;
         }
 
@@ -163,7 +298,13 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
         _disposed = true;
         _timer.Stop();
         _timer.Tick -= OnTimerTick;
-        _window?.Close();
+        if (_window is not null)
+        {
+            _window.Clicked -= OnWindowClicked;
+            _window.PointerEntered -= OnWindowPointerEntered;
+            _window.PointerExited -= OnWindowPointerExited;
+            _window.Close();
+        }
         _window = null;
         GC.SuppressFinalize(this);
     }
@@ -176,6 +317,8 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
         private readonly TextBlock _title;
         private readonly TextBlock _message;
         private UserNotificationSeverity _severity;
+
+        public event EventHandler? Clicked;
 
         public NotificationWindow()
         {
@@ -238,16 +381,29 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
                 Padding = new Thickness(16, 14),
                 Child = content
             };
+            _surface.PointerPressed += OnPointerPressed;
             Content = _surface;
             ActualThemeVariantChanged += (_, _) => ApplyPalette();
             ApplyPalette();
         }
 
-        public void Update(string message, UserNotificationSeverity severity)
+        public void Update(string message, UserNotificationSeverity severity, bool clickable)
         {
             _severity = severity;
             _message.Text = message;
+            _surface.Cursor = clickable ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
             ApplyPalette();
+        }
+
+        private void OnPointerPressed(object? sender, PointerPressedEventArgs args)
+        {
+            if (args.GetCurrentPoint(this).Properties.PointerUpdateKind != PointerUpdateKind.LeftButtonPressed)
+            {
+                return;
+            }
+
+            args.Handled = true;
+            Clicked?.Invoke(this, EventArgs.Empty);
         }
 
         private void ApplyPalette()

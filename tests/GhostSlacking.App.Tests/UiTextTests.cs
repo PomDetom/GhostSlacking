@@ -44,6 +44,20 @@ public sealed class UiTextTests
     }
 
     [Theory]
+    [InlineData(UiLanguage.Chinese, "GhostSlacking 已成功升级到版本 1.2.0。", "已取消软件更新，GhostSlacking 已恢复运行。", "版本 1.2.0 自动升级失败，GhostSlacking 已恢复运行。请重试或查看日志。")]
+    [InlineData(UiLanguage.English, "GhostSlacking was updated successfully to version 1.2.0.", "The software update was cancelled and GhostSlacking is running again.", "The automatic update to version 1.2.0 failed. GhostSlacking is running again; retry or check the logs.")]
+    public void Automatic_update_results_have_localized_feedback(
+        UiLanguage language,
+        string succeeded,
+        string cancelled,
+        string failed)
+    {
+        Assert.Equal(succeeded, string.Format(UiText.Text(language, "updateCompleted"), "1.2.0"));
+        Assert.Equal(cancelled, string.Format(UiText.Text(language, "updateCancelled"), "1.2.0"));
+        Assert.Equal(failed, string.Format(UiText.Text(language, "automaticUpdateFailed"), "1.2.0"));
+    }
+
+    [Theory]
     [InlineData(UserErrorKind.SelectionStateCaptureFailed, "无法选择该窗口。未能安全保存窗口状态，未作任何更改。")]
     [InlineData(UserErrorKind.GhostActivationFailed, "无法隐藏所选窗口。已尝试恢复原状态，请确认窗口显示正常。")]
     [InlineData(UserErrorKind.WindowPlacementCorrectionFailed, "无法保持窗口位置。正在恢复窗口，请确认其显示正常。")]

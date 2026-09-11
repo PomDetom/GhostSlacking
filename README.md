@@ -1,246 +1,83 @@
 # GhostSlacking
 
-GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部查看工具。它可以隐藏指定窗口，并在鼠标附近临时显示一块可交互区域，方便在不完整恢复窗口的情况下查看、点击或滚动内容。
-
-核心使用流程：
+GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部查看工具。它可以隐藏指定窗口，并在鼠标附近临时显示一块可交互区域，方便查看、点击或滚动内容，而不必完整恢复窗口。
 
 ```text
 选择窗口 → 隐藏窗口 → 局部查看（Peek）→ 恢复窗口
 ```
 
-## 功能特性
+## 主要功能
 
-- 通过全局快捷键或托盘菜单选择目标窗口。
-- 隐藏目标窗口，并在需要时切换完整显示状态。
+- 通过全局快捷键或系统托盘选择、隐藏和恢复窗口。
 - 在鼠标附近显示圆形、矩形或圆角矩形 Reveal 区域。
-- Reveal 区域支持羽化和模糊效果，区域内可正常点击、滚动和操作。
-- Peek 支持按住显示或按下切换两种模式。
-- 可配置 Reveal 尺寸、调整步长、形状、羽化宽度和模糊等级。
-- 可自定义窗口选择、显隐、恢复、设置、退出等全局快捷键。
-- 支持简体中文和英文界面。
-- 支持跟随系统、浅色和深色主题。
-- 支持开机启动、退出时恢复窗口和日志级别设置。
-- 支持从设置页导出日志诊断包和当前已保存的配置。
-- 设置页包含“关于”，可查看版本、访问 GitHub 源代码并检查更新。
-- 每次启动后异步检查 GitHub Releases；发现稳定版更新后由用户确认下载和安装。
-- 内置 Watchdog，在主程序异常终止后尝试安全恢复受控窗口。
-- 单实例运行，不会同时启动多个托盘进程。
+- Reveal 区域支持羽化、模糊、点击和滚动操作。
+- 支持按住显示和按键切换两种 Peek 模式。
+- 支持自定义快捷键、Reveal 外观、界面语言和主题。
+- 启动时检查稳定版更新，并在独立窗口中显示更新内容。
+- 内置 Watchdog，在程序异常终止后尝试安全恢复受控窗口。
+- 不截取窗口内容，也不向目标进程注入代码。
 
 ## 系统要求
 
 - Windows 10 或 Windows 11，x64。
-- [.NET 8](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)：在页面的“运行应用 - 运行时”中找到“.NET 运行时”，下载 **Windows x64 安装程序**。无需下载 SDK、ASP.NET Core Runtime 或 .NET Desktop Runtime；如果已经安装 .NET 8 SDK 或 Desktop Runtime，则无需重复安装。
+- [.NET 8 Runtime](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。
 - 控制以管理员身份运行的窗口时，GhostSlacking 通常也需要以相同权限运行。
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<版本>-win-x64.msi`，双击并按照安装向导完成安装。
+从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<版本>-win-x64.msi`，然后按照安装向导完成安装。
 
-安装器支持选择安装位置，以及是否创建开始菜单和桌面快捷方式。普通卸载不会删除用户设置和日志。
+GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。
 
-## 使用方法
+## 快速开始
 
-GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。单击托盘图标可开始选择窗口，右键托盘图标可使用完整菜单。
-
-### 基本流程
-
-1. 启动 GhostSlacking。
-2. 按 `Ctrl+Alt+P`，或单击托盘图标进入窗口选择状态。
-3. 单击需要控制的普通顶层窗口。按 `Esc` 可以取消选择。
-4. 按 `Ctrl+Alt+G` 隐藏或完整显示当前目标窗口。
-5. 按 `Alt` 在鼠标附近显示或隐藏 Reveal 区域。默认模式为按下切换，可在设置中改为按住显示。
-6. 按 `Ctrl+Alt+R` 恢复当前窗口并解除目标关联。
+1. 按 `Ctrl+Alt+P`，或单击托盘图标进入窗口选择状态。
+2. 单击需要控制的窗口；按 `Esc` 可取消选择。
+3. 按 `Ctrl+Alt+G` 隐藏或显示当前窗口。
+4. 按 `Alt` 在鼠标附近显示或隐藏 Reveal 区域。
+5. 按 `Ctrl+Alt+R` 恢复当前窗口。
+6. 按 `Ctrl+Alt+S` 打开设置并调整快捷键或显示效果。
 
 ### 默认快捷键
 
-| 功能            | 默认快捷键              |
-| ------------- | ------------------ |
-| 选择窗口          | `Ctrl+Alt+P`       |
-| 隐藏/显示当前窗口     | `Ctrl+Alt+G`       |
-| Peek / Reveal | `Alt`              |
-| 恢复当前窗口        | `Ctrl+Alt+R`       |
-| 紧急恢复全部窗口      | `Ctrl+Shift+Alt+R` |
-| 打开设置          | `Ctrl+Alt+S`       |
-| 退出应用          | `Ctrl+Alt+Q`       |
-| 增大/减小 Reveal  | 默认未绑定              |
+| 功能 | 默认快捷键 |
+| --- | --- |
+| 选择窗口 | `Ctrl+Alt+P` |
+| 隐藏/显示窗口 | `Ctrl+Alt+G` |
+| Peek / Reveal | `Alt` |
+| 恢复当前窗口 | `Ctrl+Alt+R` |
+| 紧急恢复全部窗口 | `Ctrl+Shift+Alt+R` |
+| 打开设置 | `Ctrl+Alt+S` |
+| 退出应用 | `Ctrl+Alt+Q` |
 
-快捷键和 Peek 按键均可在设置页面中调整。若快捷键与其他应用冲突，GhostSlacking 会显示提示并保留可恢复的设置状态。
+所有快捷键均可在设置中修改。建议通过托盘菜单或退出快捷键正常关闭程序，以便恢复受控窗口。
 
-### 设置与退出
+## 软件更新
 
-按 `Ctrl+Alt+S` 或从托盘菜单打开设置。界面主题会在选中后立即预览，取消或关闭窗口会恢复已保存主题；其他修改及主题持久化仍需点击“保存”后生效。保存成功状态会短暂显示后自动隐藏。
+应用会在启动后检查 GitHub Releases。发现新版本时，可点击通知、托盘入口或“关于”页查看中英双语更新说明。点击“下载并安装”后，应用会自动完成下载、校验、安装和重新启动；安装期间仍需确认 Windows UAC 提示。
 
-建议通过托盘菜单或 `Ctrl+Alt+Q` 正常退出。默认情况下，退出应用会恢复所有由 GhostSlacking 修改过的窗口。
+## 从源码运行
 
-### 关于与软件更新
-
-设置窗口左侧底部的“关于”页面会显示当前版本和上次成功检查时间；介绍卡中的“GitHub 项目”可打开[项目主页](https://github.com/PomDetom/GhostSlacking)，软件更新区域也可进入 [版本发布](https://github.com/PomDetom/GhostSlacking/releases) 页面。
-
-应用每次启动后都会异步通过 GitHub 的公开 Releases API 检查最新稳定版，不需要 GitHub 账号或访问令牌。发现更新时会显示轻量通知和托盘菜单入口，不会自动下载安装。进入“关于”页确认后，应用才会下载 MSI，并根据 Release 随附的清单和 SHA256 校验文件完整性；随后启动现有升级向导，Windows 会请求管理员授权。升级向导会安全恢复受控窗口、退出当前版本，并在升级成功后恢复运行。
-
-可以跳过当前版本；跳过仅隐藏该版本的启动通知和托盘入口，“关于”页仍会显示并允许安装或恢复提醒。出现更高版本时会自动恢复通知，也可以随时手动检查。源码构建或未从 MSI 安装的副本只提供 Releases 页面入口，不执行应用内安装。SHA256 用于检查下载损坏和发布资产是否一致，不等同于代码签名。
-
-## 配置、日志与数据
-
-应用数据保存在当前用户的本地应用数据目录：
-
-```text
-%LOCALAPPDATA%\GhostSlacking\
-├── settings.json
-├── update-state.json
-├── updates\
-└── logs\
-    ├── ghostslacking.log
-    ├── ghostslacking.1.log ... ghostslacking.4.log
-    ├── watchdog.log
-    └── watchdog.1.log ... watchdog.4.log
-```
-
-- `settings.json`：用户设置。
-- `update-state.json`：上次成功检查时间和用户跳过的版本，不包含在配置导出中。
-- `updates`：经用户确认后下载的升级安装包；不完整和过期文件会自动清理。
-- `ghostslacking.log`：主程序日志。
-- `watchdog.log`：异常恢复进程日志。
-
-两类日志均按 2 MB 单文件滚动，每类最多保留 5 个文件，并自动清理超过 30 天的备份；日志总占用上限约为 20 MB。默认日志级别为 `Info`，在设置页修改后会立即作用于主程序日志。Watchdog 始终保留 `Info` 及以上的恢复审计信息。
-
-设置页的“数据与诊断”区域提供两个导出入口：
-
-- “导出日志”生成 ZIP 诊断包，包含当前及滚动日志，以及不含用户名、机器名和配置内容的版本/运行环境摘要。
-- “导出配置”生成 JSON 文件，只包含当前已保存并生效的设置，不包含尚未保存的界面修改。
-
-所有导出都由用户主动选择保存位置；GhostSlacking 不会自动上传或发送这些文件。
-
-可在资源管理器地址栏输入 `%LOCALAPPDATA%\GhostSlacking` 直接打开该目录。
-
-## 从源码构建和启动
-
-### 开发环境
-
-- Windows 10/11 x64。
-- [.NET 8 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)：在页面的“生成应用 - SDK”中下载 **Windows x64 安装程序**。
-- Git。
-
-在 PowerShell 中执行：
+需要 Windows 10/11 x64、Git 和 [.NET 8 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。
 
 ```powershell
 git clone https://github.com/PomDetom/GhostSlacking.git
 cd GhostSlacking
-
 dotnet restore GhostSlacking.sln
 dotnet build GhostSlacking.sln --configuration Debug
 dotnet run --project src/GhostSlacking.App --configuration Debug
 ```
 
-程序启动后会出现在系统托盘中。调试期间请通过托盘菜单退出，避免已有实例占用单实例互斥锁或全局快捷键。
-
-### 运行测试
+运行测试：
 
 ```powershell
 dotnet test GhostSlacking.sln --configuration Debug
 ```
 
-发布前建议同时验证 Release 配置：
+## 更多信息
 
-```powershell
-dotnet test GhostSlacking.sln --configuration Release
-```
+- [技术架构](docs/ARCHITECTURE.md)
+- [实施计划](docs/IMPLEMENTATION_PLAN.md)
+- [实施状态](docs/IMPLEMENTATION_STATUS.md)
 
-## 构建安装包
-
-双击仓库根目录的 `package.cmd`，或运行交互式发布脚本：
-
-```powershell
-.\build-release.ps1
-```
-
-脚本可以选择 Patch、Minor、Major 或指定版本，并依次完成依赖还原、Release 测试、应用发布、MSI 构建和安装包校验。输出位于：
-
-```text
-artifacts\releases\<版本>\
-```
-
-自动化环境可使用非交互参数：
-
-```powershell
-# 指定版本并执行完整构建
-.\build-release.ps1 -Version 0.1.1
-
-# 自动递增补丁版本
-.\build-release.ps1 -Increment Patch
-
-# 仅在临时排查时跳过测试
-.\build-release.ps1 -Version 0.1.1 -SkipTests
-```
-
-如只需直接生成 MSI：
-
-```powershell
-.\installer\build-installer.ps1 -Version 0.1.1
-```
-
-MSI 将生成到 `artifacts\installer\GhostSlacking-0.1.1-win-x64.msi`。WiX 依赖由项目在还原和构建时自动获取。
-
-## 发布到 GitHub
-
-仓库包含以下 GitHub Actions 工作流：
-
-- 推送到 `master` 或创建 Pull Request 时运行 Release 测试。
-- 推送 `vMAJOR.MINOR.PATCH` 格式的标签时构建 MSI、生成 SHA256 与发布清单，并创建 GitHub Release。
-
-正式发布采用“`dev` 开发 → Pull Request 合入 `master` → 从 `master` 打 tag → Actions 发布”的流程。不要在 `dev` 上直接打正式发布 tag，也不要把本地构建出的 MSI 当作正式发布产物。
-
-### 日常发布流程
-
-1. 在 `dev` 分支完成开发并推送到远端。
-2. 在 GitHub 创建 `dev` → `master` 的 Pull Request，等待 `Release tests` 通过。
-3. 检查变更说明、版本号和手工验收结果后合入 `master`。
-4. 在刚合入的 `master` 提交上创建版本 tag，例如 `v0.1.1`。
-5. 推送 tag，GitHub Actions 会在 Windows Runner 上重新运行测试、构建 MSI、生成 SHA256 和 `release.json`，并创建 GitHub Release。
-
-可以在 GitHub 网页上打开仓库的 **Releases → Draft a new release**，填写新 tag（例如 `v0.1.1`），并将 **Target** 选择为 `master` 最新提交；也可以使用 PowerShell：
-
-```powershell
-git tag v0.1.1
-git push origin v0.1.1
-```
-
-tag 一旦用于正式发布就不要移动或复用。版本必须是三段式 `vMAJOR.MINOR.PATCH`，且正式发布版本号应与安装包文件名一致。
-
-### GitHub 仓库配置
-
-在仓库的 **Settings → Branches → Branch protection rules** 中为 `master` 配置以下规则：
-
-- 开启 **Require a pull request before merging**，常规情况下禁止直接 push 到 `master`；当前保留管理员紧急 bypass 能力；
-- 开启 **Require status checks to pass before merging**，添加 `Release tests`，并要求分支与最新 `master` 保持同步；
-- 建议开启 **Require conversation resolution before merging**；
-- 不要允许修改或删除已发布的 tag；如组织策略支持，可限制 `v*.*.*` tag 的创建权限；
-- 单人维护时可以不强制审批人数；有协作者后建议要求至少 1 个 approval，并开启过期 approval 自动失效；
-- **Allow force pushes** 和 **Allow deletions** 保持关闭。
-
-配置完成后，日常只需通过 Pull Request 合入 `master`，正式构建则由版本 tag 触发。合入 `master` 的 CI 失败时不能发布；tag 对应的 Actions 失败时，先修复构建问题，再创建一个新的版本号，不要覆盖原 tag。
-
-## 项目结构
-
-```text
-src/
-├── GhostSlacking.Core/       领域模型、状态协调、设置与恢复逻辑
-├── GhostSlacking.Platform/   Windows/Win32 平台适配
-├── GhostSlacking.App/        托盘主程序、设置与通知界面
-└── GhostSlacking.Watchdog/   主程序异常后的窗口恢复进程
-tests/
-├── GhostSlacking.Core.Tests/
-└── GhostSlacking.App.Tests/
-installer/                    WiX MSI 安装器
-docs/                         架构、实施计划和兼容性说明
-```
-
-更多实现细节请参阅 [技术架构](docs/ARCHITECTURE.md) 和 [实施状态](docs/IMPLEMENTATION_STATUS.md)。
-
-## 工作原理与限制
-
-GhostSlacking 使用 Windows 窗口区域和合成效果实现局部显示，不截取窗口内容，也不向目标进程注入代码。它不是防录屏或隐私防护工具。
-
-部分特殊窗口、使用独立渲染表面的应用、高权限窗口或高频重绘窗口可能存在兼容性限制。恢复窗口时会校验窗口句柄、进程和进程启动身份，避免将旧状态错误应用到已复用的窗口句柄。
-
-遇到异常时，请先使用 `Ctrl+Shift+Alt+R` 尝试恢复所有窗口，再查看 `%LOCALAPPDATA%\GhostSlacking\logs` 中的日志。
+配置和日志位于 `%LOCALAPPDATA%\GhostSlacking`。遇到异常时，请先按 `Ctrl+Shift+Alt+R` 尝试恢复全部窗口。

@@ -21,6 +21,7 @@ public sealed class ApplicationUpdateManagerTests
 
         Assert.Equal(ApplicationUpdateStatus.Available, snapshot.Status);
         Assert.Equal("1.2.0", snapshot.Release?.VersionText);
+        Assert.Single(snapshot.Release?.ReleaseNotes ?? []);
         Assert.Equal(now, snapshot.LastSuccessfulCheckUtc);
         var state = new UpdateStateStore(files.StatePath).Load();
         Assert.Equal(now, state.LastSuccessfulCheckUtc);
@@ -66,7 +67,7 @@ public sealed class ApplicationUpdateManagerTests
 
         Assert.Equal(ApplicationUpdateStatus.Available, snapshot.Status);
         Assert.Equal(now, snapshot.LastSuccessfulCheckUtc);
-        Assert.Equal(2, handler.RequestCount);
+        Assert.Equal(3, handler.RequestCount);
     }
 
     [Fact]
@@ -80,7 +81,7 @@ public sealed class ApplicationUpdateManagerTests
         await manager.CheckAsync();
         await manager.CheckAsync();
 
-        Assert.Equal(4, handler.RequestCount);
+        Assert.Equal(6, handler.RequestCount);
     }
 
     [Fact]
@@ -119,6 +120,8 @@ public sealed class ApplicationUpdateManagerTests
         var launcher = new RecordingInstallerLauncher();
         var logger = new RecordingLogger();
         using var manager = CreateManager(files, client, "1.1.0", installerLauncher: launcher, logger: logger);
+        var handoffStarted = 0;
+        manager.InstallHandoffStarted += (_, _) => handoffStarted++;
         await manager.CheckAsync();
 
         var installerPath = await manager.DownloadInstallerAsync();
@@ -126,8 +129,10 @@ public sealed class ApplicationUpdateManagerTests
         Assert.True(installerPath is not null, logger.LastException?.ToString() ?? logger.LastMessage);
         Assert.Equal(release.InstallerBytes, await File.ReadAllBytesAsync(installerPath));
         Assert.Equal(ApplicationUpdateStatus.Ready, manager.Snapshot.Status);
-        Assert.True(manager.LaunchInstaller(installerPath));
-        Assert.Equal(installerPath, launcher.LastPath);
+        Assert.True(manager.BeginAutomaticInstall(installerPath));
+        Assert.Equal(installerPath, launcher.LastRequest?.InstallerPath);
+        Assert.Equal("1.2.0", launcher.LastRequest?.Version);
+        Assert.Equal(1, handoffStarted);
     }
 
     [Fact]
@@ -144,8 +149,45 @@ public sealed class ApplicationUpdateManagerTests
 
         Assert.Null(installerPath);
         Assert.Equal(ApplicationUpdateStatus.Error, manager.Snapshot.Status);
-        Assert.Null(launcher.LastPath);
+        Assert.Null(launcher.LastRequest);
         Assert.Empty(Directory.EnumerateFiles(files.UpdatesDirectory, "*.partial", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Failed_installer_launch_does_not_signal_application_shutdown()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var release = TestRelease.Create("1.2.0");
+        using var client = new HttpClient(new ReleaseHandler(release));
+        var launcher = new RecordingInstallerLauncher(result: false);
+        using var manager = CreateManager(files, client, "1.1.0", installerLauncher: launcher);
+        var handoffStarted = 0;
+        manager.InstallHandoffStarted += (_, _) => handoffStarted++;
+        await manager.CheckAsync();
+        var installerPath = await manager.DownloadInstallerAsync();
+
+        Assert.NotNull(installerPath);
+        Assert.False(manager.BeginAutomaticInstall(installerPath));
+        Assert.Equal(0, handoffStarted);
+    }
+
+    [Fact]
+    public async Task Installer_outside_the_verified_version_cache_is_never_launched()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var release = TestRelease.Create("1.2.0");
+        using var client = new HttpClient(new ReleaseHandler(release));
+        var launcher = new RecordingInstallerLauncher();
+        using var manager = CreateManager(files, client, "1.1.0", installerLauncher: launcher);
+        await manager.CheckAsync();
+        var installerPath = await manager.DownloadInstallerAsync();
+        Assert.NotNull(installerPath);
+        var unexpectedPath = Path.Combine(files.UpdatesDirectory, release.InstallerName);
+        File.Copy(installerPath, unexpectedPath);
+
+        Assert.False(manager.BeginAutomaticInstall(unexpectedPath));
+        Assert.Equal(ApplicationUpdateStatus.Error, manager.Snapshot.Status);
+        Assert.Null(launcher.LastRequest);
     }
 
     [Fact]
@@ -181,12 +223,15 @@ public sealed class ApplicationUpdateManagerTests
             "1.1.0",
             installerLauncher: launcher,
             installationDetector: () => false);
+        var handoffStarted = 0;
+        manager.InstallHandoffStarted += (_, _) => handoffStarted++;
         await manager.CheckAsync();
 
         Assert.False(manager.CanInstallUpdates);
         Assert.Null(await manager.DownloadInstallerAsync());
-        Assert.False(manager.LaunchInstaller(Path.Combine(files.Root, "update.msi")));
-        Assert.Null(launcher.LastPath);
+        Assert.False(manager.BeginAutomaticInstall(Path.Combine(files.Root, "update.msi")));
+        Assert.Null(launcher.LastRequest);
+        Assert.Equal(0, handoffStarted);
     }
 
     [Fact]
@@ -204,6 +249,121 @@ public sealed class ApplicationUpdateManagerTests
         Assert.Equal(ApplicationUpdateStatus.Error, snapshot.Status);
         Assert.Equal(previousCheck, snapshot.LastSuccessfulCheckUtc);
         Assert.Equal(previousCheck, new UpdateStateStore(files.StatePath).Load().LastSuccessfulCheckUtc);
+    }
+
+    [Fact]
+    public async Task Bilingual_release_notes_are_parsed_and_history_is_aggregated_newest_first()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var latest = TestRelease.Create("1.3.0") with
+        {
+            Body = TestRelease.Notes("新增更新窗口。", "Add the update window.")
+        };
+        var handler = new ReleaseHandler(latest)
+        {
+            History =
+            [
+                latest,
+                TestRelease.Create("1.2.0") with
+                {
+                    Body = TestRelease.Notes("改进更新检查。", "Improve update checks.")
+                },
+                TestRelease.Create("1.1.0")
+            ]
+        };
+        using var client = new HttpClient(handler);
+        using var manager = CreateManager(files, client, currentVersion: "1.1.0");
+
+        var snapshot = await manager.CheckAsync();
+
+        Assert.Equal(ApplicationUpdateStatus.Available, snapshot.Status);
+        Assert.NotNull(snapshot.Release);
+        var notes = snapshot.Release.ReleaseNotes;
+        Assert.Equal(["1.3.0", "1.2.0"], notes.Select(item => item.VersionText));
+        Assert.Equal("### 更新内容\n- 新增更新窗口。", notes[0].Notes.Chinese);
+        Assert.Equal("### What's new\n- Add the update window.", notes[0].Notes.English);
+        Assert.Equal("改进更新检查。", notes[1].Notes.For(UiLanguage.Chinese)?.Split("- ")[1]);
+        Assert.False(snapshot.Release.ReleaseHistoryIncomplete);
+    }
+
+    [Fact]
+    public async Task Missing_or_unavailable_release_notes_do_not_block_a_valid_update()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var handler = new ReleaseHandler(TestRelease.Create("1.2.0")) { FailHistory = true };
+        using var client = new HttpClient(handler);
+        var logger = new RecordingLogger();
+        using var manager = CreateManager(files, client, currentVersion: "1.1.0", logger: logger);
+
+        var snapshot = await manager.CheckAsync();
+
+        Assert.Equal(ApplicationUpdateStatus.Available, snapshot.Status);
+        Assert.NotNull(snapshot.Release);
+        var release = snapshot.Release;
+        Assert.True(release.ReleaseHistoryIncomplete);
+        var notes = Assert.Single(release.ReleaseNotes);
+        Assert.Null(notes.Notes.Chinese);
+        Assert.Null(notes.Notes.English);
+        Assert.Contains("history could not be loaded", logger.LastMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Duplicate_or_incomplete_markers_are_ignored_without_exposing_partial_content()
+    {
+        var duplicate = TestRelease.Notes("中文", "English") +
+            "\n<!-- release-notes:zh:start -->duplicate<!-- release-notes:zh:end -->";
+        var incomplete = "<!-- release-notes:zh:start -->中文";
+
+        Assert.Null(GitHubApplicationUpdateManager.ParseReleaseNotes(duplicate).Chinese);
+        Assert.Equal("### What's new\n- English", GitHubApplicationUpdateManager.ParseReleaseNotes(duplicate).English);
+        Assert.Null(GitHubApplicationUpdateManager.ParseReleaseNotes(incomplete).Chinese);
+    }
+
+    [Fact]
+    public async Task Release_history_filters_drafts_and_prereleases()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var latest = TestRelease.Create("1.3.0") with { Body = TestRelease.Notes("正式版", "Stable") };
+        var handler = new ReleaseHandler(latest)
+        {
+            History =
+            [
+                latest,
+                TestRelease.Create("1.2.0") with { Prerelease = true },
+                TestRelease.Create("1.1.0") with { Draft = true }
+            ]
+        };
+        using var client = new HttpClient(handler);
+        using var manager = CreateManager(files, client, currentVersion: "1.0.0");
+
+        var snapshot = await manager.CheckAsync();
+
+        Assert.Equal("1.3.0", Assert.Single(snapshot.Release?.ReleaseNotes ?? []).VersionText);
+    }
+
+    [Fact]
+    public async Task Release_history_follows_pagination_until_the_current_version_is_reached()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var latest = TestRelease.Create("1.3.0");
+        var firstPage = Enumerable.Range(0, 100)
+            .Select(_ => TestRelease.Create("1.2.9") with { Prerelease = true })
+            .ToArray();
+        var handler = new ReleaseHandler(latest)
+        {
+            HistoryPages =
+            [
+                firstPage,
+                [TestRelease.Create("1.2.0"), TestRelease.Create("1.1.0")]
+            ]
+        };
+        using var client = new HttpClient(handler);
+        using var manager = CreateManager(files, client, currentVersion: "1.1.0");
+
+        var snapshot = await manager.CheckAsync();
+
+        Assert.Equal(["1.3.0", "1.2.0"], snapshot.Release?.ReleaseNotes.Select(item => item.VersionText));
+        Assert.Equal(4, handler.RequestCount);
     }
 
     private static GitHubApplicationUpdateManager CreateManager(
@@ -227,6 +387,9 @@ public sealed class ApplicationUpdateManagerTests
     private sealed class ReleaseHandler(TestRelease release) : HttpMessageHandler
     {
         public TestRelease Release { get; set; } = release;
+        public IReadOnlyList<TestRelease> History { get; init; } = [release];
+        public IReadOnlyList<IReadOnlyList<TestRelease>>? HistoryPages { get; init; }
+        public bool FailHistory { get; init; }
         public int RequestCount { get; private set; }
         public bool PauseInstallerDownload { get; init; }
         public TaskCompletionSource InstallerRequested { get; } = new(
@@ -241,6 +404,23 @@ public sealed class ApplicationUpdateManagerTests
             if (uri == GitHubApplicationUpdateManager.LatestReleaseApiUri.AbsoluteUri)
             {
                 return JsonResponse(Release.ApiJson());
+            }
+
+            if (uri?.StartsWith(GitHubApplicationUpdateManager.ReleasesApiUri.AbsoluteUri + "?", StringComparison.Ordinal) == true)
+            {
+                var page = request.RequestUri?.Query
+                    .TrimStart('?')
+                    .Split('&', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(part => part.Split('=', 2))
+                    .Where(part => part.Length == 2 && part[0] == "page")
+                    .Select(part => int.TryParse(part[1], out var value) ? value : 1)
+                    .FirstOrDefault(1) ?? 1;
+                var history = HistoryPages is not null && page <= HistoryPages.Count
+                    ? HistoryPages[page - 1]
+                    : HistoryPages is null ? History : [];
+                return FailHistory
+                    ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                    : JsonResponse(JsonSerializer.Serialize(history.Select(item => item.ApiData())));
             }
 
             if (uri?.EndsWith("/release.json", StringComparison.Ordinal) == true)
@@ -284,7 +464,10 @@ public sealed class ApplicationUpdateManagerTests
         string Version,
         byte[] InstallerBytes,
         byte[]? DownloadedInstallerBytes = null,
-        bool OmitChecksumAsset = false)
+        bool OmitChecksumAsset = false,
+        string? Body = null,
+        bool Draft = false,
+        bool Prerelease = false)
     {
         public string Tag => $"v{Version}";
         public string InstallerName => $"GhostSlacking-{Version}-win-x64.msi";
@@ -295,7 +478,22 @@ public sealed class ApplicationUpdateManagerTests
             version,
             Encoding.UTF8.GetBytes($"test installer for {version}"));
 
-        public string ApiJson()
+        public static string Notes(string chinese, string english) => $$"""
+            ## 更新内容
+            <!-- release-notes:zh:start -->
+            ### 更新内容
+            - {{chinese}}
+            <!-- release-notes:zh:end -->
+            ## What's Changed
+            <!-- release-notes:en:start -->
+            ### What's new
+            - {{english}}
+            <!-- release-notes:en:end -->
+            """;
+
+        public string ApiJson() => JsonSerializer.Serialize(ApiData());
+
+        public object ApiData()
         {
             var assets = new List<object>
             {
@@ -307,14 +505,15 @@ public sealed class ApplicationUpdateManagerTests
                 assets.Add(Asset($"{InstallerName}.sha256", 99, null));
             }
 
-            return JsonSerializer.Serialize(new
+            return new
             {
                 tag_name = Tag,
                 html_url = $"https://github.com/PomDetom/GhostSlacking/releases/tag/{Tag}",
-                draft = false,
-                prerelease = false,
+                body = Body,
+                draft = Draft,
+                prerelease = Prerelease,
                 assets
-            });
+            };
         }
 
         public string ManifestJson() => JsonSerializer.Serialize(new
@@ -340,14 +539,14 @@ public sealed class ApplicationUpdateManagerTests
         };
     }
 
-    private sealed class RecordingInstallerLauncher : IUpdateInstallerLauncher
+    private sealed class RecordingInstallerLauncher(bool result = true) : IUpdateInstallerLauncher
     {
-        public string? LastPath { get; private set; }
+        public UpdateInstallRequest? LastRequest { get; private set; }
 
-        public bool Launch(string installerPath)
+        public bool Launch(UpdateInstallRequest request)
         {
-            LastPath = installerPath;
-            return true;
+            LastRequest = request;
+            return result;
         }
     }
 

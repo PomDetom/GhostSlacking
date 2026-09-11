@@ -53,7 +53,7 @@
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
         <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes" Text="升级 GhostSlacking" />
         <Control Id="Description" Type="Text" X="25" Y="23" Width="315" Height="15" Transparent="yes" NoPrefix="yes" Text="已检测到旧版本，将升级至 [ProductVersion]。" />
-        <Control Id="UpgradeText" Type="Text" X="20" Y="66" Width="330" Height="52" NoPrefix="yes" Text="安装程序将沿用当前安装位置和快捷方式选择。若 GhostSlacking 正在运行，会先安全恢复所有受控窗口并退出，升级成功后再自动恢复运行。" />
+        <Control Id="UpgradeText" Type="Text" X="20" Y="66" Width="330" Height="52" NoPrefix="yes" Text="安装程序将沿用当前安装位置和快捷方式选择。若 GhostSlacking 正在运行，会先安全恢复所有受控窗口并退出；升级完成后可选择是否立即启动。" />
         <Control Id="InstallFolderLabel" Type="Text" X="20" Y="130" Width="330" Height="14" NoPrefix="yes" Text="当前安装位置：" />
         <Control Id="InstallFolder" Type="Text" X="30" Y="149" Width="320" Height="30" NoPrefix="yes" Text="[INSTALLFOLDER]" />
         <Control Id="RelocateHint" Type="Text" X="20" Y="190" Width="330" Height="24" NoPrefix="yes" Text="如需更改安装位置，请先卸载旧版本，再重新安装。" />
@@ -115,14 +115,14 @@
         Property="WixUnelevatedShellExecTarget"
         Value="[INSTALLFOLDER]GhostSlacking.App.exe"
         Order="1"
-        Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = &quot;1&quot; AND NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+        Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = &quot;1&quot; AND NOT Installed" />
       <Publish
         Dialog="GhostSlackingExitDialog"
         Control="Finish"
         Event="DoAction"
-        Value="LaunchGhostSlackingAfterInstall"
+        Value="LaunchGhostSlackingFromExitDialog"
         Order="2"
-        Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = &quot;1&quot; AND NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+        Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = &quot;1&quot; AND NOT Installed" />
       <Publish Dialog="GhostSlackingExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
 
       <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="UpgradeReadyDlg" Order="1" Condition="WIX_UPGRADE_DETECTED" />
@@ -177,7 +177,7 @@
       Value="立即启动 GhostSlacking"
       After="FindRelatedProducts"
       Sequence="ui"
-      Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      Condition="NOT Installed" />
 
     <UIRef Id="WixUI_Common" />
     <UIRef Id="WixUI_ErrorProgressText" />

@@ -21,6 +21,7 @@ internal static class Win32NativeMethods
     internal const int SW_SHOWMINIMIZED = 2;
     internal const int SW_SHOWMAXIMIZED = 3;
     internal const int SW_MINIMIZE = 6;
+    internal const int SW_RESTORE = 9;
     internal const int SW_SHOWNOACTIVATE = 4;
     internal const int SW_SHOWNA = 8;
     internal const int WH_KEYBOARD_LL = 13;
@@ -29,6 +30,7 @@ internal static class Win32NativeMethods
     internal const int WM_CLOSE = 0x0010;
     internal const int WM_DISPLAYCHANGE = 0x007E;
     internal const int WM_ERASEBKGND = 0x0014;
+    internal const int WM_NCDESTROY = 0x0082;
     internal const int WM_NCHITTEST = 0x0084;
     internal const int HTTRANSPARENT = -1;
     internal const int WM_LBUTTONDOWN = 0x0201;
@@ -313,6 +315,10 @@ internal static class Win32NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool ShowWindow(nint hwnd, int command);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetForegroundWindow(nint hwnd);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

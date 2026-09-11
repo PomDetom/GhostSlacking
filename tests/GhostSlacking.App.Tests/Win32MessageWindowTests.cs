@@ -50,9 +50,19 @@ public sealed class Win32MessageWindowTests
     }
 
     [Fact]
+    public void Foreground_activation_rejects_an_invalid_window_handle()
+    {
+        var result = new Win32WindowApi().BringToForeground(0);
+
+        Assert.False(result.Success);
+        Assert.Equal("SetForegroundWindow", result.Operation);
+    }
+
+    [Fact]
     public void Overlay_window_applies_ring_and_disposes_repeatedly()
     {
-        var window = new Win32OverlayWindow();
+        using var owner = new Win32MessageWindow();
+        var window = new Win32OverlayWindow(owner.Handle);
         var targetBounds = new Rectangle(-32000, -32000, 100, 100);
         var outer = new CircleRegion(50, 50, 80, RevealShape.RoundedRectangle, 16);
         var inner = new CircleRegion(50, 50, 40, RevealShape.RoundedRectangle, 8);
@@ -66,6 +76,86 @@ public sealed class Win32MessageWindowTests
         Assert.Equal(0, window.Handle);
     }
 
+    [Fact]
+    public void Overlay_window_is_owned_by_and_stays_above_the_target()
+    {
+        using var owner = new Win32MessageWindow();
+        using var window = new Win32OverlayWindow(owner.Handle);
+        var flags = SwpNoSize | SwpNoMove | SwpShowWindow;
+
+        Assert.Equal(owner.Handle, GetWindow(window.Handle, GwOwner));
+        Assert.True(SetWindowPos(owner.Handle, HwndTopmost, 0, 0, 0, 0, flags));
+        Assert.True(window.ShowTopmostNoActivate().Success);
+        Assert.True(SetWindowPos(owner.Handle, HwndTopmost, 0, 0, 0, 0, flags));
+        Assert.True(IsAbove(window.Handle, owner.Handle));
+    }
+
+    [Fact]
+    public void Destroying_the_owner_invalidates_the_overlay_handle_and_allows_recreation()
+    {
+        var owner = new Win32MessageWindow();
+        var window = new Win32OverlayWindow(owner.Handle);
+
+        owner.Dispose();
+
+        Assert.Equal(0, window.Handle);
+        window.Hide();
+        window.Dispose();
+        window.Dispose();
+
+        using var replacementOwner = new Win32MessageWindow();
+        using var replacement = new Win32OverlayWindow(replacementOwner.Handle);
+        Assert.NotEqual(0, replacement.Handle);
+        Assert.Equal(replacementOwner.Handle, GetWindow(replacement.Handle, GwOwner));
+    }
+
+    private static bool IsAbove(nint expectedHigher, nint expectedLower)
+    {
+        var higherSeen = false;
+        var lowerSeenAfterHigher = false;
+        EnumWindows((handle, _) =>
+        {
+            if (handle == expectedHigher)
+            {
+                higherSeen = true;
+            }
+            else if (handle == expectedLower)
+            {
+                lowerSeenAfterHigher = higherSeen;
+                return false;
+            }
+
+            return true;
+        }, 0);
+        return lowerSeenAfterHigher;
+    }
+
+    private const uint GwOwner = 4;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpShowWindow = 0x0040;
+    private static readonly nint HwndTopmost = -1;
+
+    private delegate bool EnumWindowsProc(nint hwnd, nint lParam);
+
     [DllImport("user32.dll")]
     private static extern nint SendMessage(nint hwnd, uint message, nint wParam, nint lParam);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint hwnd, uint command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        nint hwnd,
+        nint insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsProc callback, nint lParam);
 }
