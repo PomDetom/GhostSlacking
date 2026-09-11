@@ -19,7 +19,6 @@
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
-    <Property Id="GHOSTSLACKING_WAS_RUNNING" Secure="yes" />
     <Property Id="GHOSTSLACKING_STILL_RUNNING" Secure="yes" />
     <Property Id="GHOSTSLACKING_WATCHDOG_STILL_RUNNING" Secure="yes" />
     <Property Id="UPGRADE_PROTOCOL_VERSION" Secure="yes">
@@ -31,16 +30,6 @@
         Type="raw"
         Bitness="always64" />
     </Property>
-    <!-- CloseApplication sets Property only when the target is still running after
-         processing that row. This detection-only row therefore captures whether
-         the app was running before the following row safely closes it. -->
-    <util:CloseApplication
-      Id="DetectGhostSlackingBeforeUpgrade"
-      Target="GhostSlacking.App.exe"
-      Condition="WIX_UPGRADE_DETECTED"
-      Property="GHOSTSLACKING_WAS_RUNNING"
-      RebootPrompt="no"
-      Sequence="1" />
     <util:CloseApplication
       Id="CloseGhostSlackingForUpgrade"
       Target="GhostSlacking.App.exe"
@@ -50,21 +39,21 @@
       ElevatedCloseMessage="yes"
       Timeout="15"
       RebootPrompt="no"
-      Sequence="2" />
+      Sequence="1" />
     <util:CloseApplication
       Id="VerifyGhostSlackingStopped"
       Target="GhostSlacking.App.exe"
       Condition="WIX_UPGRADE_DETECTED"
       Property="GHOSTSLACKING_STILL_RUNNING"
       RebootPrompt="no"
-      Sequence="3" />
+      Sequence="2" />
     <util:CloseApplication
       Id="VerifyWatchdogStopped"
       Target="GhostSlacking.Watchdog.exe"
       Condition="WIX_UPGRADE_DETECTED"
       Property="GHOSTSLACKING_WATCHDOG_STILL_RUNNING"
       RebootPrompt="no"
-      Sequence="4" />
+      Sequence="3" />
 
     <netfx:DotNetCompatibilityCheck
       Property="DOTNETRUNTIMECHECK"
@@ -97,20 +86,8 @@
       Id="WIXUI_EXITDIALOGOPTIONALTEXT"
       Value="GhostSlacking 已安装成功。单击“完成”退出安装向导。" />
 
-    <SetProperty
-      Id="WixUnelevatedShellExecTarget"
-      Value="[INSTALLFOLDER]GhostSlacking.App.exe"
-      Before="RestartGhostSlackingAfterUpgrade"
-      Sequence="execute"
-      Condition="WIX_UPGRADE_DETECTED AND GHOSTSLACKING_WAS_RUNNING AND UILevel &gt;= 4 AND NOT Installed" />
     <CustomAction
-      Id="LaunchGhostSlackingAfterInstall"
-      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
-      DllEntry="WixUnelevatedShellExec"
-      Execute="immediate"
-      Return="ignore" />
-    <CustomAction
-      Id="RestartGhostSlackingAfterUpgrade"
+      Id="LaunchGhostSlackingFromExitDialog"
       BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
       DllEntry="WixUnelevatedShellExec"
       Execute="immediate"
@@ -127,10 +104,6 @@
         Action="BlockUpgradeWhileGhostSlackingIsRunning"
         After="Wix4CloseApplications_$(sys.BUILDARCHSHORT)"
         Condition="GHOSTSLACKING_STILL_RUNNING OR GHOSTSLACKING_WATCHDOG_STILL_RUNNING" />
-      <Custom
-        Action="RestartGhostSlackingAfterUpgrade"
-        After="InstallFinalize"
-        Condition="WIX_UPGRADE_DETECTED AND GHOSTSLACKING_WAS_RUNNING AND UILevel &gt;= 4 AND NOT Installed" />
     </InstallExecuteSequence>
 
     <StandardDirectory Id="ProgramFiles6432Folder">

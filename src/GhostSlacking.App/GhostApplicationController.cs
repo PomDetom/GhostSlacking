@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using System.Diagnostics;
 using System.Drawing;
@@ -20,6 +21,7 @@ internal sealed class GhostApplicationController : IDisposable
     private const int DiameterDecreaseHotkey = 8;
     private readonly FileLogger _logger;
     private readonly DataExportService _dataExport;
+    private readonly UpdateCompletionStore _updateCompletionStore;
     private readonly IApplicationUpdateManager _updates;
     private readonly IClassicDesktopStyleApplicationLifetime _lifetime;
     private readonly IUserNotificationService _notifications;
@@ -57,6 +59,7 @@ internal sealed class GhostApplicationController : IDisposable
     private readonly RevealFrameRateScheduler _revealFrameRate = new();
     private readonly Stopwatch _revealPerformanceClock = Stopwatch.StartNew();
     private SettingsWindow? _settingsWindow;
+    private UpdateWindow? _updateWindow;
     private readonly CancellationTokenSource _updateCancellation = new();
     private bool _disposed;
 
@@ -68,6 +71,7 @@ internal sealed class GhostApplicationController : IDisposable
         AppTheme.Apply(_settings.ThemeMode);
         _logger = new FileLogger(_settings);
         _dataExport = new DataExportService(_logger);
+        _updateCompletionStore = new UpdateCompletionStore(logger: _logger);
         _updates = new GitHubApplicationUpdateManager(_logger);
         _windows = new Win32WindowApi();
         _revealOverlay = new RevealEdgeOverlay(_logger);
@@ -93,7 +97,7 @@ internal sealed class GhostApplicationController : IDisposable
         _pickItem = CreateMenuItem(UiText.Text(_settings.Language, "pick"), BeginPicking);
         _toggleItem = CreateMenuItem(UiText.Text(_settings.Language, "toggle"), ToggleWindowVisibility);
         _settingsItem = CreateMenuItem(UiText.Text(_settings.Language, "settings"), () => OpenSettings());
-        _updateItem = CreateMenuItem(string.Empty, () => OpenSettings("about"));
+        _updateItem = CreateMenuItem(string.Empty, OpenUpdateWindow);
         _updateItem.IsVisible = false;
         _exitItem = CreateMenuItem(UiText.Text(_settings.Language, "exit"), ExitApplication);
         var menu = new NativeMenu
@@ -123,6 +127,7 @@ internal sealed class GhostApplicationController : IDisposable
         _trayIcon.Clicked += OnTrayIconClicked;
         _notifications = new AvaloniaNotificationService(_windows.GetCursorPosition, _logger);
         _updates.Changed += OnUpdateStateChanged;
+        _updates.InstallHandoffStarted += OnUpdateInstallHandoffStarted;
 
         _coordinator.StateChanged += (_, _) => UpdateTrayStatus();
         _coordinator.UserErrorOccurred += (_, error) => ShowCoreError(error.Kind);
@@ -144,7 +149,32 @@ internal sealed class GhostApplicationController : IDisposable
     internal void ShowStartupNotification()
     {
         _logger.Log(LogLevel.Debug, "Startup notification requested.");
-        ShowInfo(UiText.Text(_settings.Language, "startupReady"));
+        var updateResult = _updateCompletionStore.Consume();
+        if (updateResult is null)
+        {
+            ShowInfo(UiText.Text(_settings.Language, "startupReady"));
+            return;
+        }
+
+        _logger.Log(
+            updateResult.Status == UpdateCompletionStatus.Failed ? LogLevel.Warning : LogLevel.Info,
+            $"UpdateCompletion status={updateResult.Status} version={updateResult.Version} exitCode={updateResult.InstallerExitCode}");
+        switch (updateResult.Status)
+        {
+            case UpdateCompletionStatus.Succeeded:
+                ShowInfo(string.Format(
+                    UiText.Text(_settings.Language, "updateCompleted"),
+                    updateResult.Version));
+                break;
+            case UpdateCompletionStatus.Cancelled:
+                ShowInfo(UiText.Text(_settings.Language, "updateCancelled"));
+                break;
+            default:
+                ShowError(string.Format(
+                    UiText.Text(_settings.Language, "automaticUpdateFailed"),
+                    updateResult.Version));
+                break;
+        }
     }
 
     internal async void BeginAutomaticUpdateCheck()
@@ -154,9 +184,12 @@ internal sealed class GhostApplicationController : IDisposable
             var snapshot = await _updates.CheckAsync(_updateCancellation.Token);
             if (snapshot.Status == ApplicationUpdateStatus.Available && snapshot.Release is not null && !_isExiting)
             {
-                await Dispatcher.UIThread.InvokeAsync(() => ShowInfo(string.Format(
-                    UiText.Text(_settings.Language, "updateAvailableNotification"),
-                    snapshot.Release.VersionText)));
+                await Dispatcher.UIThread.InvokeAsync(() => _notifications.Show(
+                    string.Format(
+                        UiText.Text(_settings.Language, "updateAvailableNotification"),
+                        snapshot.Release.VersionText),
+                    UserNotificationSeverity.Info,
+                    OpenUpdateWindow));
             }
         }
         catch (OperationCanceledException) when (_updateCancellation.IsCancellationRequested)
@@ -499,6 +532,7 @@ internal sealed class GhostApplicationController : IDisposable
                 exportLogs: stream => _dataExport.ExportLogsAsync(stream, _settings.MinimumLogLevel),
                 exportSettings: (settings, stream) => _dataExport.ExportSettingsAsync(stream, settings),
                 updates: _updates,
+                openUpdateWindow: OpenUpdateWindow,
                 initialPage: initialPage);
             _settingsWindow = window;
             window.Closed += OnSettingsClosed;
@@ -515,6 +549,76 @@ internal sealed class GhostApplicationController : IDisposable
                 RegisterHotkeys();
             }
         }
+    }
+
+    private void OpenUpdateWindow()
+    {
+        if (_isExiting || _updates.Snapshot.Release is null)
+        {
+            return;
+        }
+
+        if (_updateWindow is not null)
+        {
+            _updateWindow.RefreshLanguage(_settings.Language);
+            ActivateOwnedWindow(_updateWindow);
+            return;
+        }
+
+        try
+        {
+            var window = new UpdateWindow(_updates, _settings.Language);
+            _updateWindow = window;
+            window.Closed += OnUpdateWindowClosed;
+            window.Show();
+            window.Activate();
+        }
+        catch (Exception exception)
+        {
+            _updateWindow = null;
+            _logger.Log(LogLevel.Error, "The update window could not be shown.", exception);
+            ShowError(UiText.Text(_settings.Language, "updateWindowOpenFailed"));
+        }
+    }
+
+    private void OnUpdateWindowClosed(object? sender, EventArgs args)
+    {
+        if (_updateWindow is null)
+        {
+            return;
+        }
+
+        _updateWindow.Closed -= OnUpdateWindowClosed;
+        _updateWindow = null;
+    }
+
+    private void ActivateOwnedWindow(Window window)
+    {
+        if (window.WindowState == WindowState.Minimized)
+        {
+            window.WindowState = WindowState.Normal;
+        }
+
+        window.Activate();
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_isExiting || !window.IsVisible)
+            {
+                return;
+            }
+
+            var handle = window.TryGetPlatformHandle()?.Handle ?? 0;
+            var result = _windows.BringToForeground(handle);
+            if (result.Success)
+            {
+                return;
+            }
+
+            _logger.Log(
+                LogLevel.Warning,
+                $"Update window foreground activation failed error={result.ErrorCode} message={result.ErrorMessage}");
+            window.Activate();
+        }, DispatcherPriority.Background);
     }
 
     private void OnSettingsClosed(object? sender, EventArgs args)
@@ -544,6 +648,7 @@ internal sealed class GhostApplicationController : IDisposable
         _settings = updated;
         _logger.MinimumLevel = _settings.MinimumLogLevel;
         AppTheme.Apply(_settings.ThemeMode);
+        _updateWindow?.RefreshLanguage(_settings.Language);
         if (previousKey != _settings.PeekVirtualKey || previousTrigger != _settings.PeekTrigger)
         {
             _peekState.Reset(_windows.IsKeyDown(_settings.PeekVirtualKey));
@@ -600,7 +705,9 @@ internal sealed class GhostApplicationController : IDisposable
         _restoreAllItem.Header = UiText.Text(_settings.Language, "restoreAll");
         _settingsItem.Header = UiText.Text(_settings.Language, "settings");
         var update = _updates.Snapshot;
-        var showUpdate = update.Status == ApplicationUpdateStatus.Available && update.Release is not null;
+        var showUpdate = update.Release is not null &&
+            update.Release.Version > Version.Parse(update.CurrentVersion) &&
+            update.Status is not ApplicationUpdateStatus.Skipped and not ApplicationUpdateStatus.UpToDate;
         _updateItem.IsVisible = showUpdate;
         _updateItem.Header = showUpdate
             ? string.Format(UiText.Text(_settings.Language, "updateAvailableTray"), update.Release!.VersionText)
@@ -686,6 +793,9 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void OnCloseRequested() => Dispatcher.UIThread.Post(() => ExitApplication(restoreAll: true));
 
+    private void OnUpdateInstallHandoffStarted(object? sender, EventArgs args) =>
+        Dispatcher.UIThread.Post(() => ExitApplication(restoreAll: true));
+
     public void Dispose()
     {
         if (_disposed)
@@ -716,8 +826,16 @@ internal sealed class GhostApplicationController : IDisposable
             _settingsWindow = null;
         }
 
+        if (_updateWindow is not null)
+        {
+            _updateWindow.Closed -= OnUpdateWindowClosed;
+            _updateWindow.Close();
+            _updateWindow = null;
+        }
+
         _notifications.Dispose();
         _updates.Changed -= OnUpdateStateChanged;
+        _updates.InstallHandoffStarted -= OnUpdateInstallHandoffStarted;
         _updates.Dispose();
         _updateCancellation.Dispose();
         _trayIcon.Clicked -= OnTrayIconClicked;

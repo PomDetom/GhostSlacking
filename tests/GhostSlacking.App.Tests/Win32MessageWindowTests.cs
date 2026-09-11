@@ -50,6 +50,15 @@ public sealed class Win32MessageWindowTests
     }
 
     [Fact]
+    public void Foreground_activation_rejects_an_invalid_window_handle()
+    {
+        var result = new Win32WindowApi().BringToForeground(0);
+
+        Assert.False(result.Success);
+        Assert.Equal("SetForegroundWindow", result.Operation);
+    }
+
+    [Fact]
     public void Overlay_window_applies_ring_and_disposes_repeatedly()
     {
         var window = new Win32OverlayWindow();

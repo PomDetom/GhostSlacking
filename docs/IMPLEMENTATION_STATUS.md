@@ -1,6 +1,6 @@
 # Implementation status
 
-> 更新基准：2026-09-10，依据当前工作区代码、解决方案项目清单和 Debug/Release 构建测试结果整理。代码已实现不等于真实窗口兼容性验收已完成；后者仍以 Windows 手工矩阵为准。
+> 更新基准：2026-09-11，依据当前工作区代码、解决方案项目清单和 Debug/Release 构建测试结果整理。代码已实现不等于真实窗口兼容性验收已完成；后者仍以 Windows 手工矩阵为准。
 
 ## 当前总览
 
@@ -15,12 +15,12 @@
 ## 当前验证结果
 
 - `dotnet build GhostSlacking.sln --configuration Debug`：0 个警告，0 个错误。
-- `dotnet test GhostSlacking.sln --configuration Debug/Release`：202 个测试通过（Core 114，App 88），两个配置均为 0 个失败、0 个跳过。
-- 解决方案当前包含 4 个生产项目：`Core`、`Platform`、`App`、`Watchdog`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
+- `dotnet test GhostSlacking.sln --configuration Debug/Release`：239 个测试通过（Core 115，App 124），两个配置均为 0 个失败、0 个跳过；发布元数据 PowerShell 测试另行通过。
+- 解决方案当前包含 5 个生产项目：`Core`、`Platform`、`App`、`Watchdog`、`Updater`；以及 2 个测试项目：`Core.Tests`、`App.Tests`。
 
 ## 已完成：Phase 1 Core Demo 与 App 宿主基线
 
-- 四个生产项目边界：`Core`、`Platform`、`App` 和独立的 `Watchdog`；Core 保持平台无关，Win32 细节位于 Platform。
+- 五个生产项目边界：`Core`、`Platform`、`App`、独立的 `Watchdog` 和 `Updater`；Core 保持平台无关，Win32 细节位于 Platform。
 - Per Monitor V2 DPI manifest 和 Avalonia Win32 平台初始化。
 - 顶层窗口拾取：`WindowFromPoint`、`GetAncestor`、可见性/系统窗口/自身进程过滤。
 - 原始窗口快照：HWND、PID、必需的进程启动标识、rect、完整 `WINDOWPLACEMENT`、可见/最小化/最大化状态、原始 region 数据和 style 快照；启动身份或 placement 不可读取时在修改前失败。
@@ -63,9 +63,10 @@
 ## 已实现：Phase 3 Productization 基线
 
 - Avalonia + FluentAvalonia 设置页、中文/English 文案、跟随系统/浅色/深色主题、主题实时预览与取消回滚、设置保存反馈和单项恢复默认按钮。
-- 左侧“关于”页、GitHub 项目/Release 入口、每次启动稳定版检查、仅抑制通知的跳过版本、上次成功检查时间、受校验的 MSI 下载，以及通过既有安全关闭协议启动交互式升级。
+- 左侧“关于”页、GitHub 项目/Release 入口、每次启动稳定版检查、可点击且支持悬停暂停的更新通知、可重复激活的独立更新窗口、中英双语及跨版本 Release 说明、跳过版本后关闭窗口、上次成功检查时间，以及受校验的一键 MSI 自动升级。
+- `Updater` 在应用安全退出后等待主进程和 Watchdog，显示 MSI 被动进度并负责重新启动应用；UAC 取消或安装失败时恢复可用应用，并通过一次性结果文件在下次启动反馈结果。
 - JSON 配置归一化、损坏配置回退、每类 2 MB × 5 文件且清理 30 天前备份的滚动日志、日志诊断 ZIP、已保存配置 JSON 导出、单实例互斥、HKCU 开机启动开关和退出时恢复选项。
-- WiX MSI 安装器、开始菜单/桌面快捷方式选项、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、发布、构建和 MSI 校验，GitHub Actions 已配置测试与标签发布流程。
+- WiX MSI 安装器、开始菜单/桌面快捷方式选项、首次安装和升级完成页的启动选择、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、发布、构建和 MSI 校验，GitHub Actions 已配置 Conventional Commits、双语发布 PR 元数据校验及标签发布流程。
 
 ## 已实现：Phase 4 Advanced Rendering 原型
 

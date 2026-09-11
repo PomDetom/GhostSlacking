@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -22,6 +23,36 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate pull request metadata
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $subjects = @(git log --format=%s "$env:PR_BASE_SHA..$env:PR_HEAD_SHA")
+          if ($LASTEXITCODE -ne 0 -or $subjects.Count -eq 0) {
+              throw "Could not determine pull request commits."
+          }
+          foreach ($subject in $subjects) {
+              .\scripts\release-metadata.ps1 -Mode ValidateCommit -Subject $subject
+          }
+
+          if ($env:PR_BASE_REF -eq 'master' -and $env:PR_HEAD_REF -eq 'dev') {
+              $bodyPath = Join-Path $env:RUNNER_TEMP 'release-pr-body.md'
+              [System.IO.File]::WriteAllText($bodyPath, $env:PR_BODY, [System.Text.UTF8Encoding]::new($false))
+              .\scripts\release-metadata.ps1 -Mode ValidateNotes -BodyPath $bodyPath
+          }
+
+      - name: Test release metadata tooling
+        shell: pwsh
+        run: .\tests\ReleaseMetadata.Tests.ps1
 
       - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@v6

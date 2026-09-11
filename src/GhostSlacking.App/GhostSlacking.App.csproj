@@ -64,4 +64,21 @@
       DestinationFiles="@(WatchdogPublishArtifact->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
       SkipUnchangedFiles="true" />
   </Target>
+  <Target Name="PublishUpdaterArtifacts" AfterTargets="Publish">
+    <PropertyGroup>
+      <UpdaterPublishDirectory>$(IntermediateOutputPath)updater-publish\</UpdaterPublishDirectory>
+    </PropertyGroup>
+    <MSBuild
+      Projects="..\GhostSlacking.Updater\GhostSlacking.Updater.csproj"
+      Targets="Publish"
+      BuildInParallel="false"
+      Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(UpdaterPublishDirectory);DebugSymbols=$(DebugSymbols);DebugType=$(DebugType);Version=$(Version);AssemblyVersion=$(AssemblyVersion);FileVersion=$(FileVersion);InformationalVersion=$(InformationalVersion)" />
+    <ItemGroup>
+      <UpdaterPublishArtifact Include="$(UpdaterPublishDirectory)**\*" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(UpdaterPublishArtifact)"
+      DestinationFiles="@(UpdaterPublishArtifact->'$(PublishDir)Updater\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+  </Target>
 </Project>

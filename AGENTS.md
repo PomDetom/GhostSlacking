@@ -2,13 +2,15 @@
 
 ## Project Structure & Module Organization
 
-`GhostSlacking.sln` contains three production projects under `src/`:
+`GhostSlacking.sln` contains five production projects under `src/`:
 
 - `GhostSlacking.Core`: platform-neutral domain models, geometry, state coordination, settings, and recovery logic.
 - `GhostSlacking.Platform`: Windows/Win32 adapters for window selection, hooks, hotkeys, and visibility.
 - `GhostSlacking.App`: the WinForms tray host, Avalonia/FluentAvalonia settings UI, startup integration, and logging.
+- `GhostSlacking.Watchdog`: the independent recovery process used after an abnormal app exit.
+- `GhostSlacking.Updater`: the independent handoff process used for verified MSI upgrades.
 
-Automated tests live in `tests/GhostSlacking.Core.Tests`. Architecture decisions, implementation phases, and the manual compatibility matrix are in `docs/`. Generated output belongs in `bin/`, `obj/`, or `artifacts/`; do not commit it.
+Automated tests live in `tests/GhostSlacking.Core.Tests` and `tests/GhostSlacking.App.Tests`. Architecture decisions, implementation phases, and the manual compatibility matrix are in `docs/`. Generated output belongs in `bin/`, `obj/`, or `artifacts/`; do not commit it.
 
 ## Build, Test, and Development Commands
 
@@ -33,11 +35,11 @@ Tests use xUnit and `[Fact]`. Name tests as behavior statements in `snake_case`,
 
 ## Commit & Pull Request Guidelines
 
-History is currently minimal, so use concise, imperative commit subjects such as `Add configurable Peek hotkey`; keep each commit focused. Pull requests should explain the user-visible behavior, list automated and manual validation, link relevant issues, and include screenshots for UI changes. Call out Win32 compatibility risks and any changes to restore behavior explicitly.
+Use Conventional Commit subjects with one of `feat`, `fix`, `perf`, `refactor`, `docs`, `build`, `ci`, `test`, `chore`, or `revert`; optional scopes and `!` are supported. For example, use `feat(hotkeys): add configurable Peek shortcut` and `chore(release): prepare 0.2.0`. Keep each commit focused. Pull requests should explain the user-visible behavior, list automated and manual validation, link relevant issues, and include screenshots for UI changes. Call out Win32 compatibility risks and any changes to restore behavior explicitly. Release PRs from `dev` to `master` must use `.github/PULL_REQUEST_TEMPLATE/release.md` and complete both release-notes language blocks.
 
 ## Branch and Release Workflow
 
-Use `dev` for day-to-day development and keep `master` releasable. Release changes must go through a GitHub Pull Request from `dev` to `master`; do not routinely merge locally and push directly to `master`. The PR must pass the `Release tests` GitHub Actions check before merging.
+Use `dev` for day-to-day development and keep `master` releasable. Release changes must go through a GitHub Pull Request from `dev` to `master`; do not routinely merge locally and push directly to `master`. The PR must pass the `Release tests` and metadata validation before merging. The resulting merge commit is the only valid target for the release tag because the tag workflow extracts the bilingual Release body from that associated PR.
 
 After the PR is merged, create the release tag on the resulting `master` commit using the `vMAJOR.MINOR.PATCH` format, then push only that tag:
 

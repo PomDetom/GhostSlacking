@@ -43,6 +43,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly Func<AppSettings, Stream, Task<DataExportResult>> _exportSettings;
     private readonly Action<UiThemeMode> _applyTheme;
     private readonly IApplicationUpdateManager? _updates;
+    private readonly Action? _openUpdateWindow;
     private readonly List<(TextBlock Text, string Key)> _localizedText = [];
     private readonly List<(Button Button, string Key)> _localizedButtons = [];
     private readonly Dictionary<string, Control> _pages = [];
@@ -75,9 +76,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly TextBlock _updateStatusText;
     private readonly ProgressBar _updateProgress;
     private readonly Button _checkUpdatesButton;
-    private readonly Button _installUpdateButton;
-    private readonly Button _skipUpdateButton;
-    private readonly Button _resumeUpdateButton;
+    private readonly Button _viewUpdateButton;
     private readonly Button _sourceRepositoryButton;
     private readonly Button _releasePageButton;
     private readonly ToggleSwitch _restoreOnExit;
@@ -98,7 +97,6 @@ internal sealed class SettingsWindow : AppWindow
     private bool _initializing = true;
     private string _selectedPage = RevealPage;
     private string? _exportStatusKey;
-    private CancellationTokenSource? _downloadCancellation;
 
     public SettingsWindow(
         AppSettings settings,
@@ -107,6 +105,7 @@ internal sealed class SettingsWindow : AppWindow
         Func<Stream, Task<DataExportResult>>? exportLogs = null,
         Func<AppSettings, Stream, Task<DataExportResult>>? exportSettings = null,
         IApplicationUpdateManager? updates = null,
+        Action? openUpdateWindow = null,
         string? initialPage = null)
     {
         _editState = new SettingsEditState(settings);
@@ -115,6 +114,7 @@ internal sealed class SettingsWindow : AppWindow
         _exportLogs = exportLogs ?? (_ => Task.FromResult(DataExportResult.Failure()));
         _exportSettings = exportSettings ?? ((_, _) => Task.FromResult(DataExportResult.Failure()));
         _updates = updates;
+        _openUpdateWindow = openUpdateWindow;
         _peekVirtualKey = settings.PeekVirtualKey;
 
         ApplyThemePalette();
@@ -148,15 +148,11 @@ internal sealed class SettingsWindow : AppWindow
         _updateStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap };
         _updateProgress = new ProgressBar { Minimum = 0, Maximum = 100, IsVisible = false };
         _checkUpdatesButton = new Button { MinWidth = 120 };
-        _installUpdateButton = new Button { MinWidth = 120, IsVisible = false };
-        _skipUpdateButton = new Button { MinWidth = 110, IsVisible = false };
-        _resumeUpdateButton = new Button { MinWidth = 110, IsVisible = false };
+        _viewUpdateButton = new Button { MinWidth = 130, IsVisible = false };
         _sourceRepositoryButton = CreateTextButton(settings.Language, "sourceRepository");
         _releasePageButton = CreateTextButton(settings.Language, "releasePage");
         _checkUpdatesButton.Click += OnCheckUpdatesClicked;
-        _installUpdateButton.Click += OnInstallUpdateClicked;
-        _skipUpdateButton.Click += OnSkipUpdateClicked;
-        _resumeUpdateButton.Click += OnResumeUpdateClicked;
+        _viewUpdateButton.Click += OnViewUpdateClicked;
         _sourceRepositoryButton.Click += OnSourceRepositoryClicked;
         _releasePageButton.Click += OnReleasePageClicked;
         _restoreOnExit = new ToggleSwitch { IsChecked = settings.RestoreOnExit };
@@ -424,9 +420,7 @@ internal sealed class SettingsWindow : AppWindow
             Children =
             {
                 _checkUpdatesButton,
-                _installUpdateButton,
-                _skipUpdateButton,
-                _resumeUpdateButton
+                _viewUpdateButton
             }
         };
         var updatePanel = new StackPanel
@@ -932,70 +926,7 @@ internal sealed class SettingsWindow : AppWindow
         await _updates.CheckAsync();
     }
 
-    private async void OnInstallUpdateClicked(object? sender, RoutedEventArgs args)
-    {
-        if (_updates is null)
-        {
-            return;
-        }
-
-        if (_downloadCancellation is not null)
-        {
-            _downloadCancellation.Cancel();
-            return;
-        }
-
-        if (!_updates.CanInstallUpdates)
-        {
-            _updates.OpenReleasePage();
-            return;
-        }
-
-        var release = _updates.Snapshot.Release;
-        if (release is null)
-        {
-            return;
-        }
-
-        var dialog = new ContentDialog
-        {
-            Title = UiText.Text(CurrentLanguage, "installUpdateTitle"),
-            Content = new TextBlock
-            {
-                Text = string.Format(UiText.Text(CurrentLanguage, "installUpdateConfirmation"), release.VersionText),
-                TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 460
-            },
-            PrimaryButtonText = UiText.Text(CurrentLanguage, "downloadAndInstall"),
-            CloseButtonText = UiText.Text(CurrentLanguage, "cancel"),
-            DefaultButton = ContentDialogButton.Primary
-        };
-        if (await dialog.ShowAsync(this) != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        _downloadCancellation = new CancellationTokenSource();
-        RefreshUpdateView();
-        try
-        {
-            var installerPath = await _updates.DownloadInstallerAsync(_downloadCancellation.Token);
-            if (installerPath is not null)
-            {
-                _updates.LaunchInstaller(installerPath);
-            }
-        }
-        finally
-        {
-            _downloadCancellation.Dispose();
-            _downloadCancellation = null;
-            RefreshUpdateView();
-        }
-    }
-
-    private void OnSkipUpdateClicked(object? sender, RoutedEventArgs args) => _updates?.SkipCurrentRelease();
-
-    private void OnResumeUpdateClicked(object? sender, RoutedEventArgs args) => _updates?.ResumeCurrentRelease();
+    private void OnViewUpdateClicked(object? sender, RoutedEventArgs args) => _openUpdateWindow?.Invoke();
 
     private void OnSourceRepositoryClicked(object? sender, RoutedEventArgs args) => _updates?.OpenSourceRepository();
 
@@ -1052,22 +983,9 @@ internal sealed class SettingsWindow : AppWindow
 
         var updateKnown = snapshot.Release is not null && snapshot.Release.Version >
             Version.Parse(snapshot.CurrentVersion);
-        _installUpdateButton.IsVisible = updateKnown &&
-            snapshot.Status is not ApplicationUpdateStatus.UpToDate;
-        _installUpdateButton.IsEnabled = snapshot.Status is ApplicationUpdateStatus.Available or
-            ApplicationUpdateStatus.Skipped or ApplicationUpdateStatus.Error or
-            ApplicationUpdateStatus.Downloading;
-        _installUpdateButton.Content = _downloadCancellation is not null
-            ? UiText.Text(language, "cancelDownload")
-            : _updates?.CanInstallUpdates == true
-                ? UiText.Text(language, "downloadAndInstall")
-                : UiText.Text(language, "viewRelease");
-        _skipUpdateButton.Content = UiText.Text(language, "skipVersion");
-        _skipUpdateButton.IsVisible = snapshot.Status == ApplicationUpdateStatus.Available;
-        _skipUpdateButton.IsEnabled = !busy;
-        _resumeUpdateButton.Content = UiText.Text(language, "resumeReminders");
-        _resumeUpdateButton.IsVisible = snapshot.Status == ApplicationUpdateStatus.Skipped;
-        _resumeUpdateButton.IsEnabled = !busy;
+        _viewUpdateButton.Content = UiText.Text(language, "viewUpdateDetails");
+        _viewUpdateButton.IsVisible = updateKnown;
+        _viewUpdateButton.IsEnabled = !busy && _openUpdateWindow is not null;
     }
 
     private async Task ExportAsync(
@@ -1318,9 +1236,6 @@ internal sealed class SettingsWindow : AppWindow
 
     private void OnClosed(object? sender, EventArgs args)
     {
-        _downloadCancellation?.Cancel();
-        _downloadCancellation?.Dispose();
-        _downloadCancellation = null;
         if (_updates is not null)
         {
             _updates.Changed -= OnUpdateStateChanged;
@@ -1331,9 +1246,7 @@ internal sealed class SettingsWindow : AppWindow
         _exportLogsButton.Click -= OnExportLogsClicked;
         _exportSettingsButton.Click -= OnExportSettingsClicked;
         _checkUpdatesButton.Click -= OnCheckUpdatesClicked;
-        _installUpdateButton.Click -= OnInstallUpdateClicked;
-        _skipUpdateButton.Click -= OnSkipUpdateClicked;
-        _resumeUpdateButton.Click -= OnResumeUpdateClicked;
+        _viewUpdateButton.Click -= OnViewUpdateClicked;
         _sourceRepositoryButton.Click -= OnSourceRepositoryClicked;
         _releasePageButton.Click -= OnReleasePageClicked;
         _themeMode.SelectionChanged -= OnThemeModeSelectionChanged;

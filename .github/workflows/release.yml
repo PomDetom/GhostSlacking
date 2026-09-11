@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -40,7 +41,51 @@ jobs:
               throw "Release tag must use the vMAJOR.MINOR.PATCH format: $tag"
           }
 
-          "value=$($Matches[1])" >> $env:GITHUB_OUTPUT
+          $version = [version]$Matches[1]
+          $previousTag = @(git tag --merged "$tag^" --list 'v*.*.*' --sort=-version:refname |
+              Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+              Select-Object -First 1)
+          if ($previousTag.Count -gt 0) {
+              .\scripts\release-metadata.ps1 -Mode ValidateVersion -Tag $tag -PreviousTag $previousTag[0]
+          } else {
+              .\scripts\release-metadata.ps1 -Mode ValidateVersion -Tag $tag
+          }
+
+          "value=$version" >> $env:GITHUB_OUTPUT
+          "previous_tag=$($previousTag | Select-Object -First 1)" >> $env:GITHUB_OUTPUT
+
+      - name: Build release notes from merged PR
+        id: notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          $pullRequestsPath = Join-Path $env:RUNNER_TEMP 'release-pull-requests.json'
+          $prBodyPath = Join-Path $env:RUNNER_TEMP 'release-pr-body.md'
+          $releaseNotesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          gh api `
+              -H 'Accept: application/vnd.github+json' `
+              -H 'X-GitHub-Api-Version: 2022-11-28' `
+              "/repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA/pulls" > $pullRequestsPath
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Failed to query pull requests associated with the release commit.'
+          }
+
+          .\scripts\release-metadata.ps1 `
+              -Mode SelectReleasePr `
+              -PullRequestsPath $pullRequestsPath `
+              -CommitSha $env:GITHUB_SHA `
+              -OutputPath $prBodyPath
+          .\scripts\release-metadata.ps1 `
+              -Mode Compose `
+              -BodyPath $prBodyPath `
+              -OutputPath $releaseNotesPath `
+              -Tag $env:RELEASE_TAG `
+              -PreviousTag $env:PREVIOUS_TAG `
+              -RepositoryUrl "https://github.com/$env:GITHUB_REPOSITORY"
+          "path=$releaseNotesPath" >> $env:GITHUB_OUTPUT
 
       - name: Build release package
         shell: pwsh
@@ -77,6 +122,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          RELEASE_NOTES_FILE: ${{ steps.notes.outputs.path }}
         run: |
           $releaseDirectory = "artifacts\releases\$env:RELEASE_VERSION"
           $installer = "$releaseDirectory\GhostSlacking-$env:RELEASE_VERSION-win-x64.msi"
@@ -88,7 +134,7 @@ jobs:
               $checksum `
               $manifest `
               --verify-tag `
-              --generate-notes `
+              --notes-file $env:RELEASE_NOTES_FILE `
               --title "GhostSlacking $env:RELEASE_VERSION"
           if ($LASTEXITCODE -ne 0) {
               throw "Failed to publish GitHub Release $env:RELEASE_TAG."

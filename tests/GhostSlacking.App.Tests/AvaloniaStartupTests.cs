@@ -27,6 +27,7 @@ public sealed class AvaloniaStartupTests
                 AssertDefaultSettingsWindowLayout(settingsWindow);
                 AssertPeekFrameRateSetting(settingsWindow);
                 AssertAboutPage();
+                AssertUpdateWindow();
                 AssertThemePreviewLifecycle();
                 AssertSavedSettingsExport();
                 using var trayIcon = new TrayIcon
@@ -179,13 +180,26 @@ public sealed class AvaloniaStartupTests
             Asset("GhostSlacking-1.2.0-win-x64.msi"),
             Asset("GhostSlacking-1.2.0-win-x64.msi.sha256"),
             Asset("release.json"),
-            new string('A', 64));
+            new string('A', 64),
+            [
+                new ReleaseNotesEntry(
+                    new Version(1, 2, 0),
+                    "1.2.0",
+                    new Uri("https://github.com/PomDetom/GhostSlacking/releases/tag/v1.2.0"),
+                    new LocalizedReleaseNotes("### 新功能\n- 显示更新内容。", "### Features\n- Show what's new."))
+            ]);
         using var updates = new TestUpdateManager(new ApplicationUpdateSnapshot(
             ApplicationUpdateStatus.Available,
             "1.1.0",
             release,
             LastSuccessfulCheckUtc: lastSuccessfulCheck));
-        var window = new SettingsWindow(new AppSettings(), _ => true, updates: updates, initialPage: "about");
+        var opened = false;
+        var window = new SettingsWindow(
+            new AppSettings(),
+            _ => true,
+            updates: updates,
+            openUpdateWindow: () => opened = true,
+            initialPage: "about");
         var navigation = GetPrivateField<NavigationView>(window, "_navigation");
         var aboutItem = GetPrivateField<NavigationViewItem>(window, "_aboutItem");
         var pageTitle = GetPrivateField<TextBlock>(window, "_pageTitle");
@@ -193,9 +207,7 @@ public sealed class AvaloniaStartupTests
         var latestVersion = GetPrivateField<TextBlock>(window, "_latestVersionText");
         var lastUpdateCheck = GetPrivateField<TextBlock>(window, "_lastUpdateCheckText");
         var updateStatus = GetPrivateField<TextBlock>(window, "_updateStatusText");
-        var install = GetPrivateField<Button>(window, "_installUpdateButton");
-        var skip = GetPrivateField<Button>(window, "_skipUpdateButton");
-        var resume = GetPrivateField<Button>(window, "_resumeUpdateButton");
+        var viewUpdate = GetPrivateField<Button>(window, "_viewUpdateButton");
         var sourceRepository = GetPrivateField<Button>(window, "_sourceRepositoryButton");
         var releasePage = GetPrivateField<Button>(window, "_releasePageButton");
 
@@ -205,8 +217,10 @@ public sealed class AvaloniaStartupTests
         Assert.Equal("当前版本：1.1.0", currentVersion.Text);
         Assert.Equal("最新版本：1.2.0", latestVersion.Text);
         Assert.Equal("上次成功检查：2026-09-10 16:30", lastUpdateCheck.Text);
-        Assert.True(install.IsVisible);
-        Assert.True(skip.IsVisible);
+        Assert.True(viewUpdate.IsVisible);
+        Assert.Equal("查看更新内容", viewUpdate.Content);
+        viewUpdate.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.True(opened);
         Assert.Equal("GitHub 项目", sourceRepository.Content);
         Assert.Equal("发布页", releasePage.Content);
         var projectButtons = Assert.IsType<StackPanel>(sourceRepository.Parent);
@@ -219,9 +233,7 @@ public sealed class AvaloniaStartupTests
 
         updates.SkipCurrentRelease();
 
-        Assert.True(install.IsVisible);
-        Assert.False(skip.IsVisible);
-        Assert.True(resume.IsVisible);
+        Assert.True(viewUpdate.IsVisible);
         Assert.Equal(SettingsStatus.None, GetPrivateField<SettingsEditState>(window, "_editState").Status);
 
         updates.SetStatus(ApplicationUpdateStatus.Error);
@@ -243,6 +255,79 @@ public sealed class AvaloniaStartupTests
             "No successful update check yet",
             GetPrivateField<TextBlock>(uncheckedWindow, "_lastUpdateCheckText").Text);
         uncheckedWindow.Close();
+    }
+
+    private static void AssertUpdateWindow()
+    {
+        var releaseUrl = new Uri("https://github.com/PomDetom/GhostSlacking/releases/tag/v1.2.0");
+        var release = new UpdateRelease(
+            new Version(1, 2, 0),
+            "1.2.0",
+            releaseUrl,
+            Asset("GhostSlacking-1.2.0-win-x64.msi"),
+            Asset("GhostSlacking-1.2.0-win-x64.msi.sha256"),
+            Asset("release.json"),
+            new string('A', 64),
+            [
+                new ReleaseNotesEntry(
+                    new Version(1, 2, 0),
+                    "1.2.0",
+                    releaseUrl,
+                    new LocalizedReleaseNotes("### 新功能\n- 显示更新内容。", "### Features\n- Show what's new."))
+            ],
+            ReleaseHistoryIncomplete: true);
+        using var updates = new TestUpdateManager(new ApplicationUpdateSnapshot(
+            ApplicationUpdateStatus.Available,
+            "1.1.0",
+            release),
+            installerPath: "update.msi");
+        var window = new UpdateWindow(updates, UiLanguage.Chinese);
+        var notes = GetPrivateField<StackPanel>(window, "_notesPanel");
+        var install = GetPrivateField<Button>(window, "_installButton");
+        var skip = GetPrivateField<Button>(window, "_skipButton");
+        var warning = GetPrivateField<TextBlock>(window, "_historyWarningText");
+
+        Assert.Equal("从 1.1.0 更新到 1.2.0", GetPrivateField<TextBlock>(window, "_versionText").Text);
+        Assert.Contains(notes.Children.OfType<TextBlock>(), text => text.Text == "• 显示更新内容。");
+        Assert.True(warning.IsVisible);
+        Assert.Equal("下载并安装", install.Content);
+        Assert.Equal("跳过此版本", skip.Content);
+        install.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(1, updates.DownloadCalls);
+        Assert.Equal(1, updates.BeginInstallCalls);
+
+        var skippedWindowClosed = false;
+        window.Closed += (_, _) => skippedWindowClosed = true;
+        skip.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(ApplicationUpdateStatus.Skipped, updates.Snapshot.Status);
+        Assert.True(skippedWindowClosed);
+
+        var resumeWindow = new UpdateWindow(updates, UiLanguage.Chinese);
+        var resume = GetPrivateField<Button>(resumeWindow, "_skipButton");
+        var resumedWindowClosed = false;
+        resumeWindow.Closed += (_, _) => resumedWindowClosed = true;
+        Assert.Equal("恢复提醒", resume.Content);
+        resume.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(ApplicationUpdateStatus.Available, updates.Snapshot.Status);
+        Assert.False(resumedWindowClosed);
+        resumeWindow.RefreshLanguage(UiLanguage.English);
+        Assert.Contains(
+            GetPrivateField<StackPanel>(resumeWindow, "_notesPanel").Children.OfType<TextBlock>(),
+            text => text.Text == "• Show what's new.");
+        Assert.Equal("Later", GetPrivateField<Button>(resumeWindow, "_laterButton").Content);
+        resumeWindow.Close();
+
+        using var portableUpdates = new TestUpdateManager(new ApplicationUpdateSnapshot(
+            ApplicationUpdateStatus.Available,
+            "1.1.0",
+            release),
+            canInstallUpdates: false);
+        var portableWindow = new UpdateWindow(portableUpdates, UiLanguage.English);
+        Assert.False(GetPrivateField<Button>(portableWindow, "_installButton").IsEnabled);
+        Assert.Equal(
+            UiText.Text(UiLanguage.English, "portableUpdateDescription"),
+            GetPrivateField<TextBlock>(portableWindow, "_statusText").Text);
+        portableWindow.Close();
     }
 
     private static UpdateAsset Asset(string name) => new(
@@ -277,16 +362,30 @@ public sealed class AvaloniaStartupTests
         method.Invoke(settingsWindow, [null, new Avalonia.Interactivity.RoutedEventArgs()]);
     }
 
-    private sealed class TestUpdateManager(ApplicationUpdateSnapshot snapshot) : IApplicationUpdateManager
+    private sealed class TestUpdateManager(
+        ApplicationUpdateSnapshot snapshot,
+        bool canInstallUpdates = true,
+        string? installerPath = null) : IApplicationUpdateManager
     {
         public ApplicationUpdateSnapshot Snapshot { get; private set; } = snapshot;
-        public bool CanInstallUpdates => true;
+        public bool CanInstallUpdates { get; } = canInstallUpdates;
         public event EventHandler? Changed;
+        public event EventHandler? InstallHandoffStarted;
+        public int DownloadCalls { get; private set; }
+        public int BeginInstallCalls { get; private set; }
         public Task<ApplicationUpdateSnapshot> CheckAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Snapshot);
-        public Task<string?> DownloadInstallerAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult<string?>(null);
-        public bool LaunchInstaller(string installerPath) => true;
+        public Task<string?> DownloadInstallerAsync(CancellationToken cancellationToken = default)
+        {
+            DownloadCalls++;
+            return Task.FromResult(installerPath);
+        }
+        public bool BeginAutomaticInstall(string installerPath)
+        {
+            BeginInstallCalls++;
+            InstallHandoffStarted?.Invoke(this, EventArgs.Empty);
+            return true;
+        }
         public void SkipCurrentRelease()
         {
             Snapshot = Snapshot with { Status = ApplicationUpdateStatus.Skipped };
