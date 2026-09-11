@@ -796,7 +796,10 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             return null;
         }
 
-        var value = body[start..end].Trim();
+        var value = body[start..end]
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Trim();
         return value.Length == 0 ? null : value;
     }
 
