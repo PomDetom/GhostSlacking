@@ -27,9 +27,9 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
     private const byte NeutralMistAlpha = 10;
 
     private readonly ILogger _logger;
-    private readonly Win32OverlayWindow _window;
     private readonly bool _operatingSystemSupported;
     private readonly RevealRecoveryBackoff _recoveryBackoff = new();
+    private Win32OverlayWindow? _window;
     private DispatcherQueueController? _dispatcherQueueController;
     private Compositor? _compositor;
     private DesktopWindowTarget? _compositionTarget;
@@ -57,7 +57,6 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
     public RevealEdgeOverlay(ILogger logger)
     {
         _logger = logger;
-        _window = new Win32OverlayWindow();
         _operatingSystemSupported = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041);
     }
 
@@ -89,6 +88,7 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         _lastRequestedVisual = visual;
         try
         {
+            EnsureWindowForTarget(visual.TargetHwnd);
             InitializeComposition();
             var prepared = PrepareCore(visual);
             if (!prepared.Success)
@@ -119,12 +119,13 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
 
     public NativeResult Present()
     {
-        if (!_initialized || Volatile.Read(ref _recovering) != 0 || _window.Handle == 0)
+        var window = _window;
+        if (!_initialized || Volatile.Read(ref _recovering) != 0 || window is null || window.Handle == 0)
         {
             return NativeResult.Failed("SetWindowPos(RevealFeather)", 0, "The Reveal compositor is unavailable.");
         }
 
-        var presented = _window.ShowTopmostNoActivate();
+        var presented = window.ShowTopmostNoActivate();
         if (!presented.Success)
         {
             BeginRecovery(presented.ErrorMessage ?? presented.Operation);
@@ -137,7 +138,7 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
 
     public void HideVisual()
     {
-        _window.Hide();
+        _window?.Hide();
     }
 
     public void Dispose()
@@ -151,18 +152,7 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         _recoveryRegistration?.Dispose();
         _recoveryRegistration = null;
         HideVisual();
-        ReleaseDeviceResources();
-        if (_root is not null)
-        {
-            _root.Children.RemoveAll();
-            _root.Dispose();
-            _root = null;
-        }
-
-        _compositionTarget?.Dispose();
-        _compositionTarget = null;
-        _compositor?.Dispose();
-        _compositor = null;
+        ReleaseCompositionResources();
         try
         {
             _dispatcherQueueController?.ShutdownQueueAsync();
@@ -173,8 +163,23 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         }
 
         _dispatcherQueueController = null;
-        _window.Dispose();
+        _window?.Dispose();
+        _window = null;
         GC.SuppressFinalize(this);
+    }
+
+    private void EnsureWindowForTarget(nint targetHwnd)
+    {
+        if (_window is { Handle: not 0 } window && window.OwnerHwnd == targetHwnd)
+        {
+            return;
+        }
+
+        HideVisual();
+        ReleaseCompositionResources();
+        _window?.Dispose();
+        _window = new Win32OverlayWindow(targetHwnd);
+        _logger.Log(LogLevel.Debug, $"RevealFeatherHostCreated owner={targetHwnd}");
     }
 
     private void InitializeComposition()
@@ -184,9 +189,14 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
             return;
         }
 
+        if (_window?.Handle is not nint windowHandle || windowHandle == 0)
+        {
+            throw new InvalidOperationException("The Reveal overlay window was not initialized.");
+        }
+
         _dispatcherQueueController ??= EnsureDispatcherQueue();
         _compositor ??= new Compositor();
-        _compositionTarget ??= CreateCompositionTarget(_compositor, _window.Handle);
+        _compositionTarget ??= CreateCompositionTarget(_compositor, windowHandle);
         _root ??= _compositor.CreateContainerVisual();
         _compositionTarget.Root = _root;
         InitializeDeviceResources();
@@ -225,6 +235,11 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         {
             HideVisual();
             return NativeResult.Failed("CompositionBackdropBrush", 0, "The Reveal feather is outside the target window.");
+        }
+
+        if (_window is null)
+        {
+            return NativeResult.Failed("CompositionBackdropBrush", 0, "The Reveal overlay window was not initialized.");
         }
 
         var boundsResult = _window.SetBounds(layout.HostBounds);
@@ -399,6 +414,22 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         }
     }
 
+    private void ReleaseCompositionResources()
+    {
+        ReleaseDeviceResources();
+        if (_root is not null)
+        {
+            _root.Children.RemoveAll();
+            _root.Dispose();
+            _root = null;
+        }
+
+        _compositionTarget?.Dispose();
+        _compositionTarget = null;
+        _compositor?.Dispose();
+        _compositor = null;
+    }
+
     private static byte[] CreateMaskPixels(CircleRegion templateCore, int featherWidthPx, Size surfaceSize)
     {
         var byteCount = checked(surfaceSize.Width * surfaceSize.Height * 4);
@@ -508,16 +539,22 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
         HideVisual();
         try
         {
-            ReleaseDeviceResources();
-            InitializeComposition();
             if (_lastRequestedVisual is RevealVisualState visual)
             {
+                ReleaseCompositionResources();
+                EnsureWindowForTarget(visual.TargetHwnd);
+                InitializeComposition();
                 var prepared = PrepareCore(visual);
                 if (!prepared.Success)
                 {
                     ScheduleRecovery();
                     return;
                 }
+            }
+            else
+            {
+                ScheduleRecovery();
+                return;
             }
 
             _recoveryBackoff.Reset();

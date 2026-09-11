@@ -30,6 +30,7 @@ internal static class Win32NativeMethods
     internal const int WM_CLOSE = 0x0010;
     internal const int WM_DISPLAYCHANGE = 0x007E;
     internal const int WM_ERASEBKGND = 0x0014;
+    internal const int WM_NCDESTROY = 0x0082;
     internal const int WM_NCHITTEST = 0x0084;
     internal const int HTTRANSPARENT = -1;
     internal const int WM_LBUTTONDOWN = 0x0201;

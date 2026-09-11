@@ -35,7 +35,7 @@
 - Ghost/Reveal 保留目标窗口的标题栏、缩放边框和系统按钮 style，避免 Chrome/Electron 因非客户区 style 变化重排；仍临时控制 Alt+Tab 扩展样式及 DWM 装饰，Restore 时还原原值。
 - Ghost/Reveal 期间临时置顶目标窗口，避免 Alt+Tab 后目标位于其他窗口下方；Restore 时恢复原始 TopMost 状态。
 - Ghost、Reveal 和 Restore 使用完整 placement 做状态感知校正；普通/Snap 恢复坐标与尺寸，最大化/最小化恢复对应状态。Restore 经过约 16.7ms 周期的三次连续匹配才释放恢复资料，最多纠正十次 Chrome/Electron 延迟漂移。
-- Reveal 默认使用 144px 圆角矩形、16px 羽化和轻度模糊；保留原始清晰核心，并把目标内容 region 外扩到羽化宽度的 70%。非激活的 Windows Composition overlay 固定覆盖目标 bounds，位置无关遮罩按视觉参数缓存，光标移动仅更新 visual offset 和羽化外环 region；清晰核心的点击和滚轮直接落到目标窗口。渲染或设备失败时立即缩回硬边 region。
+- Reveal 默认使用 144px 圆角矩形、16px 羽化和轻度模糊；保留原始清晰核心，并把目标内容 region 外扩到羽化宽度的 70%。非激活的 Windows Composition overlay 由当前目标窗口拥有并固定覆盖目标 bounds，确保目标因点击激活后羽化仍位于其上方；位置无关遮罩按视觉参数缓存，光标移动仅更新 visual offset 和羽化外环 region，清晰核心的点击和滚轮直接落到目标窗口。渲染或设备失败时立即缩回硬边 region。
 - Peek 使用 Input 优先级轮询：非 Reveal 保持 60 Hz，Reveal 按鼠标所在显示器的当前模式动态调度，并受 Auto/60/90/120 FPS 设置和全局 120 FPS 上限约束。显示查询按显示器缓存 2 秒并由 `WM_DISPLAYCHANGE` 失效，失败时回退 60 Hz；Debug 日志每 120 个有效移动帧输出目标/有效 FPS、平均/P95/最大耗时和超出动态帧预算的帧数，不逐帧写入成功日志。
 - 全局热键、低级键盘 Peek 状态和拾取用低级鼠标钩子。
 - 设置页支持捕获自定义 Peek 按键，并提供 Auto/60/90/120 最大 Peek 帧率选择，避免 Alt/Shift 对浏览器或其他前台应用产生快捷键副作用。
@@ -70,7 +70,7 @@
 
 ## 已实现：Phase 4 Advanced Rendering 原型
 
-- `RevealEdgeOverlay` 使用非激活、鼠标穿透的 Windows Composition/Win2D overlay，在清晰核心外侧提供可配置羽化和单一模糊等级。
+- `RevealEdgeOverlay` 使用由当前目标窗口拥有、非激活且鼠标穿透的 Windows Composition/Win2D overlay，在清晰核心外侧提供可配置羽化和单一模糊等级；目标切换或销毁后重建宿主，避免激活导致的 Z 序遮挡和陈旧 HWND。
 - 目标内容 region 外扩到羽化宽度的 70%，overlay 只命中外环，清晰核心仍由目标窗口接收点击和滚轮。
 - Overlay 宿主与目标窗口同 bounds；遮罩 surface 与屏幕位置解耦并按视觉参数缓存，边缘/角落移动不再重建 Win2D 和 Composition 资源。
 - Composition 初始化、设备或渲染失败时回退到硬边 region；不读取、不保存目标窗口像素。

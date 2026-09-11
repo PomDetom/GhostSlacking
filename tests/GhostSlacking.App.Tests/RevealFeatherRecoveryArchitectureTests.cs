@@ -34,6 +34,30 @@ public sealed class RevealFeatherRecoveryArchitectureTests
         Assert.DoesNotContain("_canvasDevice.Dispose", release, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Target_changes_recreate_the_owned_overlay_before_composition_initialization()
+    {
+        var source = ReadOverlaySource();
+        var prepare = Slice(source, "public NativeResult Prepare", "public NativeResult Present");
+        var ensureWindow = Slice(source, "private void EnsureWindowForTarget", "private void InitializeComposition");
+
+        Assert.Contains("EnsureWindowForTarget(visual.TargetHwnd);", prepare, StringComparison.Ordinal);
+        Assert.Contains("window.OwnerHwnd == targetHwnd", ensureWindow, StringComparison.Ordinal);
+        Assert.Contains("ReleaseCompositionResources();", ensureWindow, StringComparison.Ordinal);
+        Assert.Contains("new Win32OverlayWindow(targetHwnd)", ensureWindow, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Graphics_recovery_rebinds_the_overlay_to_the_last_target()
+    {
+        var source = ReadOverlaySource();
+        var recover = Slice(source, "private void TryRecover", "private static bool IsCompositionFailure");
+
+        Assert.Contains("EnsureWindowForTarget(visual.TargetHwnd);", recover, StringComparison.Ordinal);
+        Assert.Contains("InitializeComposition();", recover, StringComparison.Ordinal);
+        Assert.Contains("PrepareCore(visual)", recover, StringComparison.Ordinal);
+    }
+
     private static string ReadOverlaySource()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
