@@ -36,9 +36,20 @@ public sealed class AvaloniaStartupTests
                     IsVisible = true,
                     ToolTipText = "GhostSlacking test"
                 };
-                using var notifications = new AvaloniaNotificationService(() => Point.Empty, NullLogger.Instance);
+                var raisedNotificationHandles = new List<nint>();
+                using var notifications = new AvaloniaNotificationService(
+                    () => Point.Empty,
+                    NullLogger.Instance,
+                    handle =>
+                    {
+                        raisedNotificationHandles.Add(handle);
+                        return NativeResult.Ok("test");
+                    });
                 notifications.Show("ready", UserNotificationSeverity.Info);
+                notifications.Show("ready again", UserNotificationSeverity.Info);
                 AssertNotificationWindowComposition(notifications);
+                Assert.Equal(2, raisedNotificationHandles.Count);
+                Assert.All(raisedNotificationHandles, handle => Assert.NotEqual(0, handle));
                 trayIcon.IsVisible = false;
                 settingsWindow.Close();
             }
@@ -174,7 +185,7 @@ public sealed class AvaloniaStartupTests
         var localDate = new DateTime(2026, 9, 10, 16, 30, 0, DateTimeKind.Unspecified);
         var lastSuccessfulCheck = new DateTimeOffset(localDate, TimeZoneInfo.Local.GetUtcOffset(localDate));
         var release = new UpdateRelease(
-            new Version(1, 2, 0),
+            ReleaseVersion.Parse("1.2.0"),
             "1.2.0",
             new Uri("https://github.com/PomDetom/GhostSlacking/releases/tag/v1.2.0"),
             Asset("GhostSlacking-1.2.0-win-x64.msi"),
@@ -183,7 +194,7 @@ public sealed class AvaloniaStartupTests
             new string('A', 64),
             [
                 new ReleaseNotesEntry(
-                    new Version(1, 2, 0),
+                    ReleaseVersion.Parse("1.2.0"),
                     "1.2.0",
                     new Uri("https://github.com/PomDetom/GhostSlacking/releases/tag/v1.2.0"),
                     new LocalizedReleaseNotes("### 新功能\n- 显示更新内容。", "### Features\n- Show what's new."))
@@ -261,7 +272,7 @@ public sealed class AvaloniaStartupTests
     {
         var releaseUrl = new Uri("https://github.com/PomDetom/GhostSlacking/releases/tag/v1.2.0");
         var release = new UpdateRelease(
-            new Version(1, 2, 0),
+            ReleaseVersion.Parse("1.2.0"),
             "1.2.0",
             releaseUrl,
             Asset("GhostSlacking-1.2.0-win-x64.msi"),
@@ -270,7 +281,7 @@ public sealed class AvaloniaStartupTests
             new string('A', 64),
             [
                 new ReleaseNotesEntry(
-                    new Version(1, 2, 0),
+                    ReleaseVersion.Parse("1.2.0"),
                     "1.2.0",
                     releaseUrl,
                     new LocalizedReleaseNotes("### 新功能\n- 显示更新内容。", "### Features\n- Show what's new."))
@@ -369,6 +380,7 @@ public sealed class AvaloniaStartupTests
     {
         public ApplicationUpdateSnapshot Snapshot { get; private set; } = snapshot;
         public bool CanInstallUpdates { get; } = canInstallUpdates;
+        public UpdateChannel Channel { get; private set; } = UpdateChannel.Stable;
         public event EventHandler? Changed;
         public event EventHandler? InstallHandoffStarted;
         public int DownloadCalls { get; private set; }
@@ -403,6 +415,7 @@ public sealed class AvaloniaStartupTests
         }
         public bool OpenSourceRepository() => true;
         public bool OpenReleasePage() => true;
+        public void SetChannel(UpdateChannel channel) => Channel = channel;
         public void Dispose() { }
     }
 }

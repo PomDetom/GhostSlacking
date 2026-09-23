@@ -30,31 +30,54 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Validate release tag
+      - name: Validate release tag and source branch
         id: version
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $tag = $env:RELEASE_TAG
-          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
-              throw "Release tag must use the vMAJOR.MINOR.PATCH format: $tag"
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+)(?:-(alpha|beta|rc)\.(\d+))?$') {
+              throw "Release tag must use vMAJOR.MINOR.PATCH[-alpha.N|-beta.N|-rc.N]: $tag"
           }
 
-          $version = [version]$Matches[1]
-          $previousTag = @(git tag --merged "$tag^" --list 'v*.*.*' --sort=-version:refname |
-              Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
-              Select-Object -First 1)
-          if ($previousTag.Count -gt 0) {
-              .\scripts\release-metadata.ps1 -Mode ValidateVersion -Tag $tag -PreviousTag $previousTag[0]
+          $isPrerelease = $tag.Contains('-')
+          $expectedBranch = if ($isPrerelease) { 'dev' } else { 'master' }
+          $tagCommit = (git rev-list -n 1 $tag).Trim()
+          $branchCommit = (git rev-parse "origin/$expectedBranch").Trim()
+          if ($tagCommit -ne $branchCommit) {
+              throw "Release tag $tag must point to the current origin/$expectedBranch commit."
+          }
+
+          $candidateTags = @(git tag --merged "$tag^" --list 'v*' |
+              Where-Object { $_ -match '^v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$' -and $_ -ne $tag } |
+              ForEach-Object {
+                  if ($_ -notmatch '^v(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))?$') { return }
+                  if (-not $isPrerelease -and $Matches[4]) { return }
+                  [pscustomobject]@{
+                      Tag = $_
+                      Major = [int]$Matches[1]
+                      Minor = [int]$Matches[2]
+                      Patch = [int]$Matches[3]
+                      Pre = if ($Matches[4]) { @{ alpha = 0; beta = 1; rc = 2 }[$Matches[4]] } else { 3 }
+                      Number = if ($Matches[5]) { [int]$Matches[5] } else { 0 }
+                  }
+              } |
+              Sort-Object Major, Minor, Patch, Pre, Number)
+          $previousTag = if ($candidateTags.Count -gt 0) { $candidateTags[-1].Tag } else { '' }
+
+          if ($previousTag) {
+              .\scripts\release-metadata.ps1 -Mode ValidateVersion -Tag $tag -PreviousTag $previousTag
           } else {
               .\scripts\release-metadata.ps1 -Mode ValidateVersion -Tag $tag
           }
 
+          $version = $tag.Substring(1)
           "value=$version" >> $env:GITHUB_OUTPUT
-          "previous_tag=$($previousTag | Select-Object -First 1)" >> $env:GITHUB_OUTPUT
+          "previous_tag=$previousTag" >> $env:GITHUB_OUTPUT
+          "prerelease=$($isPrerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
-      - name: Build release notes from merged PR
+      - name: Collect merged feature PRs
         id: notes
         shell: pwsh
         env:
@@ -62,25 +85,31 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
         run: |
-          $pullRequestsPath = Join-Path $env:RUNNER_TEMP 'release-pull-requests.json'
-          $prBodyPath = Join-Path $env:RUNNER_TEMP 'release-pr-body.md'
+          $allPath = Join-Path $env:RUNNER_TEMP 'all-pull-requests.json'
+          $selectedPath = Join-Path $env:RUNNER_TEMP 'release-pull-requests.json'
           $releaseNotesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          gh api `
-              -H 'Accept: application/vnd.github+json' `
-              -H 'X-GitHub-Api-Version: 2022-11-28' `
-              "/repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA/pulls" > $pullRequestsPath
-          if ($LASTEXITCODE -ne 0) {
-              throw 'Failed to query pull requests associated with the release commit.'
-          }
+          gh pr list --state merged --base dev --limit 1000 --json number,title,body,author,labels,mergedAt,mergeCommit,base,head > $allPath
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to query merged feature pull requests.' }
+
+          $head = (git rev-list -n 1 $env:RELEASE_TAG).Trim()
+          $previous = if ($env:PREVIOUS_TAG) { (git rev-list -n 1 $env:PREVIOUS_TAG).Trim() } else { $null }
+          $all = @(Get-Content -LiteralPath $allPath -Raw | ConvertFrom-Json)
+          $selected = @($all | Where-Object {
+              $oid = $_.mergeCommit.oid
+              if ([string]::IsNullOrWhiteSpace($oid)) { return $false }
+              git merge-base --is-ancestor $oid $head 2>$null
+              if ($LASTEXITCODE -ne 0) { return $false }
+              if ($previous) {
+                  git merge-base --is-ancestor $oid $previous 2>$null
+                  if ($LASTEXITCODE -eq 0) { return $false }
+              }
+              return $true
+          })
+          ConvertTo-Json -InputObject $selected -Depth 10 | Set-Content -LiteralPath $selectedPath -Encoding utf8
 
           .\scripts\release-metadata.ps1 `
-              -Mode SelectReleasePr `
-              -PullRequestsPath $pullRequestsPath `
-              -CommitSha $env:GITHUB_SHA `
-              -OutputPath $prBodyPath
-          .\scripts\release-metadata.ps1 `
-              -Mode Compose `
-              -BodyPath $prBodyPath `
+              -Mode ComposePullRequests `
+              -PullRequestsPath $selectedPath `
               -OutputPath $releaseNotesPath `
               -Tag $env:RELEASE_TAG `
               -PreviousTag $env:PREVIOUS_TAG `
@@ -107,10 +136,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $releaseJson = & gh release list --limit 100 --json tagName
-          if ($LASTEXITCODE -ne 0) {
-              throw "Failed to query existing GitHub Releases."
-          }
-
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to query existing GitHub Releases.' }
           $existingTags = @($releaseJson | ConvertFrom-Json | ForEach-Object { $_.tagName })
           if ($existingTags -contains $env:RELEASE_TAG) {
               throw "GitHub Release $env:RELEASE_TAG already exists; published assets will not be overwritten."
@@ -123,19 +149,17 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
           RELEASE_NOTES_FILE: ${{ steps.notes.outputs.path }}
+          IS_PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           $releaseDirectory = "artifacts\releases\$env:RELEASE_VERSION"
           $installer = "$releaseDirectory\GhostSlacking-$env:RELEASE_VERSION-win-x64.msi"
           $checksum = "$installer.sha256"
           $manifest = "$releaseDirectory\release.json"
-
-          gh release create $env:RELEASE_TAG `
-              $installer `
-              $checksum `
-              $manifest `
-              --verify-tag `
-              --notes-file $env:RELEASE_NOTES_FILE `
-              --title "GhostSlacking $env:RELEASE_VERSION"
-          if ($LASTEXITCODE -ne 0) {
-              throw "Failed to publish GitHub Release $env:RELEASE_TAG."
-          }
+          $args = @(
+              'release', 'create', $env:RELEASE_TAG, $installer, $checksum, $manifest,
+              '--verify-tag', '--notes-file', $env:RELEASE_NOTES_FILE,
+              '--title', "GhostSlacking $env:RELEASE_VERSION"
+          )
+          if ($env:IS_PRERELEASE -eq 'true') { $args += '--prerelease' }
+          & gh @args
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish GitHub Release $env:RELEASE_TAG." }

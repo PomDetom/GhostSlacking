@@ -120,6 +120,31 @@ Handle releases without structured notes.
         throw 'First-release changelog fallback is missing.'
     }
 
+    $prListPath = Join-Path $testRoot 'merged-prs.json'
+    $composedPrPath = Join-Path $testRoot 'composed-pr-release.md'
+    $featureBody = $validBody.Replace('增加更新说明窗口', '增加测试通道').Replace('Add an update details window', 'Add the test channel')
+    $featurePr = @{
+        number = 42
+        title = 'feat(updates): add test channel'
+        body = $featureBody
+        author = @{ login = 'alice' }
+        labels = @(@{ name = 'feature' })
+    }
+    [System.IO.File]::WriteAllText($prListPath, (ConvertTo-Json @($featurePr) -Depth 8))
+    Invoke-Metadata @(
+        '-Mode', 'ComposePullRequests',
+        '-PullRequestsPath', $prListPath,
+        '-OutputPath', $composedPrPath,
+        '-Tag', 'v0.2.0-beta.1',
+        '-PreviousTag', 'v0.1.2',
+        '-RepositoryUrl', 'https://github.com/PomDetom/GhostSlacking')
+    $composed = Get-Content -LiteralPath $composedPrPath -Raw
+    if ($composed -notmatch '测试通道' -or $composed -notmatch 'Add the test channel' -or
+        $composed -notmatch '#42' -or $composed -notmatch '@alice' -or
+        $composed -notmatch 'compare/v0\.1\.2\.\.\.v0\.2\.0-beta\.1') {
+        throw 'Pull request release notes were not composed correctly.'
+    }
+
     Write-Output 'Release metadata tests passed.'
 }
 finally {

@@ -72,7 +72,7 @@ internal sealed class GhostApplicationController : IDisposable
         _logger = new FileLogger(_settings);
         _dataExport = new DataExportService(_logger);
         _updateCompletionStore = new UpdateCompletionStore(logger: _logger);
-        _updates = new GitHubApplicationUpdateManager(_logger);
+        _updates = new GitHubApplicationUpdateManager(_logger, channel: _settings.UpdateChannel);
         _windows = new Win32WindowApi();
         _revealOverlay = new RevealEdgeOverlay(_logger);
         var backend = new Win32VisibilityBackend(_logger);
@@ -125,12 +125,16 @@ internal sealed class GhostApplicationController : IDisposable
             Menu = menu
         };
         _trayIcon.Clicked += OnTrayIconClicked;
-        _notifications = new AvaloniaNotificationService(_windows.GetCursorPosition, _logger);
+        _notifications = new AvaloniaNotificationService(
+            _windows.GetCursorPosition,
+            _logger,
+            _windows.BringToTopWithoutActivation);
         _updates.Changed += OnUpdateStateChanged;
         _updates.InstallHandoffStarted += OnUpdateInstallHandoffStarted;
 
         _coordinator.StateChanged += (_, _) => UpdateTrayStatus();
         _coordinator.UserErrorOccurred += (_, error) => ShowCoreError(error.Kind);
+        _coordinator.WindowSelected += OnWindowSelected;
         _coordinator.TargetClosed += (_, _) => UpdateTrayStatus();
         _watchdog = TryStartWatchdog();
         _recovery.ProfilesChanged += OnRecoveryProfilesChanged;
@@ -152,7 +156,7 @@ internal sealed class GhostApplicationController : IDisposable
         var updateResult = _updateCompletionStore.Consume();
         if (updateResult is null)
         {
-            ShowInfo(UiText.Text(_settings.Language, "startupReady"));
+            ShowInfo(UiText.Text(_settings.Language, "startupReady"), UserNotificationSource.Startup);
             return;
         }
 
@@ -164,15 +168,17 @@ internal sealed class GhostApplicationController : IDisposable
             case UpdateCompletionStatus.Succeeded:
                 ShowInfo(string.Format(
                     UiText.Text(_settings.Language, "updateCompleted"),
-                    updateResult.Version));
+                    updateResult.Version),
+                    UserNotificationSource.Startup);
                 break;
             case UpdateCompletionStatus.Cancelled:
-                ShowInfo(UiText.Text(_settings.Language, "updateCancelled"));
+                ShowInfo(UiText.Text(_settings.Language, "updateCancelled"), UserNotificationSource.Startup);
                 break;
             default:
                 ShowError(string.Format(
                     UiText.Text(_settings.Language, "automaticUpdateFailed"),
-                    updateResult.Version));
+                    updateResult.Version),
+                    UserNotificationSource.Error);
                 break;
         }
     }
@@ -189,7 +195,8 @@ internal sealed class GhostApplicationController : IDisposable
                         UiText.Text(_settings.Language, "updateAvailableNotification"),
                         snapshot.Release.VersionText),
                     UserNotificationSeverity.Info,
-                    OpenUpdateWindow));
+                    OpenUpdateWindow,
+                    UserNotificationSource.Update));
             }
         }
         catch (OperationCanceledException) when (_updateCancellation.IsCancellationRequested)
@@ -399,7 +406,7 @@ internal sealed class GhostApplicationController : IDisposable
         }
         else
         {
-            ShowInfo(UiText.Text(_settings.Language, "clickToPick"));
+            ShowInfo(UiText.Text(_settings.Language, "clickToPick"), UserNotificationSource.Picker);
         }
     }
 
@@ -422,7 +429,7 @@ internal sealed class GhostApplicationController : IDisposable
             Dispatcher.UIThread.Post(() =>
             {
                 CancelPicking(waitForEscapeRelease: true);
-                ShowInfo(UiText.Text(_settings.Language, "pickCancelled"));
+                ShowInfo(UiText.Text(_settings.Language, "pickCancelled"), UserNotificationSource.Picker);
             });
         }
         else if (decision.ReleaseKeyboardHook)
@@ -476,10 +483,6 @@ internal sealed class GhostApplicationController : IDisposable
             return;
         }
 
-        ShowInfo(string.Format(
-            UiText.Text(_settings.Language, "windowSelected"),
-            target.ProcessName ?? (UiText.IsChinese(_settings.Language) ? "窗口" : "window"),
-            UiText.PeekKeyName(_settings.Language, _settings.PeekVirtualKey)));
     }
 
     private void ToggleWindowVisibility()
@@ -646,6 +649,7 @@ internal sealed class GhostApplicationController : IDisposable
         }
 
         _settings = updated;
+        _updates.SetChannel(_settings.UpdateChannel);
         _logger.MinimumLevel = _settings.MinimumLogLevel;
         AppTheme.Apply(_settings.ThemeMode);
         _updateWindow?.RefreshLanguage(_settings.Language);
@@ -706,7 +710,7 @@ internal sealed class GhostApplicationController : IDisposable
         _settingsItem.Header = UiText.Text(_settings.Language, "settings");
         var update = _updates.Snapshot;
         var showUpdate = update.Release is not null &&
-            update.Release.Version > Version.Parse(update.CurrentVersion) &&
+            update.Release.Version > ReleaseVersion.Parse(update.CurrentVersion) &&
             update.Status is not ApplicationUpdateStatus.Skipped and not ApplicationUpdateStatus.UpToDate;
         _updateItem.IsVisible = showUpdate;
         _updateItem.Header = showUpdate
@@ -736,14 +740,14 @@ internal sealed class GhostApplicationController : IDisposable
         }
     }
 
-    private void ShowError(string message)
+    private void ShowError(string message, UserNotificationSource source = UserNotificationSource.Error)
     {
         if (_isExiting)
         {
             return;
         }
 
-        _notifications.Show(message, UserNotificationSeverity.Error);
+        _notifications.Show(message, UserNotificationSeverity.Error, source: source);
     }
 
     private void ShowCoreError(UserErrorKind kind)
@@ -751,14 +755,26 @@ internal sealed class GhostApplicationController : IDisposable
         ShowError(UiText.Error(_settings.Language, kind));
     }
 
-    private void ShowInfo(string message)
+    private void ShowInfo(
+        string message,
+        UserNotificationSource source = UserNotificationSource.General)
     {
         if (_isExiting)
         {
             return;
         }
 
-        _notifications.Show(message, UserNotificationSeverity.Info);
+        _notifications.Show(message, UserNotificationSeverity.Info, source: source);
+    }
+
+    private void OnWindowSelected(TargetWindow target)
+    {
+        ShowInfo(
+            string.Format(
+                UiText.Text(_settings.Language, "windowSelected"),
+                target.ProcessName ?? (UiText.IsChinese(_settings.Language) ? "窗口" : "window"),
+                UiText.PeekKeyName(_settings.Language, _settings.PeekVirtualKey)),
+            UserNotificationSource.Selection);
     }
 
     internal void ReportUnhandledException(Exception exception)

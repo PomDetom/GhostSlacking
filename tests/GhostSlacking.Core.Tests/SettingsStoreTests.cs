@@ -18,7 +18,7 @@ public sealed class SettingsStoreTests
 
         var normalized = settings.Normalize();
 
-        Assert.Equal(5, normalized.SchemaVersion);
+        Assert.Equal(6, normalized.SchemaVersion);
         Assert.Equal(800, normalized.RevealDiameterPx);
         Assert.Equal(8, normalized.RevealDiameterStepPx);
         Assert.Equal(128, normalized.RevealSoftEdgeWidthPx);
@@ -132,7 +132,7 @@ public sealed class SettingsStoreTests
 
             var settings = new SettingsStore(path).Load();
 
-            Assert.Equal(5, settings.SchemaVersion);
+            Assert.Equal(6, settings.SchemaVersion);
             Assert.Equal(320, settings.RevealDiameterPx);
             Assert.Equal(16, settings.RevealDiameterStepPx);
             Assert.Equal(16, settings.RevealSoftEdgeWidthPx);
@@ -163,7 +163,7 @@ public sealed class SettingsStoreTests
 
             var settings = new SettingsStore(path).Load();
 
-            Assert.Equal(5, settings.SchemaVersion);
+            Assert.Equal(6, settings.SchemaVersion);
             Assert.Equal(64, settings.RevealSoftEdgeWidthPx);
             Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
         }
@@ -207,7 +207,7 @@ public sealed class SettingsStoreTests
             }
             """);
 
-        Assert.Equal(5, restored.SchemaVersion);
+        Assert.Equal(6, restored.SchemaVersion);
         Assert.Equal(PeekTrigger.Hold, restored.PeekTrigger);
         Assert.Equal(PeekFrameRateLimit.Auto, restored.PeekFrameRateLimit);
     }
@@ -299,7 +299,7 @@ public sealed class SettingsStoreTests
             Assert.True(store.Save(new AppSettings { ThemeMode = UiThemeMode.Dark }));
 
             var settings = store.Load();
-            Assert.Equal(5, settings.SchemaVersion);
+            Assert.Equal(6, settings.SchemaVersion);
             Assert.Equal(UiThemeMode.Dark, settings.ThemeMode);
         }
         finally
@@ -319,7 +319,7 @@ public sealed class SettingsStoreTests
             Assert.True(store.Save(new AppSettings { RevealBlurLevel = RevealBlurLevel.High }));
 
             var settings = store.Load();
-            Assert.Equal(5, settings.SchemaVersion);
+            Assert.Equal(6, settings.SchemaVersion);
             Assert.Equal(RevealBlurLevel.High, settings.RevealBlurLevel);
         }
         finally

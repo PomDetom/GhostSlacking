@@ -43,6 +43,12 @@ public enum PeekFrameRateLimit
     Fps120
 }
 
+public enum UpdateChannel
+{
+    Stable,
+    Test
+}
+
 [Flags]
 public enum ShortcutModifiers
 {
@@ -191,7 +197,7 @@ public sealed record GhostWindowProfile(WindowSnapshot Original, RevealSettings 
 
 public sealed record AppSettings
 {
-    public int SchemaVersion { get; init; } = 5;
+    public int SchemaVersion { get; init; } = 6;
     public UiLanguage Language { get; init; } = UiLanguage.Chinese;
     public UiThemeMode ThemeMode { get; init; } = UiThemeMode.System;
     public int RevealDiameterPx { get; init; } = 144;
@@ -202,6 +208,7 @@ public sealed record AppSettings
     public int PeekVirtualKey { get; init; } = 0x12;
     public PeekTrigger PeekTrigger { get; init; } = PeekTrigger.Toggle;
     public PeekFrameRateLimit PeekFrameRateLimit { get; init; } = PeekFrameRateLimit.Auto;
+    public UpdateChannel UpdateChannel { get; init; } = UpdateChannel.Stable;
     public HotkeyBinding PickHotkey { get; init; } = new(0x50, ShortcutModifiers.Control | ShortcutModifiers.Alt);
     public int WindowToggleVirtualKey { get; init; } = 0x47;
     public HotkeyBinding WindowToggleHotkey { get; init; } = new(0x47, ShortcutModifiers.Control | ShortcutModifiers.Alt);
@@ -217,7 +224,7 @@ public sealed record AppSettings
 
     public AppSettings Normalize() => this with
     {
-        SchemaVersion = 5,
+        SchemaVersion = 6,
         Language = Language is UiLanguage.Chinese or UiLanguage.English ? Language : UiLanguage.Chinese,
         ThemeMode = ThemeMode is UiThemeMode.System or UiThemeMode.Light or UiThemeMode.Dark
             ? ThemeMode
@@ -239,6 +246,9 @@ public sealed record AppSettings
             PeekFrameRateLimit.Fps120
                 ? PeekFrameRateLimit
                 : PeekFrameRateLimit.Auto,
+        UpdateChannel = UpdateChannel is UpdateChannel.Stable or UpdateChannel.Test
+            ? UpdateChannel
+            : UpdateChannel.Stable,
         PickHotkey = PickHotkey.Normalize(0x50, ShortcutModifiers.Control | ShortcutModifiers.Alt),
         WindowToggleVirtualKey = WindowToggleVirtualKey is >= 1 and <= 255 ? WindowToggleVirtualKey : 0x47,
         WindowToggleHotkey = NormalizeWindowToggleHotkey(),

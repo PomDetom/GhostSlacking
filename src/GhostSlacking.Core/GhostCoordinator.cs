@@ -40,6 +40,7 @@ public sealed class GhostCoordinator
     public event EventHandler<StateChangedEventArgs>? StateChanged;
     public event EventHandler<string>? UserError;
     public event EventHandler<UserErrorEventArgs>? UserErrorOccurred;
+    public event Action<TargetWindow>? WindowSelected;
     public event EventHandler? TargetClosed;
 
     public bool BeginPicking()
@@ -106,6 +107,7 @@ public sealed class GhostCoordinator
         HideRevealVisual();
         _logger.Log(LogLevel.Info, $"WindowSelected hwnd={target.Hwnd} pid={target.ProcessId}");
         SetState(GhostState.Ghost);
+        WindowSelected?.Invoke(target);
         return true;
     }
 

@@ -128,6 +128,32 @@ public sealed class Win32WindowApi : IWindowApi
                 "Windows did not allow the window to move to the foreground.");
     }
 
+    public NativeResult BringToTopWithoutActivation(nint hwnd)
+    {
+        if (!IsWindow(hwnd))
+        {
+            return NativeResult.Failed("SetWindowPos(NotificationTopmost)", 0, "The window is unavailable.");
+        }
+
+        var flags = Win32NativeMethods.SWP_NOMOVE |
+            Win32NativeMethods.SWP_NOSIZE |
+            Win32NativeMethods.SWP_NOACTIVATE |
+            Win32NativeMethods.SWP_SHOWWINDOW;
+        return Win32NativeMethods.SetWindowPos(
+            hwnd,
+            Win32NativeMethods.HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            flags)
+            ? NativeResult.Ok("SetWindowPos(NotificationTopmost)")
+            : NativeResult.Failed(
+                "SetWindowPos(NotificationTopmost)",
+                Win32NativeMethods.LastError,
+                "Could not raise the notification window without activation.");
+    }
+
     private static byte[]? CaptureRegion(nint hwnd, out string? error)
     {
         error = null;

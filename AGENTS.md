@@ -39,7 +39,7 @@ Use Conventional Commit subjects with one of `feat`, `fix`, `perf`, `refactor`, 
 
 ## Branch and Release Workflow
 
-Use `dev` for day-to-day development and keep `master` releasable. Release changes must go through a GitHub Pull Request from `dev` to `master`; do not routinely merge locally and push directly to `master`. The PR must pass the `Release tests` and metadata validation before merging. The resulting merge commit is the only valid target for the release tag because the tag workflow extracts the bilingual Release body from that associated PR.
+Use `dev` for day-to-day development and keep `master` releasable. Each feature or fix must use a focused PR into `dev`; stable release changes must go through a GitHub Pull Request from `dev` to `master`. Do not routinely merge locally and push directly to either protected branch. The PR must pass the `Release tests` and metadata validation before merging. Feature PRs use Squash merge; the `dev` -> `master` release PR uses a merge commit so the release workflow can trace the merged feature PRs.
 
 After the PR is merged, create the release tag on the resulting `master` commit using the `vMAJOR.MINOR.PATCH` format, then push only that tag:
 
@@ -51,7 +51,7 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-The `v*.*.*` tag workflow is the source of truth for official MSI artifacts. It reruns Release tests, builds the Windows MSI, writes the SHA256 file and `release.json`, and publishes the GitHub Release. Do not create a release tag on `dev`, move or reuse a published tag, or replace a failed release asset under the same tag; use a new version after fixing the problem. Local packaging is for validation only.
+The `v*.*.*` tag workflow is the source of truth for MSI artifacts. Stable tags use `vMAJOR.MINOR.PATCH` on `master`; beta/RC tags use `vMAJOR.MINOR.PATCH-beta.N` or `-rc.N` on `dev` and publish as GitHub Pre-releases. The workflow reruns Release tests, builds the Windows MSI, writes the SHA256 file and `release.json`, and publishes the GitHub Release. Do not create a release tag on the wrong branch, move or reuse a published tag, or replace a failed release asset under the same tag; use a new version after fixing the problem. Local packaging is for validation only.
 
 The GitHub repository should protect `master` with pull requests, the required `Release tests` status check, conversation resolution where practical, and disabled force-push/delete permissions. The current single-maintainer configuration leaves an administrator emergency bypass available; use it only for recovery. Review the detailed click-path and single-maintainer guidance in the README before changing these rules.
 

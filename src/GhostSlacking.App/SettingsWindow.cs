@@ -68,6 +68,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly ComboBox _language;
     private readonly ComboBox _themeMode;
     private readonly ComboBox _logLevel;
+    private readonly ComboBox _updateChannel;
     private readonly Button _exportLogsButton;
     private readonly Button _exportSettingsButton;
     private readonly TextBlock _currentVersionText;
@@ -138,6 +139,7 @@ internal sealed class SettingsWindow : AppWindow
         _language = CreateComboBox();
         _themeMode = CreateComboBox();
         _logLevel = CreateComboBox();
+        _updateChannel = CreateComboBox();
         _exportLogsButton = CreateTextButton(settings.Language, "exportLogs");
         _exportSettingsButton = CreateTextButton(settings.Language, "exportSettings");
         _exportLogsButton.Click += OnExportLogsClicked;
@@ -432,6 +434,7 @@ internal sealed class SettingsWindow : AppWindow
                 _latestVersionText,
                 _lastUpdateCheckText,
                 _updateStatusText,
+                CreateSettingRow(language, "updateChannel", "updateChannelDescription", _updateChannel),
                 _updateProgress,
                 updateButtons
             }
@@ -702,6 +705,7 @@ internal sealed class SettingsWindow : AppWindow
             .Select(level => new Choice<LogLevel>(level, level.ToString()))
             .ToArray();
         SelectChoice(_logLevel, settings.MinimumLogLevel);
+        PopulateUpdateChannels(settings.Language, settings.UpdateChannel);
     }
 
     private void PopulateThemeChoices(UiLanguage language, UiThemeMode themeMode)
@@ -713,6 +717,16 @@ internal sealed class SettingsWindow : AppWindow
             new Choice<UiThemeMode>(UiThemeMode.Dark, UiText.Text(language, "themeDark"))
         };
         SelectChoice(_themeMode, themeMode);
+    }
+
+    private void PopulateUpdateChannels(UiLanguage language, UpdateChannel channel)
+    {
+        _updateChannel.ItemsSource = new[]
+        {
+            new Choice<UpdateChannel>(UpdateChannel.Stable, UiText.Text(language, "updateChannelStable")),
+            new Choice<UpdateChannel>(UpdateChannel.Test, UiText.Text(language, "updateChannelTest"))
+        };
+        SelectChoice(_updateChannel, channel);
     }
 
     private void PopulateLocalizedChoices(
@@ -820,6 +834,7 @@ internal sealed class SettingsWindow : AppWindow
                 _editState.SavedSettings.PeekFrameRateLimit);
             var themeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode);
             PopulateLocalizedChoices(language, blur, shape, trigger, frameRateLimit);
+            PopulateUpdateChannels(language, _editState.SavedSettings.UpdateChannel);
             PopulateThemeChoices(language, themeMode);
             foreach (var button in this.GetLogicalDescendants().OfType<Button>())
             {
@@ -982,7 +997,7 @@ internal sealed class SettingsWindow : AppWindow
         _updateProgress.Value = snapshot.ProgressPercent ?? 0;
 
         var updateKnown = snapshot.Release is not null && snapshot.Release.Version >
-            Version.Parse(snapshot.CurrentVersion);
+            ReleaseVersion.Parse(snapshot.CurrentVersion);
         _viewUpdateButton.Content = UiText.Text(language, "viewUpdateDetails");
         _viewUpdateButton.IsVisible = updateKnown;
         _viewUpdateButton.IsEnabled = !busy && _openUpdateWindow is not null;
@@ -1050,6 +1065,7 @@ internal sealed class SettingsWindow : AppWindow
         PeekFrameRateLimit = SelectedChoice(
             _peekFrameRateLimit,
             _editState.SavedSettings.PeekFrameRateLimit),
+        UpdateChannel = SelectedChoice(_updateChannel, _editState.SavedSettings.UpdateChannel),
         PeekVirtualKey = _peekVirtualKey,
         Language = CurrentLanguage,
         ThemeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode),
@@ -1074,7 +1090,7 @@ internal sealed class SettingsWindow : AppWindow
             numberBox.ValueChanged += (_, _) => OnSettingsEdited();
         }
 
-        foreach (var comboBox in new[] { _blurLevel, _shape, _peekFrameRateLimit, _peekMode, _logLevel })
+        foreach (var comboBox in new[] { _blurLevel, _shape, _peekFrameRateLimit, _peekMode, _logLevel, _updateChannel })
         {
             comboBox.SelectionChanged += (_, _) => OnSettingsEdited();
         }

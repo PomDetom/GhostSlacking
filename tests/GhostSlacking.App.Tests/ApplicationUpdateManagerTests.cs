@@ -342,6 +342,23 @@ public sealed class ApplicationUpdateManagerTests
     }
 
     [Fact]
+    public async Task Test_channel_discovers_prerelease_but_stable_channel_does_not()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var beta = TestRelease.Create("1.3.0-beta.1") with { Prerelease = true };
+        var stable = TestRelease.Create("1.2.0");
+        var handler = new ReleaseHandler(beta) { History = [beta, stable] };
+        using var client = new HttpClient(handler);
+        using var manager = CreateManager(files, client, currentVersion: "1.0.0", channel: UpdateChannel.Test);
+
+        var snapshot = await manager.CheckAsync();
+
+        Assert.Equal(ApplicationUpdateStatus.Available, snapshot.Status);
+        Assert.Equal("1.3.0-beta.1", snapshot.Release?.VersionText);
+        Assert.True(manager.Channel == UpdateChannel.Test);
+    }
+
+    [Fact]
     public async Task Release_history_follows_pagination_until_the_current_version_is_reached()
     {
         using var files = new TemporaryUpdateFiles();
@@ -373,7 +390,8 @@ public sealed class ApplicationUpdateManagerTests
         Func<DateTimeOffset>? utcNow = null,
         IUpdateInstallerLauncher? installerLauncher = null,
         Func<bool>? installationDetector = null,
-        ILogger? logger = null) => new(
+        ILogger? logger = null,
+        UpdateChannel channel = UpdateChannel.Stable) => new(
             logger ?? NullLogger.Instance,
             client,
             new UpdateStateStore(files.StatePath),
@@ -382,7 +400,8 @@ public sealed class ApplicationUpdateManagerTests
             utcNow,
             files.UpdatesDirectory,
             currentVersion,
-            installationDetector ?? (() => true));
+            installationDetector ?? (() => true),
+            channel);
 
     private sealed class ReleaseHandler(TestRelease release) : HttpMessageHandler
     {
@@ -520,6 +539,9 @@ public sealed class ApplicationUpdateManagerTests
         {
             product = "GhostSlacking",
             version = Version,
+            installerProductVersion = Version.Split('-')[0],
+            channel = Version.Contains('-') ? "prerelease" : "stable",
+            prerelease = Version.Contains('-'),
             architecture = "win-x64",
             installer = new
             {

@@ -16,16 +16,31 @@ internal enum UserNotificationSeverity
     Error
 }
 
+internal enum UserNotificationSource
+{
+    General,
+    Startup,
+    Update,
+    Picker,
+    Selection,
+    Error
+}
+
 internal interface IUserNotificationService : IDisposable
 {
-    void Show(string message, UserNotificationSeverity severity, Action? clickAction = null);
+    void Show(
+        string message,
+        UserNotificationSeverity severity,
+        Action? clickAction = null,
+        UserNotificationSource source = UserNotificationSource.General);
 }
 
 internal readonly record struct TransientNotification(
     string Message,
     UserNotificationSeverity Severity,
     DateTimeOffset ExpiresAt,
-    Action? ClickAction);
+    Action? ClickAction,
+    UserNotificationSource Source);
 
 internal readonly record struct UserNotificationPalette(
     Color Surface,
@@ -47,7 +62,8 @@ internal sealed class TransientNotificationState(TimeSpan duration)
         UserNotificationSeverity severity,
         DateTimeOffset now,
         Action? clickAction = null,
-        TimeSpan? displayDuration = null)
+        TimeSpan? displayDuration = null,
+        UserNotificationSource source = UserNotificationSource.General)
     {
         var selectedDuration = displayDuration ?? duration;
         if (selectedDuration <= TimeSpan.Zero)
@@ -56,7 +72,7 @@ internal sealed class TransientNotificationState(TimeSpan duration)
         }
 
         _pausedRemaining = null;
-        Current = new TransientNotification(message, severity, now.Add(selectedDuration), clickAction);
+        Current = new TransientNotification(message, severity, now.Add(selectedDuration), clickAction, source);
     }
 
     public bool Expire(DateTimeOffset now)
@@ -115,6 +131,34 @@ internal sealed class TransientNotificationState(TimeSpan duration)
     }
 }
 
+internal static class UserNotificationPolicy
+{
+    public static bool ShouldSuppress(
+        UserNotificationSource source,
+        TransientNotification current,
+        bool isPaused,
+        DateTimeOffset now)
+    {
+        if (!isPaused && now >= current.ExpiresAt)
+        {
+            return false;
+        }
+
+        return Priority(source) < Priority(current.Source);
+    }
+
+    public static int Priority(UserNotificationSource source) => source switch
+    {
+        UserNotificationSource.Error => 5,
+        UserNotificationSource.Selection => 4,
+        UserNotificationSource.Picker => 3,
+        UserNotificationSource.Update => 2,
+        UserNotificationSource.General => 2,
+        UserNotificationSource.Startup => 1,
+        _ => 0
+    };
+}
+
 internal sealed class AvaloniaNotificationService : IUserNotificationService
 {
     internal static readonly TimeSpan DisplayDuration = TimeSpan.FromMilliseconds(2500);
@@ -124,6 +168,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
     private const int ScreenMarginPx = 16;
 
     private readonly Func<DrawingPoint> _getCursorPosition;
+    private readonly Func<nint, NativeResult>? _bringToFront;
     private readonly ILogger _logger;
     private readonly DispatcherTimer _timer;
     private readonly TransientNotificationState _state = new(DisplayDuration);
@@ -147,15 +192,23 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             error ? Color.Parse("#EF4444") : AppTheme.AccentColor);
     }
 
-    public AvaloniaNotificationService(Func<DrawingPoint> getCursorPosition, ILogger logger)
+    public AvaloniaNotificationService(
+        Func<DrawingPoint> getCursorPosition,
+        ILogger logger,
+        Func<nint, NativeResult>? bringToFront = null)
     {
         _getCursorPosition = getCursorPosition;
+        _bringToFront = bringToFront;
         _logger = logger;
         _timer = new DispatcherTimer { Interval = DisplayDuration };
         _timer.Tick += OnTimerTick;
     }
 
-    public void Show(string message, UserNotificationSeverity severity, Action? clickAction = null)
+    public void Show(
+        string message,
+        UserNotificationSeverity severity,
+        Action? clickAction = null,
+        UserNotificationSource source = UserNotificationSource.General)
     {
         if (_disposed || string.IsNullOrWhiteSpace(message))
         {
@@ -164,7 +217,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
 
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => Show(message, severity, clickAction));
+            Dispatcher.UIThread.Post(() => Show(message, severity, clickAction, source));
             return;
         }
 
@@ -172,7 +225,21 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
         {
             var now = DateTimeOffset.UtcNow;
             var displayDuration = clickAction is null ? DisplayDuration : ClickableDisplayDuration;
-            _state.Show(message, severity, now, clickAction, displayDuration);
+            if (ShouldSuppress(source, now))
+            {
+                _logger.Log(
+                    LogLevel.Debug,
+                    $"NotificationSuppressed source={source} current={_state.Current?.Source}");
+                return;
+            }
+
+            var replaced = _state.Current is not null;
+            _state.Show(message, severity, now, clickAction, displayDuration, source);
+            if (replaced)
+            {
+                _logger.Log(LogLevel.Debug, $"NotificationReplaced source={source}");
+            }
+
             if (_window is null)
             {
                 _window = new NotificationWindow();
@@ -188,6 +255,12 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
                 _window.Show();
             }
 
+            RaiseWithoutActivation(_window, source);
+            _logger.Log(
+                LogLevel.Debug,
+                $"NotificationDisplayed source={source} visible={_window.IsVisible} " +
+                $"position=({_window.Position.X},{_window.Position.Y})");
+
             _timer.Stop();
             _timer.Interval = displayDuration;
             _timer.Start();
@@ -199,6 +272,39 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
         catch (Exception exception)
         {
             _logger.Log(LogLevel.Warning, "Avalonia notification could not be shown.", exception);
+        }
+    }
+
+    private bool ShouldSuppress(UserNotificationSource source, DateTimeOffset now)
+    {
+        if (_state.Current is not { } current)
+        {
+            return false;
+        }
+
+        return UserNotificationPolicy.ShouldSuppress(source, current, _state.IsPaused, now);
+    }
+
+    private void RaiseWithoutActivation(NotificationWindow window, UserNotificationSource source)
+    {
+        if (_bringToFront is null)
+        {
+            return;
+        }
+
+        var handle = window.TryGetPlatformHandle()?.Handle ?? 0;
+        if (handle == 0)
+        {
+            _logger.Log(LogLevel.Warning, $"NotificationRaiseSkipped source={source} reason=no-platform-handle");
+            return;
+        }
+
+        var result = _bringToFront(handle);
+        if (!result.Success)
+        {
+            _logger.Log(
+                LogLevel.Warning,
+                $"NotificationRaiseFailed source={source} error={result.ErrorCode} {result.ErrorMessage}");
         }
     }
 
@@ -214,6 +320,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
 
             _timer.Stop();
             _window?.Hide();
+            _logger.Log(LogLevel.Debug, "NotificationHidden reason=click");
             action();
         }
         catch (Exception exception)
@@ -286,6 +393,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
 
         _timer.Stop();
         _window?.Hide();
+        _logger.Log(LogLevel.Debug, "NotificationHidden reason=expired");
     }
 
     public void Dispose()
