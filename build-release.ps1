@@ -167,6 +167,20 @@ function Get-GitMetadata {
     return $result
 }
 
+function Get-ExactGitTagVersion {
+    $gitCommand = Get-Command git -ErrorAction SilentlyContinue
+    if ($null -eq $gitCommand) {
+        return $null
+    }
+
+    $tag = & $gitCommand.Source -C $repositoryRoot describe --tags --exact-match HEAD 2>$null
+    if ($LASTEXITCODE -ne 0 -or $tag -notmatch '^v(\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)$') {
+        return $null
+    }
+
+    return $Matches[1]
+}
+
 if (-not (Test-Path -LiteralPath $solutionPath)) {
     throw "找不到解决方案：$solutionPath"
 }
@@ -196,8 +210,16 @@ if ([int]$Matches[1] -lt 8) {
 
 $selectedSkipTests = [bool]$SkipTests
 $selectedOpenOutput = [bool]$OpenOutput
+$detectedTagVersion = $null
 $useInteractiveStrategy = -not $PSBoundParameters.ContainsKey('Version') -and
     -not $PSBoundParameters.ContainsKey('Increment')
+if ($useInteractiveStrategy) {
+    $detectedTagVersion = Get-ExactGitTagVersion
+    if (-not [string]::IsNullOrWhiteSpace($detectedTagVersion)) {
+        $Version = $detectedTagVersion
+        $useInteractiveStrategy = $false
+    }
+}
 
 if ($useInteractiveStrategy) {
     $strategy = Select-PackagingStrategy
@@ -252,6 +274,9 @@ try {
 
     Write-Host 'GhostSlacking 自动打包' -ForegroundColor Green
     Write-Host "版本：$packageVersion"
+    if ($detectedTagVersion) {
+        Write-Host "来源：当前提交标签 v$detectedTagVersion"
+    }
     Write-Host "SDK： $sdkVersionText"
     Write-Host "输出：$releaseDirectory"
 
@@ -274,7 +299,7 @@ try {
             # Run the existing script in a child process so this tool's strict
             # mode cannot alter its established execution semantics.
             & $powerShellExecutable -NoLogo -NoProfile -ExecutionPolicy Bypass `
-                -File $installerScript -Version $installerVersion
+                -File $installerScript -Version $installerVersion -InformationalVersion $packageVersion
         }
     }
     finally {
