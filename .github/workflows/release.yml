@@ -117,17 +117,20 @@ jobs:
 
           $head = (git rev-list -n 1 $env:RELEASE_TAG).Trim()
           $previous = if ($env:PREVIOUS_TAG) { (git rev-list -n 1 $env:PREVIOUS_TAG).Trim() } else { $null }
+          $headCommits = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          git rev-list $head | ForEach-Object { [void]$headCommits.Add([string]$_) }
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to read commits reachable from the release tag.' }
+          $previousCommits = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          if ($previous) {
+              git rev-list $previous | ForEach-Object { [void]$previousCommits.Add([string]$_) }
+              if ($LASTEXITCODE -ne 0) { throw 'Failed to read commits reachable from the previous release.' }
+          }
           $all = @(Get-Content -LiteralPath $allPath -Raw | ConvertFrom-Json)
           $selected = @($all | Where-Object {
               $oid = $_.mergeCommit.oid
-              if ([string]::IsNullOrWhiteSpace($oid)) { return $false }
-              git merge-base --is-ancestor $oid $head 2>$null
-              if ($LASTEXITCODE -ne 0) { return $false }
-              if ($previous) {
-                  git merge-base --is-ancestor $oid $previous 2>$null
-                  if ($LASTEXITCODE -eq 0) { return $false }
-              }
-              return $true
+              return -not [string]::IsNullOrWhiteSpace($oid) -and
+                  $headCommits.Contains([string]$oid) -and
+                  -not $previousCommits.Contains([string]$oid)
           })
           ConvertTo-Json -InputObject $selected -Depth 10 | Set-Content -LiteralPath $selectedPath -Encoding utf8
 
