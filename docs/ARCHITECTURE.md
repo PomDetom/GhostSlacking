@@ -1,19 +1,19 @@
-# GhostSlacking 技术架构设计
+# GhostSlacking 技术架构
 
-> 版本：V0.1 设计基线
+> 文档范围：当前实现的运行结构与安全边界；V0.1 目标和未验收场景分别见 [实施计划](IMPLEMENTATION_PLAN.md) 与 [实施状态](IMPLEMENTATION_STATUS.md)。
 > 平台：Windows 10/11  x64  
 > 技术路线：C# + .NET + Avalonia/FluentAvalonia UI + Win32 P/Invoke
 > 渲染路线：`SetWindowRgn` 内容裁剪 + 非抓屏 Windows Composition 外扩羽化
 
 ## 1. 文档目的
 
-本文将 GhostSlacking 的产品设计转换为可实施的技术边界和运行模型，重点回答：
+本文记录 GhostSlacking 已实现的技术边界和运行模型，重点回答：
 
 - 怎样选择并识别目标窗口；
 - 怎样让窗口进入 Ghost 状态并在 Peek 时只显示光标附近区域；
 - 怎样保证移动、缩放、最小化、关闭和异常退出时可恢复；
 - 怎样处理 Win32 坐标、DPI、多显示器和权限差异；
-- 哪些能力属于 V0.1，哪些风险留给后续版本。
+- 哪些行为已由代码实现，哪些兼容性仍需验收。
 
 本文不是对所有 Windows 窗口类型的兼容性承诺。当前实现以普通顶层桌面窗口为目标，自动化测试已覆盖核心领域逻辑，但真实窗口、DPI、权限和图形设备兼容性仍需按手工矩阵验收。
 
@@ -21,16 +21,16 @@
 
 ### 2.1 目标
 
-当前 V0.1 实现基线包含以下闭环：
+当前代码提供以下单窗口闭环；不同目标窗口上的实际兼容性仍需按手工矩阵验收：
 
 1. 托盘程序启动，不显示常驻主窗口；
 2. 用户通过快捷键进入 Window Picker，点击一个普通顶层窗口；
 3. 保存必要的原始窗口状态后，目标窗口进入 Ghost 状态；
 4. 按配置的 Peek 模式（默认按下切换，也支持按住显示），且光标位于目标窗口原始屏幕区域内时，显示随光标移动的 Reveal 区域；
 5. Reveal 区域尽量保留目标窗口的正常鼠标点击和滚动行为；
-6. 松开 Peek Key 后立即回到 Ghost；
+6. 按住显示模式在松开 Peek Key 后回到 Ghost；按下切换模式在再次按下时关闭 Peek；
 7. 用户可以通过 Restore 快捷键或托盘菜单恢复原窗口；
-8. 目标窗口关闭、程序退出或操作失败时，不遗留不可恢复的窗口修改。
+8. 目标窗口关闭、可控退出或操作失败时尝试安全恢复；主进程异常终止时由 Watchdog 按最后的有效清单尝试恢复，失败情况须可诊断。
 
 ### 2.2 非目标
 
@@ -48,7 +48,7 @@ V0.1 不包含：
 
 ### 3.1 单一修改入口
 
-只有 `VisibilityEngine` 可以修改目标窗口的 region、style、DWM 属性或 visibility。其他模块只产生意图或状态事件，不能直接调用这些 Win32 修改 API。
+主程序由 `GhostCoordinator` 发起状态转换，经 Core 的 `VisibilityEngine` 调用 Platform 的 `Win32VisibilityBackend` 修改目标窗口的 region、style、DWM 属性和 visibility。Watchdog 在确认 HWND、PID 和进程启动身份后，通过 `Win32WatchdogRecoveryTarget` 使用同一 Platform 恢复适配器。App UI 和其他 Core 模块不直接调用这些 Win32 修改 API。
 
 ### 3.2 先保存、后修改
 
@@ -56,7 +56,7 @@ V0.1 不包含：
 
 ### 3.3 可恢复优先于功能完整
 
-异常路径应尽量导向 `RestoreAll()`；正常退出是否恢复由 `RestoreOnExit` 设置决定。恢复操作应幂等：重复调用不会把窗口置于更坏状态。
+可控退出和失败路径应尽量执行安全恢复；正常退出是否恢复由 `RestoreOnExit` 设置决定。主程序异常终止时由独立 Watchdog 尝试恢复。恢复操作应幂等：重复调用不会把窗口置于更坏状态。
 
 ### 3.4 V0.1 保持简单
 
@@ -65,27 +65,20 @@ V0.1 不包含：
 ## 4. 系统上下文
 
 ```text
-┌──────────────────────┐       Win32 User/GDI/DWM API       ┌─────────────────────┐
-│ GhostSlacking.App.exe│ ─────────────────────────────────> │ Windows 桌面窗口系统 │
-│ Avalonia Tray Host   │                                    └─────────┬───────────┘
-└─────────┬────────────┘                                              │
-          │                                                           │ HWND
-          │ 用户输入                                                   ▼
-┌─────────▼────────────┐                                    ┌─────────────────────┐
-│ 键盘、鼠标、显示器、托盘 │                                    │ 目标应用窗口         │
-└──────────────────────┘                                    │ Chrome/微信/记事本等 │
-                                                            └─────────────────────┘
+用户输入/托盘 → GhostSlacking.App.exe (Avalonia) → Core 状态协调
+                                                  → Platform/Win32 → 目标窗口
+App.exe ↔ Watchdog.exe（当前用户命名管道、心跳和恢复清单）
+Watchdog.exe → Platform/Win32 身份校验与安全恢复 → 目标窗口
 
-        ┌──────────────────────┐
-        │ GhostSlacking.Watchdog.exe │ ← 心跳/恢复协议 → GhostSlacking.App.exe
-        └──────────────────────┘
+GhostSlacking.App.exe → GitHub Releases（可选检查与下载）
+GhostSlacking.App.exe → GhostSlacking.Updater.exe → Windows Installer（校验后升级）
 ```
 
 外部依赖限于 Windows 原生窗口系统、用户输入、本地文件系统，以及用于可选更新检查和下载的 GitHub 公共 Releases API；不需要数据库、目标应用 SDK 或用户访问令牌。
 
 ## 5. 运行时结构
 
-当前采用三个分层项目、一个独立 Watchdog 项目和两个测试项目：
+当前解决方案包含三个分层项目、两个独立进程项目和两个测试项目：
 
 ```text
 src/
@@ -93,12 +86,13 @@ src/
   GhostSlacking.Core/         状态机、领域模型、服务接口
   GhostSlacking.Platform/     Win32 P/Invoke 和 Windows 适配器
   GhostSlacking.Watchdog/     独立异常恢复进程
+  GhostSlacking.Updater/      独立 MSI 升级交接进程
 tests/
   GhostSlacking.Core.Tests/
   GhostSlacking.App.Tests/
 ```
 
-`GhostSlacking.Watchdog` 通过项目引用共享 Core/Platform 的恢复协议和 Win32 适配；App 的构建和发布会将 Watchdog 的运行文件复制到同一输出目录。当前没有独立的 `Platform.Tests` 或 `ManualTests` 项目，手工验收以文档测试矩阵执行。
+`GhostSlacking.Watchdog` 引用 Core/Platform 的恢复协议和 Win32 适配；`GhostSlacking.Updater` 引用 Core。App 的构建/发布目标携带 Watchdog，发布目标将 Updater 放入独立子目录。当前没有独立的 `Platform.Tests` 或 `ManualTests` 项目，真实窗口验收以[实施计划的测试矩阵](IMPLEMENTATION_PLAN.md#9-测试矩阵)执行。
 
 ### 5.1 依赖方向
 
@@ -107,10 +101,11 @@ App ───────────────► Core ───────�
  │                    ▲
  └──────────────► Platform ─────────────┘
 
-Watchdog ───────────► Platform/Recovery 协议
+Watchdog ───────────► Platform ─────────► Core 恢复协议
+Updater ────────────────────────────────► Core
 ```
 
-`Core` 不引用 UI 框架；`Platform` 实现 `Core` 定义的接口并承载无界面的 Win32 HWND；`App` 负责组合依赖、Avalonia 托盘菜单、消息循环和用户反馈。
+`Core` 不引用 UI 框架或 Win32；`Platform` 实现 `Core` 定义的接口并承载无界面的 Win32 HWND；`App` 负责组合依赖、Avalonia 托盘菜单、消息循环和用户反馈。Updater 在主进程安全退出后执行已校验 MSI 的安装与重启交接，不参与目标窗口状态协调。
 
 ## 6. 核心领域模型
 
@@ -197,7 +192,7 @@ SettingsRequested / ExitRequested
 RevealDiameterIncreaseRequested / RevealDiameterDecreaseRequested
 ```
 
-切换快捷键使用 `RegisterHotKey`/`WM_HOTKEY`。Hold-to-Peek 需要知道按键按下和抬起状态，V0.1 可采用低级键盘 Hook 或受控的键状态轮询；输入层必须提供去抖和重复事件抑制。TriggerEngine 不直接调用 `SetWindowRgn`。
+切换快捷键使用 `RegisterHotKey`/`WM_HOTKEY`。Peek 按键状态由定时器通过键状态轮询交给 `PeekStateTracker`，它处理按住/切换模式的按下沿与重复事件。输入层不直接调用 `SetWindowRgn`。
 
 鼠标位置和 Peek 按键状态使用 `GetCursorPos`/键状态的定时轮询；`WH_MOUSE_LL` 和 `WH_KEYBOARD_LL` 当前仅在 Picker 活跃期间用于选择点击和 Esc 取消拦截。
 
@@ -205,7 +200,7 @@ RevealDiameterIncreaseRequested / RevealDiameterDecreaseRequested
 
 职责：将领域状态转换为对目标窗口的最小、可恢复的 Win32 修改。
 
-它是窗口 region、style、DWM 属性和显示/隐藏操作的唯一入口。当前实现的主要路径是：
+它是主程序对目标窗口发起可见性变更的 Core 入口；实际 Win32 调用位于 Platform 的 `Win32VisibilityBackend`。Watchdog 的恢复例外使用同一 Platform 适配器。当前主程序的主要路径是：
 
 ```text
 Normal  → Ghost       保存快照后使用 SW_HIDE，并应用临时恢复所需的窗口属性
@@ -250,9 +245,9 @@ SetWindowRgn(hwnd, region, true)
 - 初始屏幕矩形、可见状态和最小化状态；
 - 原始 window region（无 region 也要记录）；
 - 与本功能有关的 style/ex-style、完整 `WINDOWPLACEMENT`、进程启动身份和相关 DWM 属性；
-- 快照版本、创建时间和恢复原因。
+- 快照创建时间；Watchdog 清单另带版本号，恢复原因记录在日志中。
 
-恢复路径包括：手动 Restore、切换目标、目标进程退出、正常退出、应用退出事件、未处理异常和 Watchdog 恢复。恢复操作需逐项记录结果，即使其中一项失败也继续尝试其他项。
+恢复路径包括手动 Restore、切换目标、目标失效后的清理、按 `RestoreOnExit` 设置执行的正常退出恢复、强制恢复的关闭/升级交接，以及主程序异常终止后的 Watchdog 恢复。Avalonia UI 线程的未处理异常当前记录错误并提示用户；`AppDomain.UnhandledException` 当前只写入诊断输出，不能当作主程序恢复保证。恢复操作需逐项记录结果，即使其中一项失败也继续尝试其他项。
 
 ### 7.7 `TrayHost` 与设置 UI
 
@@ -428,7 +423,7 @@ Tracker 维护一个 `TrackedWindow`，包含最后一次有效 rect、PID、最
 
 ```text
 Ctrl + Alt + P   进入 Picker（可配置）
-Ctrl + Alt + G   切换窗口隐藏与完整显示；无目标时进入 Picker（可配置）
+Ctrl + Alt + G   切换当前窗口隐藏与完整显示；无目标时保持原状态（可配置）
 Peek Key         Hold-to-Peek 或按下切换（可配置）
 Ctrl + Alt + R   Restore 当前窗口（可配置）
 Ctrl + Shift + Alt + R  Emergency Restore All（可配置）
@@ -447,7 +442,7 @@ AND cursor 在当前目标屏幕矩形内
 AND targetWindow 有效
 ```
 
-未满足条件时保持 Ghost。按键抬起事件必须优先于下一次光标更新执行，目标是快速清除 Reveal。
+未满足条件时保持 Ghost。按住显示模式在按键松开后关闭 Reveal；按下切换模式在下一次有效按下沿关闭 Reveal。
 
 ## 13. Visibility/RegionEngine 细节
 
@@ -485,23 +480,21 @@ region 裁剪有机会让清晰核心内的目标窗口继续接收鼠标输入�
 
 ### 14.1 主进程恢复
 
-应用退出前按以下顺序执行（正常退出遵循 `RestoreOnExit`；Emergency Restore 和关闭请求强制恢复）：
+应用退出时按以下顺序清理（正常退出遵循 `RestoreOnExit`；关闭请求和升级交接强制恢复）：
 
 ```text
-停止输入与 tracker
+标记退出，取消更新任务和 Picker
   ↓
-禁止新状态转换
+按 `RestoreOnExit` 或强制恢复标志执行 RestoreAll()
   ↓
-按设置执行 RestoreAll()
+注销 Hook/热键，停止定时器并释放视觉层和 UI
   ↓
-注销热键、释放 region/GDI 资源
+恢复无失败时通知 Watchdog 正常关闭；否则保留清单供其超时恢复
   ↓
-写入退出日志
-  ↓
-退出 Avalonia 消息循环
+写入退出日志，结束 Avalonia 消息循环
 ```
 
-`Dispatcher.UIThread.UnhandledException`、`AppDomain.UnhandledException`、进程退出事件只能作为尽力而为的最后防线，不能代替 Watchdog。
+当前 `Dispatcher.UIThread.UnhandledException` 记录错误并显示提示；`AppDomain.UnhandledException` 仅输出诊断信息。两者都不保证在异常时执行 `RestoreAll()`；主进程异常终止后的恢复依赖 Watchdog 及其最后一次有效清单。注销/关机通知下的提前恢复仍是未完成目标，见[实施状态](IMPLEMENTATION_STATUS.md#尚未完成验收与后续工作)。
 
 ### 14.2 Watchdog 恢复协议
 
@@ -559,7 +552,7 @@ CreateEllipticRgn()             region 本地坐标
 
 ## 16. 权限与安全边界
 
-GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。控制更高完整性级别的窗口可能因 UIPI 或窗口策略失败，失败时显示可理解的提示：目标窗口以更高权限运行，需用户明确选择以相同权限重启。
+GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。控制更高完整性级别的窗口可能因 UIPI 或窗口策略失败；当前提供 native 错误码和通用失败反馈。目标完整性级别诊断与更具体的“以相同权限运行”提示仍是[未完成目标](IMPLEMENTATION_STATUS.md#尚未完成验收与后续工作)。
 
 安全边界：
 

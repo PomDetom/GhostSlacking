@@ -64,7 +64,7 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。
 
 ## 从源码运行
 
-需要 Windows 10/11 x64、Git 和 [.NET 8 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。
+需要 Windows 10/11 x64、Git 和 [.NET 8 或更新版本的 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。CI 使用 .NET 8 验证最低支持版本。
 
 ```powershell
 git clone https://github.com/PomDetom/GhostSlacking.git
@@ -80,10 +80,12 @@ dotnet run --project src/GhostSlacking.App --configuration Debug
 dotnet test GhostSlacking.sln --configuration Debug
 ```
 
-## 更多信息
+## 开发导航
 
-- [技术架构](docs/ARCHITECTURE.md)
-- [实施计划](docs/IMPLEMENTATION_PLAN.md)
-- [实施状态](docs/IMPLEMENTATION_STATUS.md)
+- [AGENTS.md](AGENTS.md)：仓库规则、项目职责和改动面对应的检查。
+- [技术架构](docs/ARCHITECTURE.md)：当前运行结构、模块边界和恢复不变量。
+- [实施状态](docs/IMPLEMENTATION_STATUS.md)：已实现能力与尚未验证的事项。
+- [实施计划](docs/IMPLEMENTATION_PLAN.md)：阶段目标、验收条件和 Windows 手工矩阵。
+- [Git 与发布流程](docs/DEVELOPMENT_WORKFLOW.md)：分支、PR、仓库设置与版本发布规则。
 
 配置和日志位于 `%LOCALAPPDATA%\GhostSlacking`。遇到异常时，请先按 `Ctrl+Shift+Alt+R` 尝试恢复全部窗口。
