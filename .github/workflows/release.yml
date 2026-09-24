@@ -97,8 +97,23 @@ jobs:
           $allPath = Join-Path $env:RUNNER_TEMP 'all-pull-requests.json'
           $selectedPath = Join-Path $env:RUNNER_TEMP 'release-pull-requests.json'
           $releaseNotesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          gh pr list --state merged --base dev --limit 1000 --json number,title,body,author,labels,mergedAt,mergeCommit > $allPath
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to query merged feature pull requests.' }
+          $pullRequestPagesJson = gh api --paginate --slurp "repos/$env:GITHUB_REPOSITORY/pulls?state=closed&per_page=100"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to query pull requests from GitHub.' }
+          $pullRequestPages = @($pullRequestPagesJson | ConvertFrom-Json)
+          $all = @($pullRequestPages | ForEach-Object { $_ } |
+              Where-Object { $_.merged_at -and $_.base.ref -eq 'dev' } |
+              ForEach-Object {
+                  [pscustomobject]@{
+                      number = $_.number
+                      title = $_.title
+                      body = $_.body
+                      author = [pscustomobject]@{ login = $_.user.login }
+                      labels = $_.labels
+                      mergedAt = $_.merged_at
+                      mergeCommit = [pscustomobject]@{ oid = $_.merge_commit_sha }
+                  }
+              })
+          ConvertTo-Json -InputObject $all -Depth 10 | Set-Content -LiteralPath $allPath -Encoding utf8
 
           $head = (git rev-list -n 1 $env:RELEASE_TAG).Trim()
           $previous = if ($env:PREVIOUS_TAG) { (git rev-list -n 1 $env:PREVIOUS_TAG).Trim() } else { $null }
