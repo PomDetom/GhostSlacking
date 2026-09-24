@@ -98,6 +98,20 @@ public enum UiThemeMode
     Dark
 }
 
+public enum NotificationStyle
+{
+    Card,
+    Capsule,
+    Chat
+}
+
+public readonly record struct NotificationPlacement(double X, double Y)
+{
+    public NotificationPlacement Normalize() => new(
+        double.IsFinite(X) ? Math.Clamp(X, 0, 1) : 1,
+        double.IsFinite(Y) ? Math.Clamp(Y, 0, 1) : 1);
+}
+
 // Kept as CircleRegion for compatibility with the V0.1 core API. The region
 // now carries the selected shape and is used for all Reveal geometries.
 public readonly record struct CircleRegion(
@@ -197,9 +211,13 @@ public sealed record GhostWindowProfile(WindowSnapshot Original, RevealSettings 
 
 public sealed record AppSettings
 {
-    public int SchemaVersion { get; init; } = 6;
+    public int SchemaVersion { get; init; } = 7;
     public UiLanguage Language { get; init; } = UiLanguage.Chinese;
     public UiThemeMode ThemeMode { get; init; } = UiThemeMode.System;
+    public NotificationStyle NotificationStyle { get; init; } = NotificationStyle.Card;
+    public NotificationPlacement CardNotificationPlacement { get; init; } = new(1, 1);
+    public NotificationPlacement CapsuleNotificationPlacement { get; init; } = new(1, 1);
+    public NotificationPlacement ChatNotificationPlacement { get; init; } = new(0, 1);
     public int RevealDiameterPx { get; init; } = 144;
     public int RevealDiameterStepPx { get; init; } = 16;
     public int RevealSoftEdgeWidthPx { get; init; } = 16;
@@ -224,11 +242,17 @@ public sealed record AppSettings
 
     public AppSettings Normalize() => this with
     {
-        SchemaVersion = 6,
+        SchemaVersion = 7,
         Language = Language is UiLanguage.Chinese or UiLanguage.English ? Language : UiLanguage.Chinese,
         ThemeMode = ThemeMode is UiThemeMode.System or UiThemeMode.Light or UiThemeMode.Dark
             ? ThemeMode
             : UiThemeMode.System,
+        NotificationStyle = NotificationStyle is NotificationStyle.Card or NotificationStyle.Capsule or NotificationStyle.Chat
+            ? NotificationStyle
+            : NotificationStyle.Card,
+        CardNotificationPlacement = CardNotificationPlacement.Normalize(),
+        CapsuleNotificationPlacement = CapsuleNotificationPlacement.Normalize(),
+        ChatNotificationPlacement = ChatNotificationPlacement.Normalize(),
         RevealDiameterPx = Math.Clamp(RevealDiameterPx, 64, 800),
         RevealDiameterStepPx = Math.Clamp(RevealDiameterStepPx, 8, 256),
         RevealSoftEdgeWidthPx = Math.Clamp(RevealSoftEdgeWidthPx, 0, 128),

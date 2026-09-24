@@ -128,7 +128,9 @@ internal sealed class GhostApplicationController : IDisposable
         _notifications = new AvaloniaNotificationService(
             _windows.GetCursorPosition,
             _logger,
-            _windows.BringToTopWithoutActivation);
+            _windows.BringToTopWithoutActivation,
+            _settings,
+            _windows.SetNotificationClickThrough);
         _updates.Changed += OnUpdateStateChanged;
         _updates.InstallHandoffStarted += OnUpdateInstallHandoffStarted;
 
@@ -536,6 +538,7 @@ internal sealed class GhostApplicationController : IDisposable
                 exportSettings: (settings, stream) => _dataExport.ExportSettingsAsync(stream, settings),
                 updates: _updates,
                 openUpdateWindow: OpenUpdateWindow,
+                getCursorPosition: _windows.GetCursorPosition,
                 initialPage: initialPage);
             _settingsWindow = window;
             window.Closed += OnSettingsClosed;
@@ -649,6 +652,7 @@ internal sealed class GhostApplicationController : IDisposable
         }
 
         _settings = updated;
+        _notifications.Configure(_settings);
         _updates.SetChannel(_settings.UpdateChannel);
         _logger.MinimumLevel = _settings.MinimumLogLevel;
         AppTheme.Apply(_settings.ThemeMode);

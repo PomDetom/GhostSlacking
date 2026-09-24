@@ -42,6 +42,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly Func<Stream, Task<DataExportResult>> _exportLogs;
     private readonly Func<AppSettings, Stream, Task<DataExportResult>> _exportSettings;
     private readonly Action<UiThemeMode> _applyTheme;
+    private readonly Func<System.Drawing.Point> _getCursorPosition;
     private readonly IApplicationUpdateManager? _updates;
     private readonly Action? _openUpdateWindow;
     private readonly List<(TextBlock Text, string Key)> _localizedText = [];
@@ -67,6 +68,10 @@ internal sealed class SettingsWindow : AppWindow
     private readonly Button _peekKeyButton;
     private readonly ComboBox _language;
     private readonly ComboBox _themeMode;
+    private readonly ComboBox _notificationStyle;
+    private readonly Button _notificationPositionButton;
+    private readonly Button _notificationPositionDoneButton;
+    private readonly Button _notificationPositionCancelButton;
     private readonly ComboBox _logLevel;
     private readonly ComboBox _updateChannel;
     private readonly Button _exportLogsButton;
@@ -98,6 +103,12 @@ internal sealed class SettingsWindow : AppWindow
     private bool _initializing = true;
     private string _selectedPage = RevealPage;
     private string? _exportStatusKey;
+    private NotificationPlacement _cardNotificationPlacement;
+    private NotificationPlacement _capsuleNotificationPlacement;
+    private NotificationPlacement _chatNotificationPlacement;
+    private NotificationWindow? _notificationPreview;
+    private NotificationPlacement _previewPlacement;
+    private NotificationStyle _previewStyle;
 
     public SettingsWindow(
         AppSettings settings,
@@ -107,16 +118,21 @@ internal sealed class SettingsWindow : AppWindow
         Func<AppSettings, Stream, Task<DataExportResult>>? exportSettings = null,
         IApplicationUpdateManager? updates = null,
         Action? openUpdateWindow = null,
+        Func<System.Drawing.Point>? getCursorPosition = null,
         string? initialPage = null)
     {
         _editState = new SettingsEditState(settings);
         _save = save;
         _applyTheme = applyTheme ?? AppTheme.Apply;
+        _getCursorPosition = getCursorPosition ?? (() => System.Drawing.Point.Empty);
         _exportLogs = exportLogs ?? (_ => Task.FromResult(DataExportResult.Failure()));
         _exportSettings = exportSettings ?? ((_, _) => Task.FromResult(DataExportResult.Failure()));
         _updates = updates;
         _openUpdateWindow = openUpdateWindow;
         _peekVirtualKey = settings.PeekVirtualKey;
+        _cardNotificationPlacement = settings.CardNotificationPlacement;
+        _capsuleNotificationPlacement = settings.CapsuleNotificationPlacement;
+        _chatNotificationPlacement = settings.ChatNotificationPlacement;
 
         ApplyThemePalette();
 
@@ -138,6 +154,15 @@ internal sealed class SettingsWindow : AppWindow
         _peekMode = CreateComboBox();
         _language = CreateComboBox();
         _themeMode = CreateComboBox();
+        _notificationStyle = CreateComboBox();
+        _notificationPositionButton = CreateTextButton(settings.Language, "adjustNotificationPosition");
+        _notificationPositionDoneButton = CreateTextButton(settings.Language, "finishNotificationPosition");
+        _notificationPositionCancelButton = CreateTextButton(settings.Language, "cancelNotificationPosition");
+        _notificationPositionDoneButton.IsVisible = false;
+        _notificationPositionCancelButton.IsVisible = false;
+        _notificationPositionButton.Click += (_, _) => BeginNotificationPositionPreview();
+        _notificationPositionDoneButton.Click += (_, _) => CompleteNotificationPositionPreview();
+        _notificationPositionCancelButton.Click += (_, _) => CancelNotificationPositionPreview();
         _logLevel = CreateComboBox();
         _updateChannel = CreateComboBox();
         _exportLogsButton = CreateTextButton(settings.Language, "exportLogs");
@@ -355,6 +380,11 @@ internal sealed class SettingsWindow : AppWindow
             [
                 CreateSettingRow(language, "restoreOnExit", "restoreOnExitDescription", _restoreOnExit),
                 CreateSettingRow(language, "startWindows", "startWindowsDescription", _startWithWindows)
+            ]),
+            CreateSection(language, "notificationSettings",
+            [
+                CreateSettingRow(language, "notificationStyle", "notificationStyleDescription", _notificationStyle),
+                CreateSettingRow(language, "notificationPosition", "notificationPositionDescription", CreateNotificationPositionEditor())
             ]),
             CreateSection(language, "languageAndDiagnostics",
             [
@@ -583,6 +613,134 @@ internal sealed class SettingsWindow : AppWindow
         return grid;
     }
 
+    private Control CreateNotificationPositionEditor() => new StackPanel
+    {
+        Orientation = Orientation.Horizontal,
+        Spacing = 6,
+        Children =
+        {
+            _notificationPositionButton,
+            _notificationPositionDoneButton,
+            _notificationPositionCancelButton
+        }
+    };
+
+    private void BeginNotificationPositionPreview()
+    {
+        if (_notificationPreview is not null)
+        {
+            return;
+        }
+
+        _previewStyle = SelectedChoice(_notificationStyle, _editState.SavedSettings.NotificationStyle);
+        _previewPlacement = _previewStyle switch
+        {
+            NotificationStyle.Capsule => _capsuleNotificationPlacement,
+            NotificationStyle.Chat => _chatNotificationPlacement,
+            _ => _cardNotificationPlacement
+        };
+
+        var preview = new NotificationWindow(_previewStyle, preview: true);
+        preview.Update(UiText.Text(CurrentLanguage, "notificationPreviewMessage"), UserNotificationSeverity.Info, false);
+        var cursor = _getCursorPosition();
+        var screen = preview.Screens.ScreenFromPoint(new PixelPoint(cursor.X, cursor.Y)) ?? preview.Screens.Primary;
+        if (screen is not null)
+        {
+            preview.Position = NotificationLayout.Position(
+                screen.WorkingArea,
+                screen.Scaling,
+                new Size(preview.Width, preview.Height),
+                _previewPlacement);
+        }
+
+        preview.PositionChanged += (_, _) => UpdateNotificationPreviewPlacement();
+        preview.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape)
+            {
+                CancelNotificationPositionPreview();
+            }
+        };
+        preview.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_notificationPreview, preview))
+            {
+                _notificationPreview = null;
+                SetNotificationPreviewButtons(false);
+            }
+        };
+        _notificationPreview = preview;
+        SetNotificationPreviewButtons(true);
+        preview.Show();
+        preview.Activate();
+    }
+
+    private void UpdateNotificationPreviewPlacement()
+    {
+        var preview = _notificationPreview;
+        if (preview is null)
+        {
+            return;
+        }
+
+        var originScreen = preview.Screens.ScreenFromPoint(preview.Position) ?? preview.Screens.Primary;
+        var screen = originScreen is null
+            ? null
+            : preview.Screens.ScreenFromPoint(new PixelPoint(
+                preview.Position.X + (int)Math.Round(preview.Width * originScreen.Scaling / 2),
+                preview.Position.Y + (int)Math.Round(preview.Height * originScreen.Scaling / 2))) ?? originScreen;
+        if (screen is null)
+        {
+            return;
+        }
+
+        _previewPlacement = NotificationLayout.FromPosition(
+            screen.WorkingArea,
+            screen.Scaling,
+            new Size(preview.Width, preview.Height),
+            preview.Position);
+    }
+
+    private void CompleteNotificationPositionPreview()
+    {
+        if (_notificationPreview is null)
+        {
+            return;
+        }
+
+        UpdateNotificationPreviewPlacement();
+        switch (_previewStyle)
+        {
+            case NotificationStyle.Capsule:
+                _capsuleNotificationPlacement = _previewPlacement;
+                break;
+            case NotificationStyle.Chat:
+                _chatNotificationPlacement = _previewPlacement;
+                break;
+            default:
+                _cardNotificationPlacement = _previewPlacement;
+                break;
+        }
+
+        CancelNotificationPositionPreview();
+        OnSettingsEdited();
+    }
+
+    private void CancelNotificationPositionPreview()
+    {
+        var preview = _notificationPreview;
+        _notificationPreview = null;
+        preview?.Close();
+        SetNotificationPreviewButtons(false);
+    }
+
+    private void SetNotificationPreviewButtons(bool editing)
+    {
+        _notificationPositionButton.IsVisible = !editing;
+        _notificationPositionDoneButton.IsVisible = editing;
+        _notificationPositionCancelButton.IsVisible = editing;
+    }
+
     private HotkeyEditor CreateHotkeyEditor(HotkeyBinding binding, HotkeyBinding defaultBinding)
     {
         var display = CreateCaptureButton();
@@ -695,6 +853,7 @@ internal sealed class SettingsWindow : AppWindow
             settings.PeekTrigger,
             settings.PeekFrameRateLimit);
         PopulateThemeChoices(settings.Language, settings.ThemeMode);
+        PopulateNotificationChoices(settings.Language, settings.NotificationStyle);
         _language.ItemsSource = new[]
         {
             new Choice<UiLanguage>(UiLanguage.Chinese, "中文"),
@@ -717,6 +876,17 @@ internal sealed class SettingsWindow : AppWindow
             new Choice<UiThemeMode>(UiThemeMode.Dark, UiText.Text(language, "themeDark"))
         };
         SelectChoice(_themeMode, themeMode);
+    }
+
+    private void PopulateNotificationChoices(UiLanguage language, NotificationStyle style)
+    {
+        _notificationStyle.ItemsSource = new[]
+        {
+            new Choice<NotificationStyle>(NotificationStyle.Card, UiText.Text(language, "notificationCard")),
+            new Choice<NotificationStyle>(NotificationStyle.Capsule, UiText.Text(language, "notificationCapsule")),
+            new Choice<NotificationStyle>(NotificationStyle.Chat, UiText.Text(language, "notificationChat"))
+        };
+        SelectChoice(_notificationStyle, style);
     }
 
     private void PopulateUpdateChannels(UiLanguage language, UpdateChannel channel)
@@ -833,9 +1003,11 @@ internal sealed class SettingsWindow : AppWindow
                 _peekFrameRateLimit,
                 _editState.SavedSettings.PeekFrameRateLimit);
             var themeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode);
+            var notificationStyle = SelectedChoice(_notificationStyle, _editState.SavedSettings.NotificationStyle);
             PopulateLocalizedChoices(language, blur, shape, trigger, frameRateLimit);
             PopulateUpdateChannels(language, _editState.SavedSettings.UpdateChannel);
             PopulateThemeChoices(language, themeMode);
+            PopulateNotificationChoices(language, notificationStyle);
             foreach (var button in this.GetLogicalDescendants().OfType<Button>())
             {
                 if (button.Tag is string tooltipKey)
@@ -885,6 +1057,7 @@ internal sealed class SettingsWindow : AppWindow
             return;
         }
 
+        CompleteNotificationPositionPreview();
         var updated = GetSettings().Normalize();
         if (!_save(updated))
         {
@@ -1069,6 +1242,10 @@ internal sealed class SettingsWindow : AppWindow
         PeekVirtualKey = _peekVirtualKey,
         Language = CurrentLanguage,
         ThemeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode),
+        NotificationStyle = SelectedChoice(_notificationStyle, _editState.SavedSettings.NotificationStyle),
+        CardNotificationPlacement = _cardNotificationPlacement,
+        CapsuleNotificationPlacement = _capsuleNotificationPlacement,
+        ChatNotificationPlacement = _chatNotificationPlacement,
         PickHotkey = _pickHotkey.Binding,
         WindowToggleVirtualKey = _windowToggleHotkey.Binding.VirtualKey,
         WindowToggleHotkey = _windowToggleHotkey.Binding,
@@ -1096,6 +1273,14 @@ internal sealed class SettingsWindow : AppWindow
         }
 
         _themeMode.SelectionChanged += OnThemeModeSelectionChanged;
+        _notificationStyle.SelectionChanged += (_, _) =>
+        {
+            if (!_updatingLanguage)
+            {
+                CancelNotificationPositionPreview();
+                OnSettingsEdited();
+            }
+        };
         _restoreOnExit.IsCheckedChanged += (_, _) => OnSettingsEdited();
         _startWithWindows.IsCheckedChanged += (_, _) => OnSettingsEdited();
     }
@@ -1252,6 +1437,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private void OnClosed(object? sender, EventArgs args)
     {
+        CancelNotificationPositionPreview();
         if (_updates is not null)
         {
             _updates.Changed -= OnUpdateStateChanged;
