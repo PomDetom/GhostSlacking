@@ -34,6 +34,7 @@ jobs:
         id: version
         shell: pwsh
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $tag = $env:RELEASE_TAG
@@ -72,9 +73,17 @@ jobs:
               .\scripts\release-metadata.ps1 -Mode ValidateVersion -Tag $tag
           }
 
+          $publishedTagJson = gh release list --limit 1000 --json tagName
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to query published releases.' }
+          $previousReleaseTag = @($publishedTagJson | ConvertFrom-Json |
+              ForEach-Object { [string]$_.tagName } |
+              Where-Object { $_ -ne $tag -and $_ -match '^v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$' } |
+              Select-Object -First 1)
+          $previousNotesTag = if ($previousReleaseTag.Count -gt 0) { $previousReleaseTag[0] } else { '' }
+
           $version = $tag.Substring(1)
           "value=$version" >> $env:GITHUB_OUTPUT
-          "previous_tag=$previousTag" >> $env:GITHUB_OUTPUT
+          "previous_tag=$previousNotesTag" >> $env:GITHUB_OUTPUT
           "prerelease=$($isPrerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Collect merged feature PRs
@@ -88,7 +97,7 @@ jobs:
           $allPath = Join-Path $env:RUNNER_TEMP 'all-pull-requests.json'
           $selectedPath = Join-Path $env:RUNNER_TEMP 'release-pull-requests.json'
           $releaseNotesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          gh pr list --state merged --base dev --limit 1000 --json number,title,body,author,labels,mergedAt,mergeCommit,base,head > $allPath
+          gh pr list --state merged --base dev --limit 1000 --json number,title,body,author,labels,mergedAt,mergeCommit > $allPath
           if ($LASTEXITCODE -ne 0) { throw 'Failed to query merged feature pull requests.' }
 
           $head = (git rev-list -n 1 $env:RELEASE_TAG).Trim()
