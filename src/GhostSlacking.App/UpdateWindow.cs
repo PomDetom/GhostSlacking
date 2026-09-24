@@ -258,7 +258,7 @@ internal sealed class UpdateWindow : AppWindow
 
         var busy = snapshot.Status is ApplicationUpdateStatus.Checking or
             ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying;
-        var updateKnown = release is not null && release.Version > Version.Parse(snapshot.CurrentVersion);
+        var updateKnown = release is not null && release.Version > ReleaseVersion.Parse(snapshot.CurrentVersion);
         _installButton.IsVisible = updateKnown;
         _installButton.IsEnabled = updateKnown &&
             (_downloadCancellation is not null || (!busy && _updates.CanInstallUpdates));

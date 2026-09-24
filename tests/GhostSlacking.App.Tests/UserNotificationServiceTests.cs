@@ -34,6 +34,41 @@ public sealed class UserNotificationServiceTests
     }
 
     [Fact]
+    public void Notification_source_is_preserved_for_replacement_policy()
+    {
+        var state = new TransientNotificationState(TimeSpan.FromSeconds(2.5));
+        var now = DateTimeOffset.UtcNow;
+
+        state.Show("picking", UserNotificationSeverity.Info, now, source: UserNotificationSource.Picker);
+
+        Assert.Equal(UserNotificationSource.Picker, state.Current?.Source);
+        Assert.False(UserNotificationPolicy.ShouldSuppress(
+            UserNotificationSource.Selection,
+            state.Current!.Value,
+            state.IsPaused,
+            now.AddSeconds(1)));
+        Assert.True(UserNotificationPolicy.ShouldSuppress(
+            UserNotificationSource.Startup,
+            state.Current.Value,
+            state.IsPaused,
+            now.AddSeconds(1)));
+    }
+
+    [Fact]
+    public void Lower_priority_notification_is_allowed_after_the_current_one_expires()
+    {
+        var state = new TransientNotificationState(TimeSpan.FromSeconds(2.5));
+        var now = DateTimeOffset.UtcNow;
+        state.Show("selection", UserNotificationSeverity.Info, now, source: UserNotificationSource.Selection);
+
+        Assert.False(UserNotificationPolicy.ShouldSuppress(
+            UserNotificationSource.Startup,
+            state.Current!.Value,
+            state.IsPaused,
+            now.AddSeconds(3)));
+    }
+
+    [Fact]
     public void Notification_expires_only_after_its_deadline()
     {
         var state = new TransientNotificationState(TimeSpan.FromSeconds(2.5));

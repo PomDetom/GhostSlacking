@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches:
+      - dev
       - master
   pull_request:
 
@@ -33,6 +34,8 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_BASE_REF: ${{ github.base_ref }}
           PR_HEAD_REF: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -47,7 +50,32 @@ jobs:
           if ($env:PR_BASE_REF -eq 'master' -and $env:PR_HEAD_REF -eq 'dev') {
               $bodyPath = Join-Path $env:RUNNER_TEMP 'release-pr-body.md'
               [System.IO.File]::WriteAllText($bodyPath, $env:PR_BODY, [System.Text.UTF8Encoding]::new($false))
-              .\scripts\release-metadata.ps1 -Mode ValidateNotes -BodyPath $bodyPath
+              .\scripts\release-metadata.ps1 -Mode ValidateReleasePr -BodyPath $bodyPath
+          } elseif ($env:PR_BASE_REF -eq 'dev') {
+              $bodyPath = Join-Path $env:RUNNER_TEMP 'feature-pr-body.md'
+              [System.IO.File]::WriteAllText($bodyPath, $env:PR_BODY, [System.Text.UTF8Encoding]::new($false))
+              $labels = @()
+              if (-not [string]::IsNullOrWhiteSpace($env:PR_LABELS)) {
+                  $labels = @($env:PR_LABELS | ConvertFrom-Json | ForEach-Object { [string]$_.name })
+              }
+              $category = if ($labels -contains 'skip-changelog' -or $labels -contains 'type: skip-changelog') {
+                  'skip-changelog'
+              } elseif ($labels -contains 'breaking' -or $labels -contains 'type: breaking' -or $env:PR_TITLE -match '^[a-z]+!:' -or $env:PR_TITLE -match '^\w+\([^)]*\)!:') {
+                  'breaking'
+              } elseif ($labels -contains 'feature' -or $labels -contains 'type: feature' -or $env:PR_TITLE -match '^feat(\(|:)') {
+                  'feature'
+              } elseif ($labels -contains 'improvement' -or $labels -contains 'type: improvement' -or $env:PR_TITLE -match '^(refactor|perf)(\(|!|:)') {
+                  'improvement'
+              } elseif ($labels -contains 'fix' -or $labels -contains 'type: fix' -or $env:PR_TITLE -match '^fix(\(|!|:)') {
+                  'fix'
+              } elseif ($labels -contains 'docs' -or $labels -contains 'type: docs' -or $env:PR_TITLE -match '^(docs|build|ci|test|chore|revert)(\(|!|:)') {
+                  'docs'
+              } else {
+                  'other'
+              }
+              .\scripts\release-metadata.ps1 -Mode ValidateFeature -BodyPath $bodyPath -Category $category
+          } else {
+              throw "Pull requests must target dev, except for the dev -> master release PR."
           }
 
       - name: Test release metadata tooling

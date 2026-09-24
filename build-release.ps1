@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$')]
     [string]$Version,
 
     [ValidateSet('Patch', 'Minor', 'Major')]
@@ -225,14 +225,19 @@ if ([string]::IsNullOrWhiteSpace($Increment)) {
 }
 
 $packageVersion = if (-not [string]::IsNullOrWhiteSpace($Version)) {
-    ([version]$Version).ToString(3)
+    if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta|rc)\.(\d+))?$') {
+        throw "版本号无效：$Version。请使用 MAJOR.MINOR.PATCH[-beta.N]。"
+    }
+    $Version
 }
 else {
     Get-AutomaticVersion -IncrementPart $Increment
 }
 
+$installerVersion = $packageVersion.Split('-')[0]
+
 $releaseDirectory = Join-Path $releaseOutputRoot $packageVersion
-$sourceMsi = Join-Path $installerOutputRoot "GhostSlacking-$packageVersion-win-x64.msi"
+$sourceMsi = Join-Path $installerOutputRoot "GhostSlacking-$installerVersion-win-x64.msi"
 $releaseMsi = Join-Path $releaseDirectory "GhostSlacking-$packageVersion-win-x64.msi"
 $checksumPath = "$releaseMsi.sha256"
 $manifestPath = Join-Path $releaseDirectory 'release.json'
@@ -269,7 +274,7 @@ try {
             # Run the existing script in a child process so this tool's strict
             # mode cannot alter its established execution semantics.
             & $powerShellExecutable -NoLogo -NoProfile -ExecutionPolicy Bypass `
-                -File $installerScript -Version $packageVersion
+                -File $installerScript -Version $installerVersion
         }
     }
     finally {
@@ -290,6 +295,10 @@ try {
     $manifest = [ordered]@{
         product = 'GhostSlacking'
         version = $packageVersion
+        installerProductVersion = $installerVersion
+        channel = if ($packageVersion.Contains('-')) { 'prerelease' } else { 'stable' }
+        prerelease = $packageVersion.Contains('-')
+        tag = "v$packageVersion"
         architecture = 'win-x64'
         createdAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
         dotnetSdk = $sdkVersionText

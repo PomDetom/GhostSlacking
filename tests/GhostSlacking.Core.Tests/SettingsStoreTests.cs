@@ -18,7 +18,7 @@ public sealed class SettingsStoreTests
 
         var normalized = settings.Normalize();
 
-        Assert.Equal(5, normalized.SchemaVersion);
+        Assert.Equal(7, normalized.SchemaVersion);
         Assert.Equal(800, normalized.RevealDiameterPx);
         Assert.Equal(8, normalized.RevealDiameterStepPx);
         Assert.Equal(128, normalized.RevealSoftEdgeWidthPx);
@@ -132,7 +132,7 @@ public sealed class SettingsStoreTests
 
             var settings = new SettingsStore(path).Load();
 
-            Assert.Equal(5, settings.SchemaVersion);
+            Assert.Equal(7, settings.SchemaVersion);
             Assert.Equal(320, settings.RevealDiameterPx);
             Assert.Equal(16, settings.RevealDiameterStepPx);
             Assert.Equal(16, settings.RevealSoftEdgeWidthPx);
@@ -163,7 +163,7 @@ public sealed class SettingsStoreTests
 
             var settings = new SettingsStore(path).Load();
 
-            Assert.Equal(5, settings.SchemaVersion);
+            Assert.Equal(7, settings.SchemaVersion);
             Assert.Equal(64, settings.RevealSoftEdgeWidthPx);
             Assert.Equal(RevealBlurLevel.Low, settings.RevealBlurLevel);
         }
@@ -207,7 +207,7 @@ public sealed class SettingsStoreTests
             }
             """);
 
-        Assert.Equal(5, restored.SchemaVersion);
+        Assert.Equal(7, restored.SchemaVersion);
         Assert.Equal(PeekTrigger.Hold, restored.PeekTrigger);
         Assert.Equal(PeekFrameRateLimit.Auto, restored.PeekFrameRateLimit);
     }
@@ -299,7 +299,7 @@ public sealed class SettingsStoreTests
             Assert.True(store.Save(new AppSettings { ThemeMode = UiThemeMode.Dark }));
 
             var settings = store.Load();
-            Assert.Equal(5, settings.SchemaVersion);
+            Assert.Equal(7, settings.SchemaVersion);
             Assert.Equal(UiThemeMode.Dark, settings.ThemeMode);
         }
         finally
@@ -319,13 +319,61 @@ public sealed class SettingsStoreTests
             Assert.True(store.Save(new AppSettings { RevealBlurLevel = RevealBlurLevel.High }));
 
             var settings = store.Load();
-            Assert.Equal(5, settings.SchemaVersion);
+            Assert.Equal(7, settings.SchemaVersion);
             Assert.Equal(RevealBlurLevel.High, settings.RevealBlurLevel);
         }
         finally
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public void Notification_style_and_independent_positions_round_trip()
+    {
+        var settings = new AppSettings
+        {
+            NotificationStyle = NotificationStyle.Chat,
+            CardNotificationPlacement = new NotificationPlacement(0.2, 0.3),
+            CapsuleNotificationPlacement = new NotificationPlacement(0.8, 0.4),
+            ChatNotificationPlacement = new NotificationPlacement(0.1, 0.9)
+        };
+
+        var restored = AppSettingsJson.Deserialize(AppSettingsJson.Serialize(settings));
+
+        Assert.Equal(settings.NotificationStyle, restored.NotificationStyle);
+        Assert.Equal(settings.CardNotificationPlacement, restored.CardNotificationPlacement);
+        Assert.Equal(settings.CapsuleNotificationPlacement, restored.CapsuleNotificationPlacement);
+        Assert.Equal(settings.ChatNotificationPlacement, restored.ChatNotificationPlacement);
+    }
+
+    [Fact]
+    public void Legacy_settings_receive_notification_defaults()
+    {
+        var restored = AppSettingsJson.Deserialize("{\"SchemaVersion\":6,\"Language\":\"English\"}");
+
+        Assert.Equal(7, restored.SchemaVersion);
+        Assert.Equal(NotificationStyle.Card, restored.NotificationStyle);
+        Assert.Equal(new NotificationPlacement(1, 1), restored.CardNotificationPlacement);
+        Assert.Equal(new NotificationPlacement(1, 1), restored.CapsuleNotificationPlacement);
+        Assert.Equal(new NotificationPlacement(0, 1), restored.ChatNotificationPlacement);
+    }
+
+    [Fact]
+    public void Notification_positions_and_unknown_style_are_normalized()
+    {
+        var settings = new AppSettings
+        {
+            NotificationStyle = (NotificationStyle)99,
+            CardNotificationPlacement = new NotificationPlacement(-1, 2),
+            ChatNotificationPlacement = new NotificationPlacement(double.NaN, double.PositiveInfinity)
+        };
+
+        var normalized = settings.Normalize();
+
+        Assert.Equal(NotificationStyle.Card, normalized.NotificationStyle);
+        Assert.Equal(new NotificationPlacement(0, 1), normalized.CardNotificationPlacement);
+        Assert.Equal(new NotificationPlacement(1, 1), normalized.ChatNotificationPlacement);
     }
 
     [Theory]

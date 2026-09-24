@@ -128,6 +128,66 @@ public sealed class Win32WindowApi : IWindowApi
                 "Windows did not allow the window to move to the foreground.");
     }
 
+    public NativeResult BringToTopWithoutActivation(nint hwnd)
+    {
+        if (!IsWindow(hwnd))
+        {
+            return NativeResult.Failed("SetWindowPos(NotificationTopmost)", 0, "The window is unavailable.");
+        }
+
+        var flags = Win32NativeMethods.SWP_NOMOVE |
+            Win32NativeMethods.SWP_NOSIZE |
+            Win32NativeMethods.SWP_NOACTIVATE |
+            Win32NativeMethods.SWP_SHOWWINDOW;
+        return Win32NativeMethods.SetWindowPos(
+            hwnd,
+            Win32NativeMethods.HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            flags)
+            ? NativeResult.Ok("SetWindowPos(NotificationTopmost)")
+            : NativeResult.Failed(
+                "SetWindowPos(NotificationTopmost)",
+                Win32NativeMethods.LastError,
+                "Could not raise the notification window without activation.");
+    }
+
+    public NativeResult SetNotificationClickThrough(nint hwnd, bool enabled)
+    {
+        if (!IsWindow(hwnd))
+        {
+            return NativeResult.Failed("SetWindowLongPtr(NotificationClickThrough)", 0, "The window is unavailable.");
+        }
+
+        var style = Win32NativeMethods.GetWindowLongPtr(hwnd, Win32NativeMethods.GWL_EXSTYLE);
+        var updated = enabled
+            ? style | (nint)Win32NativeMethods.WS_EX_TRANSPARENT
+            : style & ~(nint)Win32NativeMethods.WS_EX_TRANSPARENT;
+        if (updated == style)
+        {
+            return NativeResult.Ok("SetWindowLongPtr(NotificationClickThrough)");
+        }
+
+        Win32NativeMethods.SetLastError(0);
+        Win32NativeMethods.SetWindowLongPtr(hwnd, Win32NativeMethods.GWL_EXSTYLE, updated);
+        var error = Win32NativeMethods.LastError;
+        if (error != 0)
+        {
+            return NativeResult.Failed("SetWindowLongPtr(NotificationClickThrough)", error, "Could not update notification hit testing.");
+        }
+
+        var flags = Win32NativeMethods.SWP_NOMOVE |
+            Win32NativeMethods.SWP_NOSIZE |
+            Win32NativeMethods.SWP_NOZORDER |
+            Win32NativeMethods.SWP_NOACTIVATE |
+            Win32NativeMethods.SWP_FRAMECHANGED;
+        return Win32NativeMethods.SetWindowPos(hwnd, 0, 0, 0, 0, 0, flags)
+            ? NativeResult.Ok("SetWindowPos(NotificationClickThrough)")
+            : NativeResult.Failed("SetWindowPos(NotificationClickThrough)", Win32NativeMethods.LastError, "Could not apply notification hit testing.");
+    }
+
     private static byte[]? CaptureRegion(nint hwnd, out string? error)
     {
         error = null;

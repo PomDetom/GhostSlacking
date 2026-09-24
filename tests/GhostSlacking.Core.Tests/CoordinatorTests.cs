@@ -499,6 +499,38 @@ public sealed class CoordinatorTests
     }
 
     [Fact]
+    public void Switching_targets_publishes_selection_only_after_restore_completes()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+        var selected = new List<TargetWindow>();
+        coordinator.WindowSelected += selected.Add;
+
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        Assert.Single(selected);
+
+        selected.Clear();
+        var replacement = api.Target with
+        {
+            Hwnd = 43,
+            ProcessId = 101,
+            ProcessName = "replacement",
+            ScreenBounds = new Rectangle(200, 150, 700, 500)
+        };
+
+        Assert.True(coordinator.SelectWindow(replacement, new RevealSettings()));
+        Assert.Empty(selected);
+
+        CompleteRestore(coordinator);
+
+        var completed = Assert.Single(selected);
+        Assert.Equal(replacement.Hwnd, completed.Hwnd);
+        Assert.Equal(replacement.ProcessName, completed.ProcessName);
+    }
+
+    [Fact]
     public void Delayed_restore_drift_is_corrected_and_profile_is_kept_until_three_stable_ticks()
     {
         var api = new FakeWindowApi();
