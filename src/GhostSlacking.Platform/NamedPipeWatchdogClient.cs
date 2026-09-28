@@ -182,15 +182,45 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
 
         _disposed = true;
         IsConnected = false;
-        _heartbeatCancellation.Cancel();
-        WaitForHeartbeatTask();
-        _writer?.Dispose();
-        _reader?.Dispose();
-        _pipe?.Dispose();
-        WaitForWatchdogExit(TimeSpan.FromSeconds(7));
-        _watchdogProcess?.Dispose();
-        _heartbeatCancellation.Dispose();
-        GC.SuppressFinalize(this);
+        try
+        {
+            _heartbeatCancellation.Cancel();
+            WaitForHeartbeatTask();
+        }
+        finally
+        {
+            try
+            {
+                DisposePipeResource(_writer, "writer");
+                DisposePipeResource(_reader, "reader");
+                DisposePipeResource(_pipe, "pipe");
+                WaitForWatchdogExit(TimeSpan.FromSeconds(7));
+            }
+            finally
+            {
+                try
+                {
+                    _watchdogProcess?.Dispose();
+                }
+                finally
+                {
+                    _heartbeatCancellation.Dispose();
+                    GC.SuppressFinalize(this);
+                }
+            }
+        }
+    }
+
+    private void DisposePipeResource(IDisposable? resource, string name)
+    {
+        try
+        {
+            resource?.Dispose();
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException)
+        {
+            _logger.Log(LogLevel.Warning, $"Watchdog {name} could not be closed during shutdown.", exception);
+        }
     }
 
     private async Task SendHeartbeatsAsync()
