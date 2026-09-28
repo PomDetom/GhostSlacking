@@ -41,4 +41,14 @@ GitHub 和应用使用完整 SemVer，例如 `0.2.0-beta.1`。Windows Installer 
 
 ## 仓库设置
 
-GitHub 仓库应保护 `dev` 和 `master`：要求 PR、`Release tests`、对话解决，禁止 force-push 和删除分支。仓库合并设置只保留 Squash merge 和 Merge commit；发布 PR 使用 Merge commit，普通功能 PR 使用 Squash merge。
+`dev` 和 `master` 都使用相同的分支保护规则：
+
+| 设置 | 要求 |
+| --- | --- |
+| 合入方式 | 必须通过 Pull Request；单维护者配置要求 0 个额外批准。 |
+| 状态检查 | 必须通过 GitHub Actions 的 `Release tests`，并要求分支在合入前与目标分支保持最新。 |
+| 对话 | 必须解决 PR 对话。 |
+| 分支历史 | 禁止 force-push 和删除分支；不要求线性历史，以便保留发布 PR 的 Merge commit。 |
+| 管理员 | 保留管理员应急绕过，仅用于恢复；日常变更仍走 PR。 |
+
+仓库级合并方式只启用 Squash merge 和 Merge commit，关闭 Rebase merge。普通功能 PR 合入 `dev` 使用 Squash merge；`dev` → `master` 发布 PR 使用 Merge commit。修改 GitHub 设置后，回读两个分支的保护规则和仓库合并方式，确认与本节一致。

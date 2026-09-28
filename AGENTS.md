@@ -6,15 +6,19 @@
 
 - `GhostSlacking.Core`: platform-neutral domain models, geometry, state coordination, settings, and recovery logic.
 - `GhostSlacking.Platform`: Windows/Win32 adapters for window selection, hooks, hotkeys, and visibility.
-- `GhostSlacking.App`: the WinForms tray host, Avalonia/FluentAvalonia settings UI, startup integration, and logging.
+- `GhostSlacking.App`: the Avalonia tray host, FluentAvalonia settings UI, startup integration, and logging.
 - `GhostSlacking.Watchdog`: the independent recovery process used after an abnormal app exit.
 - `GhostSlacking.Updater`: the independent handoff process used for verified MSI upgrades.
 
-Automated tests live in `tests/GhostSlacking.Core.Tests` and `tests/GhostSlacking.App.Tests`. Architecture decisions, implementation phases, and the manual compatibility matrix are in `docs/`. Generated output belongs in `bin/`, `obj/`, or `artifacts/`; do not commit it.
+Automated tests live in `tests/GhostSlacking.Core.Tests` and `tests/GhostSlacking.App.Tests`; release metadata checks live in `tests/ReleaseMetadata.Tests.ps1`. Generated output belongs in `bin/`, `obj/`, or `artifacts/`; do not commit it.
+
+## Authoritative Project Knowledge
+
+Use `README.md` for product behavior and entry points, `docs/ARCHITECTURE.md` for implemented boundaries and recovery invariants, `docs/IMPLEMENTATION_STATUS.md` for current completion and unverified work, `docs/IMPLEMENTATION_PLAN.md` for targets and the Windows manual matrix, and `docs/DEVELOPMENT_WORKFLOW.md` for branch and release rules. Update the owning document when behavior changes; distinguish implemented behavior from targets and unverified compatibility.
 
 ## Build, Test, and Development Commands
 
-Run commands from the repository root with the .NET 8 SDK on Windows:
+Run commands from the repository root with the .NET 8 SDK or newer on Windows. CI uses .NET 8 to check the minimum supported SDK:
 
 ```powershell
 dotnet restore GhostSlacking.sln
@@ -32,6 +36,15 @@ Follow the existing C# style: four-space indentation, file-scoped namespaces, nu
 ## Testing Guidelines
 
 Tests use xUnit and `[Fact]`. Name tests as behavior statements in `snake_case`, for example `Target_identity_mismatch_is_not_restored_to_a_reused_handle`. Add tests for state transitions, geometry boundaries, settings normalization, and recovery safeguards. Run the full suite before submitting. Changes involving HWND lifecycle, DPI, multi-monitor behavior, focus, redraw, or privilege boundaries also require manual checks from `docs/IMPLEMENTATION_PLAN.md` on Windows 10/11.
+
+| Change surface | Required checks |
+| --- | --- |
+| Core state, geometry, settings, or recovery | Relevant `GhostSlacking.Core.Tests` cases and the full Release suite. |
+| Platform HWND, region, hooks, DPI, or Watchdog recovery | Relevant Core/App tests, the full Release suite, and the applicable Windows manual matrix in `docs/IMPLEMENTATION_PLAN.md`. |
+| App settings, tray, notifications, or update handoff | Relevant `GhostSlacking.App.Tests` cases and the full Release suite; inspect changed UI behavior in the running app. |
+| Installer, versioning, release scripts, or CI | `tests/ReleaseMetadata.Tests.ps1` and the full Release suite; validate an MSI when packaging changes. |
+
+The CI `Release tests` job runs the PowerShell metadata checks and the Release .NET suite. Record manual results in the PR; a passing automated run does not establish real-window or clean-install compatibility.
 
 ## Commit & Pull Request Guidelines
 
@@ -53,8 +66,8 @@ git push origin v0.1.1
 
 The `v*.*.*` tag workflow is the source of truth for MSI artifacts. Stable tags use `vMAJOR.MINOR.PATCH` on `master`; beta/RC tags use `vMAJOR.MINOR.PATCH-beta.N` or `-rc.N` on `dev` and publish as GitHub Pre-releases. The workflow reruns Release tests, builds the Windows MSI, writes the SHA256 file and `release.json`, and publishes the GitHub Release. Do not create a release tag on the wrong branch, move or reuse a published tag, or replace a failed release asset under the same tag; use a new version after fixing the problem. Local packaging is for validation only.
 
-The GitHub repository should protect `master` with pull requests, the required `Release tests` status check, conversation resolution where practical, and disabled force-push/delete permissions. The current single-maintainer configuration leaves an administrator emergency bypass available; use it only for recovery. Review the detailed click-path and single-maintainer guidance in the README before changing these rules.
+Protect `dev` and `master` with pull requests, the required `Release tests` status check, conversation resolution, and disabled force-push/delete permissions. The single-maintainer configuration leaves an administrator emergency bypass available; use it only for recovery. The canonical settings and merge methods are in `docs/DEVELOPMENT_WORKFLOW.md`.
 
 ## Security & Recovery
 
-Never weaken the capture-before-mutation or identity-validation safeguards. Avoid persisting window content or stale HWNDs. Do not require elevation by default; handle higher-privilege targets with a clear failure instead.
+Never weaken the capture-before-mutation or identity-validation safeguards. `GhostCoordinator` must register a complete snapshot before applying Ghost; a failed capture must leave the target untouched. Both main-process and Watchdog restore paths must reject a reused HWND or mismatched PID/process-start identity. Core coordinator and Watchdog protocol tests cover identity rejection and run in CI. Changes to snapshot or recovery contracts require corresponding focused tests and Windows restore checks. Avoid persisting window content or stale HWNDs. Do not require elevation by default; handle higher-privilege targets with a clear failure instead.
