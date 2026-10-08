@@ -150,6 +150,8 @@ internal sealed class GhostApplicationController : IDisposable
 
         RegisterHotkeys();
         UpdateTrayStatus();
+        if (Program.StartupTimestamp != 0)
+            _logger.Log(LogLevel.Info, $"Timing application_ready_ms={Stopwatch.GetElapsedTime(Program.StartupTimestamp).TotalMilliseconds:F1}");
     }
 
     internal void ShowStartupNotification()
@@ -824,6 +826,7 @@ internal sealed class GhostApplicationController : IDisposable
         }
 
         _disposed = true;
+        var exitClock = Stopwatch.StartNew();
         _isExiting = true;
         _updateCancellation.Cancel();
         CancelPicking();
@@ -874,7 +877,7 @@ internal sealed class GhostApplicationController : IDisposable
         _messageWindow.CloseRequested -= OnCloseRequested;
         _messageWindow.DisplayConfigurationChanged -= OnDisplayConfigurationChanged;
         _messageWindow.Dispose();
-        _logger.Log(LogLevel.Info, "Application exited.");
+        _logger.Log(LogLevel.Info, $"Application exited. Timing safe_shutdown_ms={exitClock.Elapsed.TotalMilliseconds:F1}");
         _logger.Dispose();
         GC.SuppressFinalize(this);
     }

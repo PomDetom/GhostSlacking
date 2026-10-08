@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using GhostSlacking.Core;
 
 namespace GhostSlacking.Updater;
@@ -12,7 +13,8 @@ internal sealed record UpdaterOptions(
     string InstallerPath,
     string Version,
     string ApplicationPath,
-    string ReadyEventName)
+    string ReadyEventName,
+    string? ExpectedSha256 = null)
 {
     private const string ReadyEventPrefix = @"Local\GhostSlacking.Updater.Ready.";
 
@@ -25,7 +27,8 @@ internal sealed record UpdaterOptions(
     {
         options = null!;
         error = string.Empty;
-        if (args.Length != 12 ||
+        var hasHash = args.Length == 14 && TryValue(args, "--sha256", out _);
+        if ((args.Length != 12 && !hasHash) ||
             !TryValue(args, "--parent-pid", out var parentPidText) ||
             !TryValue(args, "--parent-start-ticks", out var parentStartText) ||
             !TryValue(args, "--installer", out var installerPath) ||
@@ -63,13 +66,32 @@ internal sealed record UpdaterOptions(
             var fullUpdatesRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(updatesRoot)) +
                 Path.DirectorySeparatorChar;
             var fullInstallerPath = Path.GetFullPath(installerPath);
-            var expectedInstallerName = $"GhostSlacking-{normalizedVersion}-win-x64.msi";
+            var isExe = string.Equals(Path.GetFileName(fullInstallerPath), $"GhostSlacking-{normalizedVersion}-win-x64-setup.exe", StringComparison.Ordinal);
+            var expectedInstallerName = isExe ? $"GhostSlacking-{normalizedVersion}-win-x64-setup.exe" : $"GhostSlacking-{normalizedVersion}-win-x64.msi";
             if (!fullInstallerPath.StartsWith(fullUpdatesRoot, StringComparison.OrdinalIgnoreCase) ||
                 !string.Equals(Path.GetFileName(fullInstallerPath), expectedInstallerName, StringComparison.Ordinal) ||
                 !File.Exists(fullInstallerPath))
             {
                 error = "The installer path is outside the validated update cache.";
                 return false;
+            }
+
+            string? expectedHash = null;
+            if (isExe && !hasHash)
+            {
+                error = "An EXE update requires the verified manifest hash.";
+                return false;
+            }
+            if (hasHash)
+            {
+                TryValue(args, "--sha256", out expectedHash);
+                using var stream = File.OpenRead(fullInstallerPath);
+                if (stream.Length > 256L * 1024 * 1024 || !string.Equals(
+                    Convert.ToHexString(SHA256.HashData(stream)), expectedHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    error = "The cached installer hash does not match the verified release.";
+                    return false;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(installedLocation))
@@ -94,7 +116,8 @@ internal sealed record UpdaterOptions(
                 fullInstallerPath,
                 normalizedVersion,
                 fullApplicationPath,
-                readyEventName);
+                readyEventName,
+                expectedHash);
             return true;
         }
         catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
@@ -120,12 +143,12 @@ internal sealed record UpdaterOptions(
     private static bool TryParseVersion(string value, out string normalized)
     {
         normalized = string.Empty;
-        if (!System.Version.TryParse(value, out var version) || version.Build < 0 || version.Revision >= 0)
+        if (!ReleaseVersion.TryParse(value, out var version))
         {
             return false;
         }
 
-        normalized = version.ToString(3);
+        normalized = version.Text;
         return string.Equals(normalized, value, StringComparison.Ordinal);
     }
 
@@ -153,6 +176,7 @@ internal sealed class UpdaterEngine(
 
     public int Run(UpdaterOptions options)
     {
+        var stage = Stopwatch.StartNew();
         if (!runtime.WaitForParentExit(
                 options.ParentProcessId,
                 options.ParentStartTimeUtcTicks,
@@ -163,17 +187,27 @@ internal sealed class UpdaterEngine(
             return 4;
         }
 
+        logger.Log(LogLevel.Info, $"Timing parent_exit_ms={stage.Elapsed.TotalMilliseconds:F1}");
+        stage.Restart();
+
         int installerExitCode;
         try
         {
+            // Keep the verified file open without write/delete sharing through execution.
+            // This also detects tampering while waiting for the main process to exit.
+            using var verifiedInstaller = options.ExpectedSha256 is null ? null : File.OpenRead(options.InstallerPath);
+            if (verifiedInstaller is not null && !string.Equals(Convert.ToHexString(SHA256.HashData(verifiedInstaller)),
+                    options.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The installer changed after the update handoff.");
             installerExitCode = runtime.RunInstaller(options.InstallerPath);
+            logger.Log(LogLevel.Info, $"Timing installer_ms={stage.Elapsed.TotalMilliseconds:F1} exit_code={installerExitCode}");
         }
         catch (Win32Exception exception) when (exception.NativeErrorCode == WindowsUpdaterRuntime.ErrorCancelled)
         {
             logger.Log(LogLevel.Info, "The user cancelled the updater elevation request.");
             return Finish(options, UpdateCompletionStatus.Cancelled, null, 5);
         }
-        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or InvalidDataException)
         {
             logger.Log(LogLevel.Error, "Windows Installer could not be started.", exception);
             return Finish(options, UpdateCompletionStatus.Failed, null, 6);
@@ -187,6 +221,9 @@ internal sealed class UpdaterEngine(
             return Finish(options, UpdateCompletionStatus.Succeeded, installerExitCode, 0);
         }
 
+        if (installerExitCode is 1602 or WindowsUpdaterRuntime.ErrorCancelled)
+            return Finish(options, UpdateCompletionStatus.Cancelled, installerExitCode, 5);
+
         logger.Log(LogLevel.Error, $"Automatic update failed with installer exit code {installerExitCode}.");
         return Finish(options, UpdateCompletionStatus.Failed, installerExitCode, 7);
     }
@@ -198,8 +235,10 @@ internal sealed class UpdaterEngine(
         int updaterExitCode)
     {
         completionStore.Save(Result(options, status, installerExitCode));
+        var restartClock = Stopwatch.StartNew();
         if (runtime.StartApplication(options.ApplicationPath))
         {
+            logger.Log(LogLevel.Info, $"Timing restart_launch_ms={restartClock.Elapsed.TotalMilliseconds:F1}");
             return updaterExitCode;
         }
 
@@ -251,24 +290,37 @@ internal sealed class WindowsUpdaterRuntime : IUpdaterRuntime
 
     public int RunInstaller(string installerPath)
     {
-        using var process = Process.Start(CreateInstallerStartInfo(installerPath)) ??
+        var diagnosticPath = Environment.GetEnvironmentVariable("GHOSTSLACKING_UPDATE_DIAGNOSTICS") == "1"
+            ? Path.Combine(GhostSlackingDataPaths.LogDirectory, $"install-{DateTime.UtcNow:yyyyMMdd-HHmmss}.log") : null;
+        if (diagnosticPath is not null) Directory.CreateDirectory(GhostSlackingDataPaths.LogDirectory);
+        using var process = Process.Start(CreateInstallerStartInfo(installerPath, diagnosticPath)) ??
             throw new InvalidOperationException("Windows Installer did not start.");
         process.WaitForExit();
         return process.ExitCode;
     }
 
-    internal static ProcessStartInfo CreateInstallerStartInfo(string installerPath)
+    internal static ProcessStartInfo CreateInstallerStartInfo(string installerPath, string? diagnosticLogPath = null)
     {
+        var isExe = string.Equals(Path.GetExtension(installerPath), ".exe", StringComparison.OrdinalIgnoreCase);
         var startInfo = new ProcessStartInfo
         {
-            FileName = "msiexec.exe",
+            FileName = isExe ? installerPath : "msiexec.exe",
             UseShellExecute = true,
-            Verb = "runas"
+            Verb = isExe ? string.Empty : "runas"
         };
-        startInfo.ArgumentList.Add("/i");
-        startInfo.ArgumentList.Add(installerPath);
+        if (!isExe)
+        {
+            startInfo.ArgumentList.Add("/i");
+            startInfo.ArgumentList.Add(installerPath);
+        }
         startInfo.ArgumentList.Add("/passive");
         startInfo.ArgumentList.Add("/norestart");
+        if (diagnosticLogPath is not null)
+        {
+            startInfo.ArgumentList.Add(isExe ? "/log" : "/l*v");
+            startInfo.ArgumentList.Add(diagnosticLogPath);
+            if (isExe) startInfo.ArgumentList.Add("--diagnostics");
+        }
         return startInfo;
     }
 

@@ -1,17 +1,19 @@
 <Project Sdk="WixToolset.Sdk/5.0.2">
   <PropertyGroup>
     <InstallerPlatform>x64</InstallerPlatform>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.4</ProductVersion>
     <InstallerDisplayVersion Condition="'$(InstallerDisplayVersion)' == ''">$(ProductVersion)</InstallerDisplayVersion>
     <InstallerProductCode Condition="'$(InstallerProductCode)' == ''">*</InstallerProductCode>
     <PublishDirectory Condition="'$(PublishDirectory)' == ''">$(MSBuildThisFileDirectory)..\artifacts\installer-publish\win-x64</PublishDirectory>
-    <DefineConstants>ProductVersion=$(ProductVersion);InstallerDisplayVersion=$(InstallerDisplayVersion);InstallerProductCode=$(InstallerProductCode);PublishDirectory=$(PublishDirectory)</DefineConstants>
+    <CabinetCompression Condition="'$(CabinetCompression)' == ''">high</CabinetCompression>
+    <DefineConstants>ProductVersion=$(ProductVersion);InstallerDisplayVersion=$(InstallerDisplayVersion);InstallerProductCode=$(InstallerProductCode);PublishDirectory=$(PublishDirectory);CabinetCompression=$(CabinetCompression)</DefineConstants>
     <OutputName>GhostSlacking-$(ProductVersion)-win-x64</OutputName>
     <OutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer</OutputPath>
     <!-- Keep WiX incremental state isolated by product version. Otherwise a version
          bump can reuse the previous link cache while CopyFilesToOutputDirectory
          already expects the new versioned MSI file name. -->
-    <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer-obj\$(Configuration)\$(ProductVersion)</IntermediateOutputPath>
+    <IntermediateOutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer-obj\$(Configuration)\$(ProductVersion)\$(CabinetCompression)</IntermediateOutputPath>
     <DebugType>none</DebugType>
     <Cultures>zh-CN</Cultures>
     <!-- AllowSameVersionUpgrades intentionally makes the upgrade range inclusive. -->
@@ -19,6 +21,8 @@
     <SuppressIces>ICE38;ICE43;ICE57;ICE61;ICE63</SuppressIces>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Package.wxs" />
+    <Compile Include="InstallerUI.wxs" />
     <PackageReference Include="WixToolset.Netfx.wixext" Version="5.0.2" />
     <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
     <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />

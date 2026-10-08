@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\GhostSlacking.App\GhostSlacking.App.csproj" />
     <ProjectReference Include="..\..\src\GhostSlacking.Updater\GhostSlacking.Updater.csproj" />
+    <ProjectReference Include="..\..\src\GhostSlacking.Setup\GhostSlacking.Setup.csproj" />
   </ItemGroup>
   <Target Name="CopyWatchdogTestArtifacts" AfterTargets="Build">
     <ItemGroup>

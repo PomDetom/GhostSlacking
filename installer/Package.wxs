@@ -17,7 +17,7 @@
       AllowSameVersionUpgrades="yes"
       IgnoreRemoveFailure="no"
       DowngradeErrorMessage="已安装更高版本的 GhostSlacking，无法安装较低版本。" />
-    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="$(CabinetCompression)" />
 
     <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
     <Property Id="GHOSTSLACKING_DISPLAY_VERSION" Value="$(InstallerDisplayVersion)" />
@@ -98,6 +98,7 @@
       Id="BlockUpgradeWhileGhostSlackingIsRunning"
       Error="GhostSlacking 或其 Watchdog 未能安全退出。旧版本尚未更改，请手动退出程序后重试升级。" />
     <InstallExecuteSequence>
+      <Custom Action="override Wix4NetFxDotNetCompatibilityCheck_$(sys.BUILDARCHSHORT)" Before="LaunchConditions" Condition="NOT Installed" />
       <Custom
         Action="override Wix4CloseApplications_$(sys.BUILDARCHSHORT)"
         Before="InstallFiles"
@@ -107,6 +108,9 @@
         After="Wix4CloseApplications_$(sys.BUILDARCHSHORT)"
         Condition="GHOSTSLACKING_STILL_RUNNING OR GHOSTSLACKING_WATCHDOG_STILL_RUNNING" />
     </InstallExecuteSequence>
+    <InstallUISequence>
+      <Custom Action="override Wix4NetFxDotNetCompatibilityCheck_$(sys.BUILDARCHSHORT)" Before="LaunchConditions" Condition="NOT Installed" />
+    </InstallUISequence>
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="GhostSlacking" />
@@ -143,6 +147,7 @@
           Name="InstallerVersion"
           Type="string"
           Value="[ProductVersion]" />
+        <RegistryValue Root="HKLM" Key="Software\GhostSlacking" Name="DisplayVersion" Type="string" Value="$(InstallerDisplayVersion)" />
         <RegistryValue
           Root="HKLM"
           Key="Software\GhostSlacking"

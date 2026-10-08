@@ -1,0 +1,16 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Bundle</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <OutputName>GhostSlacking-$(InstallerDisplayVersion)-win-x64-setup</OutputName>
+    <OutputPath>../artifacts/installer</OutputPath>
+    <IntermediateOutputPath>../artifacts/bundle-obj/$(Configuration)/$(InstallerDisplayVersion)</IntermediateOutputPath>
+    <DebugType>none</DebugType>
+    <DefineConstants>BundleVersion=$(BundleVersion);InstallerDisplayVersion=$(InstallerDisplayVersion);MsiPath=$(MsiPath);SetupDirectory=$(SetupDirectory)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Bundle.wxs" />
+    <Compile Include="../artifacts/setup-payloads.wxs" />
+  </ItemGroup>
+</Project>

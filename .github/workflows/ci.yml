@@ -92,3 +92,33 @@ jobs:
 
       - name: Run Release tests
         run: dotnet test GhostSlacking.sln --configuration Release --no-restore
+
+      - name: Validate MSI and EXE packaging
+        shell: pwsh
+        run: .\installer\build-installer.ps1
+
+      - name: Render installer previews
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/installer-previews | Out-Null
+          $setup = (Resolve-Path artifacts/setup-publish/win-x64/GhostSlacking.Setup.exe).Path
+          foreach ($dpi in @(96, 120, 144)) {
+              foreach ($progress in @(0, 1, 50, 99, 100)) {
+                  $output = Join-Path (Resolve-Path artifacts/installer-previews).Path "progress-$progress-dpi-$dpi.png"
+                  $process = Start-Process $setup -ArgumentList @('--preview', $output, $progress, $dpi) -PassThru -WindowStyle Hidden
+                  $process.WaitForExit()
+                  if ($process.ExitCode -ne 0) { throw 'Installer preview failed.' }
+              }
+          }
+          foreach ($mode in @('ready', 'expanded')) {
+              $output = Join-Path (Resolve-Path artifacts/installer-previews).Path "$mode.png"
+              $process = Start-Process $setup -ArgumentList @('--preview', $output, '0', '96', $mode) -PassThru -WindowStyle Hidden
+              $process.WaitForExit()
+              if ($process.ExitCode -ne 0) { throw 'Installer preview failed.' }
+          }
+
+      - name: Upload installer previews
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-previews
+          path: artifacts/installer-previews/*.png

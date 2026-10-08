@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   package:
-    name: Build and publish MSI
+    name: Build and publish Setup.exe
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -179,7 +179,7 @@ jobs:
           IS_PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           $releaseDirectory = "artifacts\releases\$env:RELEASE_VERSION"
-          $installer = "$releaseDirectory\GhostSlacking-$env:RELEASE_VERSION-win-x64.msi"
+          $installer = "$releaseDirectory\GhostSlacking-$env:RELEASE_VERSION-win-x64-setup.exe"
           $checksum = "$installer.sha256"
           $manifest = "$releaseDirectory\release.json"
           $args = @(

@@ -1,0 +1,19 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Bundle Name="GhostSlacking" Manufacturer="GhostSlacking" Version="$(BundleVersion)"
+          UpgradeCode="31B11EF0-459D-4D27-A18B-2814DDF3538B"
+          IconSourceFile="../src/GhostSlacking.App/Assets/GhostSlacking.ico">
+    <Log Disable="yes" />
+    <BootstrapperApplication SourceFile="$(SetupDirectory)/GhostSlacking.Setup.exe">
+      <PayloadGroupRef Id="SetupPayloads" />
+    </BootstrapperApplication>
+    <Variable Name="DisplayVersion" Type="string" Value="$(InstallerDisplayVersion)" />
+    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]GhostSlacking" />
+    <Chain>
+      <MsiPackage Id="GhostSlackingMsi" SourceFile="$(MsiPath)" Visible="no" EnableFeatureSelection="yes" Vital="yes">
+        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
+        <!-- Burn otherwise injects MSIFASTINSTALL=7, which suppresses MSI restore points. -->
+        <MsiProperty Name="MSIFASTINSTALL" Value="0" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

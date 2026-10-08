@@ -4,7 +4,10 @@ param(
     [string]$Version = '0.1.4',
 
     [ValidatePattern('^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$')]
-    [string]$InformationalVersion
+    [string]$InformationalVersion,
+
+    [ValidateSet('high', 'mszip', 'none')]
+    [string]$CabinetCompression = 'high'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -182,7 +185,8 @@ dotnet build $installerProject `
     -p:ProductVersion=$Version `
     -p:InstallerDisplayVersion=$InformationalVersion `
     -p:InstallerProductCode=$installerProductCode `
-    -p:PublishDirectory=$publishDirectory
+    -p:PublishDirectory=$publishDirectory `
+    -p:CabinetCompression=$CabinetCompression
 if ($LASTEXITCODE -ne 0) {
     throw "GhostSlacking installer build failed with exit code $LASTEXITCODE."
 }
@@ -498,6 +502,11 @@ Assert-Msi ($null -ne $exitDialogCloseEvent -and
     [int]$exitDialogLaunchEvent.Fields[5] -lt [int]$exitDialogCloseEvent.Fields[5]) 'The application launch event does not run before ExitDialog closes.'
 
 $installUiRows = Get-MsiRows -Database $database -Table 'InstallUISequence'
+$runtimeCheckAction = 'Wix4NetFxDotNetCompatibilityCheck_X64'
+foreach ($sequence in @($executeRows, $installUiRows)) {
+    $runtimeRow = $sequence | Where-Object { $_.Fields[0] -eq $runtimeCheckAction } | Select-Object -First 1
+    Assert-Msi ($null -ne $runtimeRow -and $runtimeRow.Fields[1] -eq 'NOT Installed') 'The runtime check must skip installed-product removal and maintenance.'
+}
 $exitDialogShow = $installUiRows |
     Where-Object { $_.Fields[0] -eq $exitDialogId -and [int]$_.Fields[2] -eq -1 } |
     Select-Object -First 1
@@ -524,4 +533,4 @@ Assert-Msi ($null -ne $checkboxTextSequence -and
 
 Write-Host 'MSI table validation passed.' -ForegroundColor Green
 
-Get-Item -LiteralPath $installerPath
+& (Join-Path $PSScriptRoot 'build-bundle.ps1') -Version $Version -DisplayVersion $InformationalVersion -FileVersion $fileVersion -MsiPath $installerPath

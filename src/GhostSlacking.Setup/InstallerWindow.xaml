@@ -1,0 +1,57 @@
+<Window x:Class="GhostSlacking.Setup.InstallerWindow"
+        x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GhostSlacking 安装" Width="400" SizeToContent="Height"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        BorderThickness="0" ResizeMode="NoResize" ShowInTaskbar="True"
+        WindowStartupLocation="CenterScreen" FontFamily="Microsoft YaHei UI"
+        Foreground="#202124" PreviewKeyDown="OnPreviewKeyDown">
+    <StackPanel Margin="20,10,20,10">
+        <Button x:Name="IconButton" Width="220" Height="220"
+                HorizontalAlignment="Center" IsEnabled="False"
+                Background="{x:Null}" BorderThickness="0" FocusVisualStyle="{x:Null}"
+                AutomationProperties.Name="GhostSlacking：正在检查安装状态"
+                AutomationProperties.LiveSetting="Polite" Click="OnIconClick">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <ContentPresenter />
+                </ControlTemplate>
+            </Button.Template>
+            <Viewbox Width="220" Height="220">
+                <Canvas Width="64" Height="64">
+                    <Path x:Name="GhostBody" Fill="#404040"
+                          Data="M8 54V30 A24 24 0 0 1 56 30V52 C52 58 47 50 42 54 C37 59 32 50 27 54 C22 59 17 50 8 54Z" />
+                    <Path Fill="#1CB2A5" Data="{Binding Data, ElementName=GhostBody}">
+                        <Path.Clip>
+                            <RectangleGeometry x:Name="FillClip" Rect="0,64,64,0" />
+                        </Path.Clip>
+                    </Path>
+                    <Ellipse Canvas.Left="22" Canvas.Top="25" Width="7" Height="9" Fill="White" />
+                    <Ellipse Canvas.Left="38" Canvas.Top="25" Width="7" Height="9" Fill="White" />
+                </Canvas>
+            </Viewbox>
+        </Button>
+        <Border x:Name="OptionsArea" Background="#F3F4F6" CornerRadius="10"
+                Padding="16" Margin="0,8,0,0" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock x:Name="Instruction" TextWrapping="Wrap" FontSize="14"
+                           Text="点击图标开始安装" Margin="0,0,0,10" />
+                <CheckBox x:Name="LaunchOption" Content="安装后立即启动" IsChecked="True" />
+                <Expander x:Name="FreshInstallOptions" Header="安装选项" Margin="0,12,0,0"
+                          Visibility="Collapsed">
+                    <StackPanel>
+                        <Label Content="安装目录" Target="{Binding ElementName=InstallDirectory}"
+                               Padding="0" Margin="0,10,0,4" />
+                        <TextBox x:Name="InstallDirectory" Padding="6" TextWrapping="Wrap"
+                                 AutomationProperties.Name="安装目录" Margin="0,0,0,10" />
+                        <CheckBox x:Name="StartMenuOption" Content="开始菜单快捷方式"
+                                  IsChecked="True" Margin="0,4,0,4" />
+                        <CheckBox x:Name="DesktopOption" Content="桌面快捷方式"
+                                  IsChecked="False" Margin="0,4,0,4" />
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</Window>

@@ -2,13 +2,14 @@
 
 ## Project Structure & Module Organization
 
-`GhostSlacking.sln` contains five production projects under `src/`:
+`GhostSlacking.sln` contains six production projects under `src/`:
 
 - `GhostSlacking.Core`: platform-neutral domain models, geometry, state coordination, settings, and recovery logic.
 - `GhostSlacking.Platform`: Windows/Win32 adapters for window selection, hooks, hotkeys, and visibility.
 - `GhostSlacking.App`: the Avalonia tray host, FluentAvalonia settings UI, startup integration, and logging.
 - `GhostSlacking.Watchdog`: the independent recovery process used after an abnormal app exit.
-- `GhostSlacking.Updater`: the independent handoff process used for verified MSI upgrades.
+- `GhostSlacking.Updater`: the independent handoff process used for verified EXE and legacy MSI upgrades.
+- `GhostSlacking.Setup`: the self-contained out-of-process WPF bootstrapper application for WiX Burn.
 
 Automated tests live in `tests/GhostSlacking.Core.Tests` and `tests/GhostSlacking.App.Tests`; release metadata checks live in `tests/ReleaseMetadata.Tests.ps1`. Generated output belongs in `bin/`, `obj/`, or `artifacts/`; do not commit it.
 
@@ -42,7 +43,7 @@ Tests use xUnit and `[Fact]`. Name tests as behavior statements in `snake_case`,
 | Core state, geometry, settings, or recovery | Relevant `GhostSlacking.Core.Tests` cases and the full Release suite. |
 | Platform HWND, region, hooks, DPI, or Watchdog recovery | Relevant Core/App tests, the full Release suite, and the applicable Windows manual matrix in `docs/IMPLEMENTATION_PLAN.md`. |
 | App settings, tray, notifications, or update handoff | Relevant `GhostSlacking.App.Tests` cases and the full Release suite; inspect changed UI behavior in the running app. |
-| Installer, versioning, release scripts, or CI | `tests/ReleaseMetadata.Tests.ps1` and the full Release suite; validate an MSI when packaging changes. |
+| Installer, versioning, release scripts, or CI | `tests/ReleaseMetadata.Tests.ps1` and the full Release suite; validate the internal MSI and EXE Bundle when packaging changes. |
 
 The CI `Release tests` job runs the PowerShell metadata checks and the Release .NET suite. Record manual results in the PR; a passing automated run does not establish real-window or clean-install compatibility.
 
@@ -64,7 +65,7 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-The `v*.*.*` tag workflow is the source of truth for MSI artifacts. Stable tags use `vMAJOR.MINOR.PATCH` on `master`; beta/RC tags use `vMAJOR.MINOR.PATCH-beta.N` or `-rc.N` on `dev` and publish as GitHub Pre-releases. The workflow reruns Release tests, builds the Windows MSI, writes the SHA256 file and `release.json`, and publishes the GitHub Release. Do not create a release tag on the wrong branch, move or reuse a published tag, or replace a failed release asset under the same tag; use a new version after fixing the problem. Local packaging is for validation only.
+The `v*.*.*` tag workflow is the source of truth for EXE artifacts. Stable tags use `vMAJOR.MINOR.PATCH` on `master`; beta/RC tags use `vMAJOR.MINOR.PATCH-beta.N` or `-rc.N` on `dev` and publish as GitHub Pre-releases. The workflow reruns Release tests, validates the internal Windows MSI and builds its EXE Bundle, writes the SHA256 file and `release.json`, and publishes only EXE assets to the GitHub Release. Do not create a release tag on the wrong branch, move or reuse a published tag, or replace a failed release asset under the same tag; use a new version after fixing the problem. Local packaging is for validation only.
 
 Protect `dev` and `master` with pull requests, the required `Release tests` status check, conversation resolution, and disabled force-push/delete permissions. The single-maintainer configuration leaves an administrator emergency bypass available; use it only for recovery. The canonical settings and merge methods are in `docs/DEVELOPMENT_WORKFLOW.md`.
 

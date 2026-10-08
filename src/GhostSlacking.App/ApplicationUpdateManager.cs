@@ -157,7 +157,8 @@ internal sealed record UpdateInstallRequest(
     string Version,
     string ApplicationPath,
     int ParentProcessId,
-    long ParentStartTimeUtcTicks);
+    long ParentStartTimeUtcTicks,
+    string? ExpectedSha256 = null);
 
 internal interface IExternalLinkLauncher
 {
@@ -185,6 +186,7 @@ internal sealed class AutomatedUpdateLauncher(
 
     public bool Launch(UpdateInstallRequest request)
     {
+        var handoffClock = Stopwatch.StartNew();
         var stagingDirectory = Path.Combine(
             Path.GetDirectoryName(request.InstallerPath) ?? throw new InvalidOperationException("The installer directory is unavailable."),
             $"updater-{Guid.NewGuid():N}");
@@ -226,6 +228,7 @@ internal sealed class AutomatedUpdateLauncher(
             AddArgument("--version", request.Version);
             AddArgument("--application", request.ApplicationPath);
             AddArgument("--ready-event", readyEventName);
+            if (request.ExpectedSha256 is not null) AddArgument("--sha256", request.ExpectedSha256);
             using var process = Process.Start(startInfo);
             if (process is null)
             {
@@ -234,6 +237,7 @@ internal sealed class AutomatedUpdateLauncher(
 
             if (readyEvent.WaitOne(ReadyTimeout))
             {
+                logger.Log(LogLevel.Info, $"Timing handoff_ms={handoffClock.Elapsed.TotalMilliseconds:F1}");
                 return true;
             }
 
@@ -429,6 +433,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
 
     public async Task<string?> DownloadInstallerAsync(CancellationToken cancellationToken = default)
     {
+        var downloadClock = Stopwatch.StartNew();
         ThrowIfDisposed();
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         string? partialPath = null;
@@ -467,6 +472,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             }
 
             SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Verifying, release));
+            _logger.Log(LogLevel.Info, $"Timing download_ms={downloadClock.Elapsed.TotalMilliseconds:F1}");
 
             var fileInfo = new FileInfo(partialPath);
             if (fileInfo.Length != release.Installer.Size)
@@ -556,7 +562,8 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
                 release.VersionText,
                 Path.GetFullPath(applicationPath),
                 Environment.ProcessId,
-                process.StartTime.ToUniversalTime().Ticks);
+                process.StartTime.ToUniversalTime().Ticks,
+                release.ExpectedSha256);
             if (_installerLauncher.Launch(request))
             {
                 InstallHandoffStarted?.Invoke(this, EventArgs.Empty);
@@ -673,17 +680,11 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         }
 
         var versionText = releaseVersion.Text;
-        var installerName = $"GhostSlacking-{versionText}-win-x64.msi";
-        var installer = FindAsset(apiRelease.Assets, installerName);
-        var checksum = FindAsset(apiRelease.Assets, $"{installerName}.sha256");
         var manifest = FindAsset(apiRelease.Assets, "release.json");
-        if (installer.Size > MaximumInstallerBytes || checksum.Size > MaximumChecksumBytes ||
-            manifest.Size > MaximumManifestBytes)
+        if (manifest.Size > MaximumManifestBytes)
         {
             throw new InvalidDataException("One or more release assets exceed the allowed size.");
         }
-        ValidateDownloadUri(installer.DownloadUrl, apiRelease.TagName);
-        ValidateDownloadUri(checksum.DownloadUrl, apiRelease.TagName);
         ValidateDownloadUri(manifest.DownloadUrl, apiRelease.TagName);
 
         var manifestText = await ReadSmallTextAssetAsync(
@@ -693,6 +694,16 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             .ConfigureAwait(false);
         var releaseManifest = JsonSerializer.Deserialize<ReleaseManifest>(manifestText, JsonOptions) ??
             throw new InvalidDataException("The release manifest is empty.");
+        var installerName = releaseManifest.Installer?.File;
+        if (installerName != $"GhostSlacking-{versionText}-win-x64-setup.exe" &&
+            installerName != $"GhostSlacking-{versionText}-win-x64.msi")
+            throw new InvalidDataException("The release manifest installer name is invalid.");
+        var installer = FindAsset(apiRelease.Assets, installerName);
+        var checksum = FindAsset(apiRelease.Assets, $"{installerName}.sha256");
+        if (installer.Size > MaximumInstallerBytes || checksum.Size > MaximumChecksumBytes)
+            throw new InvalidDataException("One or more release assets exceed the allowed size.");
+        ValidateDownloadUri(installer.DownloadUrl, apiRelease.TagName);
+        ValidateDownloadUri(checksum.DownloadUrl, apiRelease.TagName);
         var hasExtendedManifest = releaseManifest.InstallerProductVersion is not null ||
             releaseManifest.Channel is not null ||
             releaseManifest.Prerelease;

@@ -9,6 +9,21 @@ namespace GhostSlacking.App.Tests;
 public sealed class ApplicationUpdateManagerTests
 {
     [Fact]
+    public async Task Exe_manifest_is_discovered_and_downloaded_with_the_same_integrity_checks()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var release = TestRelease.Create("1.2.0") with { Exe = true };
+        using var client = new HttpClient(new ReleaseHandler(release));
+        using var manager = CreateManager(files, client, "1.1.0");
+        Assert.Equal(ApplicationUpdateStatus.Available, (await manager.CheckAsync()).Status);
+        Assert.Equal(release.InstallerName, manager.Snapshot.Release?.Installer.Name);
+        var path = await manager.DownloadInstallerAsync();
+        Assert.NotNull(path);
+        Assert.EndsWith("-setup.exe", path);
+        Assert.Equal(release.InstallerBytes, File.ReadAllBytes(path));
+    }
+
+    [Fact]
     public async Task New_stable_release_is_reported_and_successful_check_is_persisted()
     {
         using var files = new TemporaryUpdateFiles();
@@ -455,7 +470,7 @@ public sealed class ApplicationUpdateManagerTests
                 };
             }
 
-            if (uri?.EndsWith(".msi", StringComparison.Ordinal) == true)
+            if (uri?.EndsWith(".msi", StringComparison.Ordinal) == true || uri?.EndsWith("-setup.exe", StringComparison.Ordinal) == true)
             {
                 InstallerRequested.TrySetResult();
                 if (PauseInstallerDownload)
@@ -486,10 +501,11 @@ public sealed class ApplicationUpdateManagerTests
         bool OmitChecksumAsset = false,
         string? Body = null,
         bool Draft = false,
-        bool Prerelease = false)
+        bool Prerelease = false,
+        bool Exe = false)
     {
         public string Tag => $"v{Version}";
-        public string InstallerName => $"GhostSlacking-{Version}-win-x64.msi";
+        public string InstallerName => Exe ? $"GhostSlacking-{Version}-win-x64-setup.exe" : $"GhostSlacking-{Version}-win-x64.msi";
         public string Sha256 => Convert.ToHexString(SHA256.HashData(InstallerBytes));
         private string DownloadRoot => $"https://github.com/PomDetom/GhostSlacking/releases/download/{Tag}";
 

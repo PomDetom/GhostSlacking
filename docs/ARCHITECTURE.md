@@ -86,7 +86,7 @@ src/
   GhostSlacking.Core/         状态机、领域模型、服务接口
   GhostSlacking.Platform/     Win32 P/Invoke 和 Windows 适配器
   GhostSlacking.Watchdog/     独立异常恢复进程
-  GhostSlacking.Updater/      独立 MSI 升级交接进程
+  GhostSlacking.Updater/      独立 EXE / 历史 MSI 升级交接进程
 tests/
   GhostSlacking.Core.Tests/
   GhostSlacking.App.Tests/
@@ -105,7 +105,7 @@ Watchdog ───────────► Platform ────────�
 Updater ────────────────────────────────► Core
 ```
 
-`Core` 不引用 UI 框架或 Win32；`Platform` 实现 `Core` 定义的接口并承载无界面的 Win32 HWND；`App` 负责组合依赖、Avalonia 托盘菜单、消息循环和用户反馈。Updater 在主进程安全退出后执行已校验 MSI 的安装与重启交接，不参与目标窗口状态协调。
+`Core` 不引用 UI 框架或 Win32；`Platform` 实现 `Core` 定义的接口并承载无界面的 Win32 HWND；`App` 负责组合依赖、Avalonia 托盘菜单、消息循环和用户反馈。Updater 在主进程安全退出后执行已校验 EXE（兼容历史 MSI）的安装与重启交接，不参与目标窗口状态协调。
 
 ## 6. 核心领域模型
 
@@ -266,7 +266,7 @@ Exit
 
 ### 7.8 GitHub Releases 更新
 
-更新管理器在每次启动后异步检查更新，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`。默认 Stable 通道只检查稳定版，用户开启 Test 通道后才检查 beta/RC，并按完整 SemVer 选择版本；手动检查仍可随时发起。跳过版本只抑制完全相同版本的启动通知和托盘入口，“关于”页仍显示该版本并允许安装。下载前要求 Release 的标签、`release.json`、MSI 文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许启动 MSI。
+更新管理器在每次启动后异步检查更新，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`。默认 Stable 通道只检查稳定版，用户开启 Test 通道后才检查 beta/RC，并按完整 SemVer 选择版本；手动检查仍可随时发起。跳过版本只抑制完全相同版本的启动通知和托盘入口，“关于”页仍显示该版本并允许安装。下载前要求 Release 的标签、`release.json`、安装包文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许交接安装入口。
 
 应用内安装仅对注册安装路径与当前程序目录一致的 per-machine MSI 安装生效。升级仍由安装器既有的安全关闭协议负责，不静默提权、不强制终止进程；源码或便携副本只打开 Releases 页面。
 
@@ -281,6 +281,18 @@ GhostSlacking.App.exe ── heartbeat + recovery manifest ──► GhostSlacki
 ```
 
 Watchdog 只能恢复它理解且验证过的状态，不能盲目对所有同名窗口操作。恢复清单必须包含 HWND、进程 ID、进程启动标识、受支持的快照版本、placement、region、style 和 DWM 恢复字段。
+
+### 7.10 EXE 安装入口
+
+`Setup` 是 WiX 5 Burn 的进程外 WPF BA。入口线程使用 MTA 连接 Burn，UI 在线程独立的 STA 消息循环中运行。它以普通权限运行，自包含的 .NET/WPF payload 与应用的 framework-dependent publish 完全分开；Burn 只在 Apply 时请求 UAC。Bundle 内只有一个隐藏 MSI，不自动下载运行时。
+
+安装前 `Platform.InstallerShutdown` 验证每个主进程及 Watchdog 的可执行文件路径与 HKLM 注册目录一致，保留进程句柄，向匹配 PID 的 `GhostSlacking.MessageWindow` 发送 WM_CLOSE，再等待主进程和 Watchdog 退出。30 秒是安全上限，退出后立即继续；不强制结束进程。MSI 的升级协议、CloseApplication 和仍在运行检查继续兜底。窗口捕获、身份验证和恢复协议未更改。
+
+MSI 仍在 `afterInstallExecute` 移除旧产品，迁移 Feature 状态并保留事务回滚。组件身份保持稳定；.NET compatibility action 在 UI/execute sequence 都限制为 `NOT Installed`，旧缓存 MSI 的检查不变。显式向 MSI 传入 `MSIFASTINSTALL=0`，保留系统还原点策略及回滚；高压缩为默认，改用 MSZIP/none 必须通过性能门槛。
+
+`InstallerState` 将真实 Burn 进度上限设为 99%，ApplyComplete 成功后才到 100%；取消、失败、回滚分别显示状态。首次安装选择目录和快捷方式，升级保留原目录并由 MSI 迁移 Feature；同版本修复，依据完整 SemVer 和 Bundle 四段版本拒绝降级。WPF 窗口使用 WindowStyle=None、AllowsTransparency=True 和透明背景，安装时只显示幽灵图标；透明像素允许底下窗口接收点击，图标使用无装饰 Button 模板保留键盘及可访问性。填充裁剪按轮廓实际 Bounds 计算，99% 仍有灰色顶部。安装前浅色区域提供目录、快捷方式和默认勾选的启动选择；控制器读取不可变 InstallerSelection 后收起区域，图标位置不变。点击图标或 Enter/Space 开始和完成；Esc/Alt+F4/任务栏关闭安全取消，回滚结束后才退出。失败原因在归属安装窗口的独立提示框显示。passive 更新在成功帧的渲染调度后退出，不固定等待，只有 Updater 重启应用。
+
+清单字段继续为 `installer.file/bytes/sha256`，文件必须精确匹配目标 SemVer 的 `-win-x64-setup.exe` 或历史 `-win-x64.msi`，并校验 GitHub URL、大小、SHA256 和 checksum。Updater 在缓存内重新校验传入的清单 hash，EXE 不能省略 hash；它验证父进程 start-time 身份以及安装目录。日志分开记录 handoff、parent exit、installer、restart launch；BA 记录 safe close、MSI 阶段及 UAC 后安装耗时。
 
 ## 8. 状态机
 

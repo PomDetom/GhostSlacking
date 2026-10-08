@@ -6,9 +6,11 @@ namespace GhostSlacking.App;
 
 internal static class Program
 {
+    internal static long StartupTimestamp { get; private set; }
     [STAThread]
     private static void Main(string[] args)
     {
+        StartupTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         using var mutex = new Mutex(true, "Local\\GhostSlacking.SingleInstance", out var created);
         if (!created)
         {

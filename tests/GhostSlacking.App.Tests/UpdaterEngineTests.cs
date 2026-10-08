@@ -7,6 +7,64 @@ namespace GhostSlacking.App.Tests;
 public sealed class UpdaterEngineTests
 {
     [Fact]
+    public void Exe_updates_require_the_manifest_hash_and_accept_full_prerelease_versions()
+    {
+        using var files = new UpdaterTestFiles();
+        var path = Path.Combine(Path.GetDirectoryName(files.InstallerPath)!, "GhostSlacking-1.2.0-rc.2-win-x64-setup.exe");
+        File.WriteAllText(path, "verified EXE");
+        var args = files.Arguments.ToArray();
+        args[Array.IndexOf(args, "--installer") + 1] = path;
+        args[Array.IndexOf(args, "--version") + 1] = "1.2.0-rc.2";
+        Assert.False(UpdaterOptions.TryParse(args, files.UpdatesRoot, files.InstallLocation, out _, out _));
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
+        args = [.. args, "--sha256", hash];
+        Assert.True(UpdaterOptions.TryParse(args, files.UpdatesRoot, files.InstallLocation, out var options, out var error), error);
+        Assert.Equal("1.2.0-rc.2", options.Version);
+        File.AppendAllText(path, "tampered");
+        Assert.False(UpdaterOptions.TryParse(args, files.UpdatesRoot, files.InstallLocation, out _, out _));
+    }
+
+    [Fact]
+    public void Exe_entry_is_unelevated_passive_and_never_requests_an_application_launch()
+    {
+        var path = @"C:\updates\GhostSlacking-1.2.0-win-x64-setup.exe";
+        var start = WindowsUpdaterRuntime.CreateInstallerStartInfo(path);
+        Assert.Equal(path, start.FileName);
+        Assert.Equal(string.Empty, start.Verb);
+        Assert.Equal(["/passive", "/norestart"], start.ArgumentList);
+        var diagnostic = WindowsUpdaterRuntime.CreateInstallerStartInfo(path, @"C:\logs\install.log");
+        Assert.Equal(["/passive", "/norestart", "/log", @"C:\logs\install.log", "--diagnostics"], diagnostic.ArgumentList);
+    }
+
+    [Fact]
+    public void Tampered_installer_after_handoff_never_executes_and_recovers_the_application()
+    {
+        using var files = new UpdaterTestFiles();
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(files.InstallerPath)));
+        var options = files.Options with { ExpectedSha256 = hash };
+        File.AppendAllText(files.InstallerPath, "tampered");
+        var runtime = new RecordingUpdaterRuntime();
+        var store = new UpdateCompletionStore(files.ResultPath);
+        Assert.Equal(6, new UpdaterEngine(runtime, store, NullLogger.Instance).Run(options));
+        Assert.False(runtime.InstallerStarted);
+        Assert.True(runtime.ApplicationStarted);
+        Assert.Equal(UpdateCompletionStatus.Failed, store.Consume()?.Status);
+    }
+
+    [Theory]
+    [InlineData(1602)]
+    [InlineData(1223)]
+    public void Cancelled_installation_records_cancellation_and_restarts_once(int code)
+    {
+        using var files = new UpdaterTestFiles();
+        var runtime = new RecordingUpdaterRuntime { InstallerExitCode = code };
+        var store = new UpdateCompletionStore(files.ResultPath);
+        Assert.Equal(5, new UpdaterEngine(runtime, store, NullLogger.Instance).Run(files.Options));
+        Assert.Equal(UpdateCompletionStatus.Cancelled, store.Consume()?.Status);
+        Assert.True(runtime.ApplicationStarted);
+    }
+
+    [Fact]
     public void Valid_options_require_the_expected_cache_and_registered_application_paths()
     {
         using var files = new UpdaterTestFiles();

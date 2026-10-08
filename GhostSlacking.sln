@@ -16,6 +16,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GhostSlacking.Updater", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GhostSlacking.App.Tests", "tests\GhostSlacking.App.Tests\GhostSlacking.App.Tests.csproj", "{7C0A3F3C-42B0-4B7D-ACD5-99C84B44AA70}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GhostSlacking.Setup", "src\GhostSlacking.Setup\GhostSlacking.Setup.csproj", "{18C25910-7D4E-4B6B-A4D8-1A0C735BC7B9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -50,5 +52,9 @@ Global
 		{7C0A3F3C-42B0-4B7D-ACD5-99C84B44AA70}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7C0A3F3C-42B0-4B7D-ACD5-99C84B44AA70}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7C0A3F3C-42B0-4B7D-ACD5-99C84B44AA70}.Release|Any CPU.Build.0 = Release|Any CPU
+		{18C25910-7D4E-4B6B-A4D8-1A0C735BC7B9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{18C25910-7D4E-4B6B-A4D8-1A0C735BC7B9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{18C25910-7D4E-4B6B-A4D8-1A0C735BC7B9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{18C25910-7D4E-4B6B-A4D8-1A0C735BC7B9}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

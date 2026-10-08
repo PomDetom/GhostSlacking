@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$')]
     [string]$Version,
@@ -259,9 +259,9 @@ else {
 $installerVersion = $packageVersion.Split('-')[0]
 
 $releaseDirectory = Join-Path $releaseOutputRoot $packageVersion
-$sourceMsi = Join-Path $installerOutputRoot "GhostSlacking-$installerVersion-win-x64.msi"
-$releaseMsi = Join-Path $releaseDirectory "GhostSlacking-$packageVersion-win-x64.msi"
-$checksumPath = "$releaseMsi.sha256"
+$sourceInstaller = Join-Path $installerOutputRoot "GhostSlacking-$packageVersion-win-x64-setup.exe"
+$releaseInstaller = Join-Path $releaseDirectory "GhostSlacking-$packageVersion-win-x64-setup.exe"
+$checksumPath = "$releaseInstaller.sha256"
 $manifestPath = Join-Path $releaseDirectory 'release.json'
 $logPath = Join-Path $releaseDirectory 'build.log'
 
@@ -295,7 +295,7 @@ try {
             Write-Host "`n==> 已跳过自动化测试" -ForegroundColor Yellow
         }
 
-        Invoke-BuildStep -Name '发布应用并生成 MSI' -Action {
+        Invoke-BuildStep -Name '发布应用并生成 Setup.exe' -Action {
             # Run the existing script in a child process so this tool's strict
             # mode cannot alter its established execution semantics.
             & $powerShellExecutable -NoLogo -NoProfile -ExecutionPolicy Bypass `
@@ -306,14 +306,14 @@ try {
         Pop-Location
     }
 
-    if (-not (Test-Path -LiteralPath $sourceMsi)) {
-        throw "打包脚本未生成预期文件：$sourceMsi"
+    if (-not (Test-Path -LiteralPath $sourceInstaller)) {
+        throw "打包脚本未生成预期文件：$sourceInstaller"
     }
 
-    Copy-Item -LiteralPath $sourceMsi -Destination $releaseMsi -Force
-    $msiFile = Get-Item -LiteralPath $releaseMsi
-    $hash = Get-FileHash -LiteralPath $releaseMsi -Algorithm SHA256
-    "$($hash.Hash.ToLowerInvariant())  $($msiFile.Name)" |
+    Copy-Item -LiteralPath $sourceInstaller -Destination $releaseInstaller -Force
+    $installerFile = Get-Item -LiteralPath $releaseInstaller
+    $hash = Get-FileHash -LiteralPath $releaseInstaller -Algorithm SHA256
+    "$($hash.Hash.ToLowerInvariant())  $($installerFile.Name)" |
         Set-Content -LiteralPath $checksumPath -Encoding ascii
 
     $git = Get-GitMetadata
@@ -331,15 +331,15 @@ try {
         gitDirty = $git.IsDirty
         testsSkipped = $selectedSkipTests
         installer = [ordered]@{
-            file = $msiFile.Name
-            bytes = $msiFile.Length
+            file = $installerFile.Name
+            bytes = $installerFile.Length
             sha256 = $hash.Hash.ToLowerInvariant()
         }
     }
     $manifest | ConvertTo-Json -Depth 4 |
         Set-Content -LiteralPath $manifestPath -Encoding utf8
 
-    Write-Host "`n打包成功：$releaseMsi" -ForegroundColor Green
+    Write-Host "`n打包成功：$releaseInstaller" -ForegroundColor Green
     Write-Host "SHA256：$($hash.Hash.ToLowerInvariant())"
     Write-Host "清单：  $manifestPath"
     Write-Host "日志：  $logPath"
@@ -354,4 +354,4 @@ if ($selectedOpenOutput) {
     Start-Process explorer.exe -ArgumentList $releaseDirectory
 }
 
-Get-Item -LiteralPath $releaseMsi
+Get-Item -LiteralPath $releaseInstaller

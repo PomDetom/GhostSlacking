@@ -25,7 +25,13 @@ GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<版本>-win-x64.msi`，然后按照安装向导完成安装。
+后续版本从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载 `GhostSlacking-<完整版本>-win-x64-setup.exe`。EXE 内嵌 MSI，首次安装可展开目录及快捷方式选项；升级沿用原目录和快捷方式，同版本可修复。
+
+旧 MSI 用户需要手动安装一次新版 EXE，之后可在应用内更新。后续仅发布 EXE、SHA256 和 `release.json`，不发布兼容过渡 MSI，也不提供先卸载重装的升级选项。
+
+手动打开安装程序后，在幽灵下方的浅色区域选择安装选项，然后点击幽灵图标，或聚焦图标后按 Enter/Space 开始。安装期间选项区收起，桌面上只留下透明背景的幽灵图标。它随真实进度从深灰色自下向上填充青绿色，成功前最多 99%，最终成功才填满；完成后再次点击图标，并按此前的“安装后立即启动”选择启动应用。Esc、Alt+F4 或任务栏关闭会安全取消，安装中须等待回滚结束；失败原因通过独立提示框显示。应用内更新自动开始和退出，由 Updater 重启一次。
+
+安装程序先验证进程并安全退出应用及 Watchdog；无法验证或超时会停止安装。安装界面自带运行时；应用仍需要 .NET 8 Runtime x64，缺少时提供官方下载入口。Windows 显示一个 Bundle 卸载条目，内部 MSI 隐藏。
 
 GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。
 
@@ -58,7 +64,7 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。
 
 ## Git 与发布
 
-日常开发通过独立功能 PR 合入 `dev`，稳定发布通过 `dev` → `master` 发布 PR。测试版只在需要时从 `dev` 创建 `v0.2.0-beta.1` 标签，稳定版在 `master` 上创建 `v0.2.0` 标签；标签工作流才会构建并发布 MSI。
+日常开发通过独立功能 PR 合入 `dev`，稳定发布通过 `dev` → `master` 发布 PR。测试版只在需要时从 `dev` 创建 `v0.2.0-beta.1` 标签，稳定版在 `master` 上创建 `v0.2.0` 标签；标签工作流才会构建并发布 EXE。
 
 完整流程见 [Git 与发布流程](docs/DEVELOPMENT_WORKFLOW.md)。
 
