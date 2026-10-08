@@ -33,6 +33,8 @@ git push origin v0.2.0-beta.1
 
 GitHub 和应用使用完整 SemVer，例如 `0.2.0-beta.1`。Windows Installer 的 `ProductVersion` 只使用对应的三段基础版本 `0.2.0`；MSI 文件名和 `release.json` 保留完整版本，以支持 beta 之间以及 beta 到稳定版的连续升级。
 
+在带有版本标签的提交上运行 `./build-release.ps1`，脚本会自动读取当前提交的标签，并将完整版本写入应用程序集，因此“关于”页会显示 beta/RC 后缀。当前提交没有受支持的精确版本标签时，脚本继续使用交互式版本选择；也可以通过 `-Version` 显式指定版本。
+
 发布标签、MSI、SHA256 和 `release.json` 一经发布不可覆盖。修复发布问题必须使用新的 beta、RC 或稳定版本号。
 
 ## 应用更新通道

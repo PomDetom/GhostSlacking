@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '0.1.4'
+    [string]$Version = '0.1.4',
+
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$')]
+    [string]$InformationalVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,6 +17,12 @@ $publishDirectory = Join-Path $publishRoot 'win-x64'
 $publishWork = Join-Path $repositoryRoot 'artifacts\installer-publish-work'
 $installerPath = Join-Path $repositoryRoot "artifacts\installer\GhostSlacking-$Version-win-x64.msi"
 $fileVersion = "$Version.0"
+if ([string]::IsNullOrWhiteSpace($InformationalVersion)) {
+    $InformationalVersion = $Version
+}
+elseif ($InformationalVersion.Split('-')[0] -ne $Version) {
+    throw "InformationalVersion must have the same base version as Version ($Version)."
+}
 
 # The updater is published by a custom MSBuild target from the app project,
 # but it is intentionally not a project reference. Restore it explicitly so
@@ -44,7 +53,7 @@ dotnet publish $appProject `
     -p:Version=$Version `
     -p:AssemblyVersion=$fileVersion `
     -p:FileVersion=$fileVersion `
-    -p:InformationalVersion=$Version `
+    -p:InformationalVersion=$InformationalVersion `
     -p:PublishTrimmed=false `
     -p:DebugSymbols=false `
     -p:DebugType=None
