@@ -52,7 +52,7 @@
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
         <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes" Text="升级 GhostSlacking" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="315" Height="15" Transparent="yes" NoPrefix="yes" Text="已检测到旧版本，将升级至 [ProductVersion]。" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="315" Height="15" Transparent="yes" NoPrefix="yes" Text="已检测到旧版本，将升级至 [GHOSTSLACKING_DISPLAY_VERSION]。" />
         <Control Id="UpgradeText" Type="Text" X="20" Y="66" Width="330" Height="52" NoPrefix="yes" Text="安装程序将沿用当前安装位置和快捷方式选择。若 GhostSlacking 正在运行，会先安全恢复所有受控窗口并退出；升级完成后可选择是否立即启动。" />
         <Control Id="InstallFolderLabel" Type="Text" X="20" Y="130" Width="330" Height="14" NoPrefix="yes" Text="当前安装位置：" />
         <Control Id="InstallFolder" Type="Text" X="30" Y="149" Width="320" Height="30" NoPrefix="yes" Text="[INSTALLFOLDER]" />
@@ -168,7 +168,7 @@
       Condition="&amp;DesktopShortcutFeature = 3" />
     <SetProperty
       Id="WIXUI_EXITDIALOGOPTIONALTEXT"
-      Value="GhostSlacking 已成功升级至版本 [ProductVersion]。单击“完成”退出升级向导。"
+      Value="GhostSlacking 已成功升级至版本 [GHOSTSLACKING_DISPLAY_VERSION]。单击“完成”退出升级向导。"
       After="FindRelatedProducts"
       Sequence="ui"
       Condition="WIX_UPGRADE_DETECTED" />

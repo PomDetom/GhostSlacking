@@ -5,6 +5,7 @@
   <Package
     Name="GhostSlacking"
     Manufacturer="GhostSlacking"
+    ProductCode="$(InstallerProductCode)"
     Version="$(ProductVersion)"
     UpgradeCode="AB92C57B-7434-401E-91B7-4878B250E0C7"
     Scope="perMachine"
@@ -19,6 +20,7 @@
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <Property Id="GHOSTSLACKING_DISPLAY_VERSION" Value="$(InstallerDisplayVersion)" />
     <Property Id="GHOSTSLACKING_STILL_RUNNING" Secure="yes" />
     <Property Id="GHOSTSLACKING_WATCHDOG_STILL_RUNNING" Secure="yes" />
     <Property Id="UPGRADE_PROTOCOL_VERSION" Secure="yes">
