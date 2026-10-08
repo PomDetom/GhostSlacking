@@ -2,8 +2,10 @@
   <PropertyGroup>
     <InstallerPlatform>x64</InstallerPlatform>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.4</ProductVersion>
+    <InstallerDisplayVersion Condition="'$(InstallerDisplayVersion)' == ''">$(ProductVersion)</InstallerDisplayVersion>
+    <InstallerProductCode Condition="'$(InstallerProductCode)' == ''">*</InstallerProductCode>
     <PublishDirectory Condition="'$(PublishDirectory)' == ''">$(MSBuildThisFileDirectory)..\artifacts\installer-publish\win-x64</PublishDirectory>
-    <DefineConstants>ProductVersion=$(ProductVersion);PublishDirectory=$(PublishDirectory)</DefineConstants>
+    <DefineConstants>ProductVersion=$(ProductVersion);InstallerDisplayVersion=$(InstallerDisplayVersion);InstallerProductCode=$(InstallerProductCode);PublishDirectory=$(PublishDirectory)</DefineConstants>
     <OutputName>GhostSlacking-$(ProductVersion)-win-x64</OutputName>
     <OutputPath>$(MSBuildThisFileDirectory)..\artifacts\installer</OutputPath>
     <!-- Keep WiX incremental state isolated by product version. Otherwise a version

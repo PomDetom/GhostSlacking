@@ -16,13 +16,63 @@ $publishRoot = Join-Path $repositoryRoot 'artifacts\installer-publish'
 $publishDirectory = Join-Path $publishRoot 'win-x64'
 $publishWork = Join-Path $repositoryRoot 'artifacts\installer-publish-work'
 $installerPath = Join-Path $repositoryRoot "artifacts\installer\GhostSlacking-$Version-win-x64.msi"
-$fileVersion = "$Version.0"
+$assemblyVersion = "$Version.0"
 if ([string]::IsNullOrWhiteSpace($InformationalVersion)) {
     $InformationalVersion = $Version
 }
 elseif ($InformationalVersion.Split('-')[0] -ne $Version) {
     throw "InformationalVersion must have the same base version as Version ($Version)."
 }
+
+$prereleaseMatch = [regex]::Match($InformationalVersion, '-(?<channel>alpha|beta|rc)\.(?<number>\d+)$')
+$fileRevision = 65535
+if ($prereleaseMatch.Success) {
+    try {
+        $prereleaseNumber = [long]::Parse(
+            $prereleaseMatch.Groups['number'].Value,
+            [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    catch {
+        throw "The prerelease number in InformationalVersion is too large for a Windows file version: $InformationalVersion."
+    }
+
+    $revisionOffset, $maximumPrereleaseNumber = switch ($prereleaseMatch.Groups['channel'].Value) {
+        'alpha' { 1, 16382; break }
+        'beta'  { 16384, 16382; break }
+        'rc'    { 32768, 32766; break }
+    }
+    if ($prereleaseNumber -gt $maximumPrereleaseNumber) {
+        throw "The prerelease number in InformationalVersion exceeds the file-version range for $($prereleaseMatch.Groups['channel'].Value): $InformationalVersion."
+    }
+
+    $fileRevision = $revisionOffset + $prereleaseNumber
+}
+$fileVersion = "$Version.$fileRevision"
+
+function Get-InstallerProductCode {
+    param([Parameter(Mandatory)][string]$VersionText)
+
+    # UUID v5 gives each full SemVer a stable ProductCode while keeping repeated
+    # builds of the same release on the same MSI product identity.
+    $namespaceBytes = ([guid]::Parse('AB92C57B-7434-401E-91B7-4878B250E0C7')).ToByteArray()
+    [Array]::Reverse($namespaceBytes, 0, 4)
+    [Array]::Reverse($namespaceBytes, 4, 2)
+    [Array]::Reverse($namespaceBytes, 6, 2)
+    $nameBytes = [System.Text.Encoding]::UTF8.GetBytes("GhostSlacking/$VersionText")
+    $inputBytes = [byte[]]::new($namespaceBytes.Length + $nameBytes.Length)
+    [System.Buffer]::BlockCopy($namespaceBytes, 0, $inputBytes, 0, $namespaceBytes.Length)
+    [System.Buffer]::BlockCopy($nameBytes, 0, $inputBytes, $namespaceBytes.Length, $nameBytes.Length)
+    $hash = [System.Security.Cryptography.SHA1]::HashData($inputBytes)
+    $guidBytes = [byte[]]$hash[0..15]
+    $guidBytes[6] = [byte](($guidBytes[6] -band 0x0f) -bor 0x50)
+    $guidBytes[8] = [byte](($guidBytes[8] -band 0x3f) -bor 0x80)
+    [Array]::Reverse($guidBytes, 0, 4)
+    [Array]::Reverse($guidBytes, 4, 2)
+    [Array]::Reverse($guidBytes, 6, 2)
+    return ([guid]::new($guidBytes)).ToString('B').ToUpperInvariant()
+}
+
+$installerProductCode = Get-InstallerProductCode -VersionText $InformationalVersion
 
 # The updater is published by a custom MSBuild target from the app project,
 # but it is intentionally not a project reference. Restore it explicitly so
@@ -51,7 +101,7 @@ dotnet publish $appProject `
     --artifacts-path $publishWork `
     --output $publishDirectory `
     -p:Version=$Version `
-    -p:AssemblyVersion=$fileVersion `
+    -p:AssemblyVersion=$assemblyVersion `
     -p:FileVersion=$fileVersion `
     -p:InformationalVersion=$InformationalVersion `
     -p:PublishTrimmed=false `
@@ -92,6 +142,23 @@ foreach ($fileName in $versionedApplicationFiles) {
     if ($publishedVersion -ne $fileVersion) {
         throw "Published file version mismatch for $fileName. Expected $fileVersion, found $publishedVersion."
     }
+
+    if ($fileName -eq 'GhostSlacking.App.dll') {
+        $assembly = [System.Reflection.Assembly]::LoadFrom($filePath)
+        $informationalVersionAttribute = $assembly.GetCustomAttributesData() |
+            Where-Object { $_.AttributeType.FullName -eq 'System.Reflection.AssemblyInformationalVersionAttribute' } |
+            Select-Object -First 1
+        $publishedInformationalVersion = if ($null -ne $informationalVersionAttribute) {
+            ([string]$informationalVersionAttribute.ConstructorArguments[0].Value).Split('+', 2)[0]
+        }
+        else {
+            $null
+        }
+
+        if ($publishedInformationalVersion -ne $InformationalVersion) {
+            throw "Published informational version mismatch for $fileName. Expected $InformationalVersion, found $publishedInformationalVersion."
+        }
+    }
 }
 
 $versionedUpdaterFiles = @(
@@ -113,6 +180,8 @@ foreach ($fileName in $versionedUpdaterFiles) {
 dotnet build $installerProject `
     --configuration Release `
     -p:ProductVersion=$Version `
+    -p:InstallerDisplayVersion=$InformationalVersion `
+    -p:InstallerProductCode=$installerProductCode `
     -p:PublishDirectory=$publishDirectory
 if ($LASTEXITCODE -ne 0) {
     throw "GhostSlacking installer build failed with exit code $LASTEXITCODE."
@@ -185,7 +254,8 @@ foreach ($row in Get-MsiRows -Database $database -Table 'Property') {
 
 Assert-Msi ($properties['UpgradeCode'] -eq '{AB92C57B-7434-401E-91B7-4878B250E0C7}') 'UpgradeCode changed.'
 Assert-Msi ($properties['ProductVersion'] -eq $Version) "ProductVersion is not $Version."
-Assert-Msi ($properties['ProductCode'] -match '^\{[0-9A-F-]{36}\}$') 'ProductCode was not generated.'
+Assert-Msi ($properties['GHOSTSLACKING_DISPLAY_VERSION'] -eq $InformationalVersion) "GHOSTSLACKING_DISPLAY_VERSION is not $InformationalVersion."
+Assert-Msi ($properties['ProductCode'] -eq $installerProductCode) "ProductCode is not the stable code for $InformationalVersion."
 Assert-Msi ($properties['MSIRESTARTMANAGERCONTROL'] -eq 'Disable') 'Restart Manager must remain disabled to prevent forced process termination.'
 Assert-Msi ($properties['SecureCustomProperties'] -match 'GHOSTSLACKING_STILL_RUNNING' -and
     $properties['SecureCustomProperties'] -match 'GHOSTSLACKING_WATCHDOG_STILL_RUNNING') 'The post-close process checks are not secured for the elevated transaction.'
@@ -331,7 +401,13 @@ $upgradeSuccessText = $customActions |
     Select-Object -First 1
 Assert-Msi ($null -ne $upgradeSuccessText -and
     $upgradeSuccessText.Fields[3] -match '已成功升级' -and
-    $upgradeSuccessText.Fields[3] -match '\[ProductVersion\]') 'The versioned upgrade-success message is missing.'
+    $upgradeSuccessText.Fields[3] -match '\[GHOSTSLACKING_DISPLAY_VERSION\]') 'The full informational version is missing from the upgrade-success message.'
+
+$upgradeDescription = Get-MsiRows -Database $database -Table 'Control' |
+    Where-Object { $_.Fields[0] -eq 'UpgradeReadyDlg' -and $_.Fields[1] -eq 'Description' } |
+    Select-Object -First 1
+Assert-Msi ($null -ne $upgradeDescription -and
+    $upgradeDescription.Fields[9] -match '\[GHOSTSLACKING_DISPLAY_VERSION\]') 'The full informational version is missing from the upgrade prompt.'
 
 $featureRows = Get-MsiRows -Database $database -Table 'Feature'
 $features = @{}

@@ -31,7 +31,9 @@ git push origin v0.2.0-beta.1
 
 ## 版本与安装器
 
-GitHub 和应用使用完整 SemVer，例如 `0.2.0-beta.1`。Windows Installer 的 `ProductVersion` 只使用对应的三段基础版本 `0.2.0`；MSI 文件名和 `release.json` 保留完整版本，以支持 beta 之间以及 beta 到稳定版的连续升级。
+GitHub 和应用使用完整 SemVer，例如 `0.2.0-beta.1`。“关于”页读取应用程序集的完整信息版本；发布构建会校验程序集实际写入的版本，防止 beta/RC 后缀丢失。Windows Installer 的 `ProductVersion` 以及 Windows“已安装的应用”版本字段只使用对应的三段基础版本 `0.2.0`；MSI 使用由完整 SemVer 派生的稳定 `ProductCode` 区分同一基础版本下的各次 beta/RC，并将阶段与序号编码到文件版本的第四段，以确保升级替换新程序集。MSI 文件名和 `release.json` 保留完整版本，安装/升级向导也显示完整版本。
+
+为让 Windows 文件版本保持 alpha → beta → RC → 稳定版的顺序，预发布序号受第四段 16 位范围约束：alpha 和 beta 的序号为 `0`–`16382`，RC 为 `0`–`32766`；稳定版使用 `65535`。超出范围的预发布版本会在打包时被拒绝。
 
 在带有版本标签的提交上运行 `./build-release.ps1`，脚本会自动读取当前提交的标签，并将完整版本写入应用程序集，因此“关于”页会显示 beta/RC 后缀。当前提交没有受支持的精确版本标签时，脚本继续使用交互式版本选择；也可以通过 `-Version` 显式指定版本。
 
