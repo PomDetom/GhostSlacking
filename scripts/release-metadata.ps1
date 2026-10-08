@@ -114,12 +114,23 @@ function Get-ReleaseVersion([string]$VersionText, [string]$Name) {
         throw "$Name is not a supported SemVer release: $VersionText"
     }
 
+    $preReleaseNumber = if ($Matches[5]) { [long]$Matches[5] } else { 0 }
+    $maximumPreReleaseNumber = switch ($Matches[4]) {
+        'alpha' { 16382; break }
+        'beta'  { 16382; break }
+        'rc'    { 32766; break }
+        default { 0 }
+    }
+    if ($Matches[4] -and $preReleaseNumber -gt $maximumPreReleaseNumber) {
+        throw "$Name prerelease number exceeds the MSI file-version range: $VersionText"
+    }
+
     return [pscustomobject]@{
         Major = [int]$Matches[1]
         Minor = [int]$Matches[2]
         Patch = [int]$Matches[3]
         Channel = $Matches[4]
-        Number = if ($Matches[5]) { [int]$Matches[5] } else { 0 }
+        Number = [int]$preReleaseNumber
         IsPreRelease = [bool]$Matches[4]
         Text = $VersionText
     }

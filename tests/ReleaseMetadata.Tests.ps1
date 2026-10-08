@@ -26,6 +26,12 @@ try {
     }
     Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.2.0')
     Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.2.0', '-PreviousTag', 'v0.1.2')
+    Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.2.0-alpha.16382')
+    Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.2.0-beta.16382')
+    Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.2.0-rc.32766')
+    Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.2.0-alpha.16383') $false
+    Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.2.0-beta.16383') $false
+    Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.2.0-rc.32767') $false
     Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.1.2', '-PreviousTag', 'v0.1.2') $false
     Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', 'v0.1.1', '-PreviousTag', 'v0.1.2') $false
     Invoke-Metadata @('-Mode', 'ValidateVersion', '-Tag', '0.2.0') $false
