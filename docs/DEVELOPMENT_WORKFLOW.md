@@ -58,10 +58,10 @@ GitHub、应用、NSIS EXE 文件名、卸载注册和发布清单均使用完�
 
 ## NSIS 打包与发布签名
 
-本地打包要求 PowerShell 7、.NET SDK 8 或更新版本，以及 Visual Studio Desktop development with C++ Build Tools。`installer/get-nsis.ps1` 获取 NSIS 3.11 并验证固定 SHA256；原生辅助程序静态链接 CRT，不依赖安装在系统中的 .NET 8。
+本地打包要求 PowerShell 7、.NET SDK 8 或更新版本，以及 Visual Studio Desktop development with C++ Build Tools。`installer/get-nsis.ps1` 从 Tauri 维护的 GitHub 二进制镜像获取 NSIS 3.11，并验证固定文件大小与 SHA256；原生辅助程序静态链接 CRT，不依赖安装在系统中的 .NET 8。
 
 ```powershell
-pwsh ./build-release.ps1 -Version 0.1.4-beta.6 -SigningKeyPath "$env:LOCALAPPDATA\GhostSlacking.ReleaseSigning\private-key.pem"
+pwsh ./build-release.ps1 -Version 0.1.4-beta.7 -SigningKeyPath "$env:LOCALAPPDATA\GhostSlacking.ReleaseSigning\private-key.pem"
 pwsh ./tests/Installer.Tests.ps1
 ```
 
