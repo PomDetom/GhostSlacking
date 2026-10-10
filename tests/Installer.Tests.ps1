@@ -78,3 +78,6 @@ try {
     if (-not $resolvedTarget.StartsWith($allowedRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Refusing to clean a test directory outside artifacts/tests.' }
     Remove-Item -LiteralPath $resolvedTarget -Recurse -Force
 }
+# GitHub Actions propagates LASTEXITCODE even after a successful PowerShell script.
+# Expected negative helper cases must not turn the completed suite into a failed step.
+$global:LASTEXITCODE = 0
