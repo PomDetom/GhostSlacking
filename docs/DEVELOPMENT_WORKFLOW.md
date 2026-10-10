@@ -14,7 +14,7 @@
 2. 创建 `dev` → `master` 发布 PR，使用 `.github/PULL_REQUEST_TEMPLATE/release.md`。
 3. CI、人工验证和发布范围确认完成后合并发布 PR。该 PR 使用 Merge commit，以保留功能 PR 的可追溯历史。
 4. 在新的 `master` 合并提交上创建稳定标签，例如 `v0.2.0`，并只推送该标签。
-5. 标签工作流生成 MSI、SHA256、`release.json` 和双语 GitHub Release。稳定版标记为 latest。
+5. 标签工作流生成 EXE、SHA256、`release.json`、`release.json.sig` 和双语 GitHub Release。稳定版标记为 latest。
 
 ## 测试版发布
 
@@ -31,13 +31,12 @@ git push origin v0.2.0-beta.1
 
 ## 版本与安装器
 
-GitHub 和应用使用完整 SemVer，例如 `0.2.0-beta.1`。“关于”页读取应用程序集的完整信息版本；发布构建会校验程序集实际写入的版本，防止 beta/RC 后缀丢失。Windows Installer 的 `ProductVersion` 以及 Windows“已安装的应用”版本字段只使用对应的三段基础版本 `0.2.0`；MSI 使用由完整 SemVer 派生的稳定 `ProductCode` 区分同一基础版本下的各次 beta/RC，并将阶段与序号编码到文件版本的第四段，以确保升级替换新程序集。MSI 文件名和 `release.json` 保留完整版本，安装/升级向导也显示完整版本。
-
+GitHub、应用、NSIS EXE 文件名、卸载注册和发布清单均使用完整 SemVer，例如 `0.2.0-beta.1`。“关于”页读取程序集完整信息版本；发布构建核对 App、Watchdog 和 Updater 的版本及 framework-dependent .NET 8 运行时契约。Windows PE 文件版本仍将阶段和序号编码到第四段，安装版本比较按完整 SemVer 执行，禁止降级，允许相同版本修复。
 为让 Windows 文件版本保持 alpha → beta → RC → 稳定版的顺序，预发布序号受第四段 16 位范围约束：alpha 和 beta 的序号为 `0`–`16382`，RC 为 `0`–`32766`；稳定版使用 `65535`。超出范围的预发布版本会在打包时被拒绝。
 
 在带有版本标签的提交上运行 `./build-release.ps1`，脚本会自动读取当前提交的标签，并将完整版本写入应用程序集，因此“关于”页会显示 beta/RC 后缀。当前提交没有受支持的精确版本标签时，脚本继续使用交互式版本选择；也可以通过 `-Version` 显式指定版本。
 
-发布标签、MSI、SHA256 和 `release.json` 一经发布不可覆盖。修复发布问题必须使用新的 beta、RC 或稳定版本号。
+发布标签、EXE、SHA256、`release.json` 和签名 一经发布不可覆盖。修复发布问题必须使用新的 beta、RC 或稳定版本号。
 
 ## 应用更新通道
 
@@ -56,3 +55,18 @@ GitHub 和应用使用完整 SemVer，例如 `0.2.0-beta.1`。“关于”页读
 | 管理员 | 保留管理员应急绕过，仅用于恢复；日常变更仍走 PR。 |
 
 仓库级合并方式只启用 Squash merge 和 Merge commit，关闭 Rebase merge。普通功能 PR 合入 `dev` 使用 Squash merge；`dev` → `master` 发布 PR 使用 Merge commit。修改 GitHub 设置后，回读两个分支的保护规则和仓库合并方式，确认与本节一致。
+
+## NSIS 打包与发布签名
+
+本地打包要求 PowerShell 7、.NET SDK 8 或更新版本，以及 Visual Studio Desktop development with C++ Build Tools。`installer/get-nsis.ps1` 获取 NSIS 3.11 并验证固定 SHA256；原生辅助程序静态链接 CRT，不依赖安装在系统中的 .NET 8。
+
+```powershell
+pwsh ./build-release.ps1 -Version 0.1.4-beta.6 -SigningKeyPath "$env:LOCALAPPDATA\GhostSlacking.ReleaseSigning\private-key.pem"
+pwsh ./tests/Installer.Tests.ps1
+```
+
+发布公钥嵌入 Core 的 `release-public-key.pem`。对应私钥必须备份在仓库之外，并配置为 GitHub Actions Secret `GHOSTSLACKING_RELEASE_SIGNING_KEY`（PEM 文本）；不得提交、打印或写入构建产物。签名使用 ECDSA P-256/SHA256，`release.json.sig` 为 Base64 编码的 64 字节 P1363 签名，覆盖最终 `release.json` 的原始 UTF-8 字节。签名后不得再格式化清单。缺少私钥、密钥不匹配或资产验证失败时，发布失败。
+
+签名格式 2 清单包含完整版本、通道、架构和安装包文件名、大小、SHA256，以及 `installer.kind=nsis`、`installer.scope=currentUser`。App 和 Updater 独立校验；Updater 在整个安装期间保持包体只读锁。发布签名验证更新来源，Windows Authenticode 签名另行规划。公钥发布后不能随意替换；更换密钥须设计现有客户端可验证的过渡发布。
+
+首个 EXE beta 的发布说明必须中英双语说明：旧 MSI 用户先安全退出并手动卸载，再安装新 EXE；不提供 MSI 过渡包，旧客户端无法直接应用 EXE 更新。正式 beta 标签仍须在合入后的 `dev` 提交创建，稳定版须走 `dev` → `master` 发布 PR。本地打包不等同于发布。

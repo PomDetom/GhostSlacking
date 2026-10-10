@@ -82,6 +82,10 @@ jobs:
         shell: pwsh
         run: .\tests\ReleaseMetadata.Tests.ps1
 
+      - name: Test native installer transactions
+        shell: pwsh
+        run: .\tests\Installer.Tests.ps1
+
       - name: Set up .NET 8 SDK
         uses: actions/setup-dotnet@v6
         with:

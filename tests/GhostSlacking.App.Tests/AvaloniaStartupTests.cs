@@ -10,17 +10,23 @@ using GhostSlacking.Platform;
 
 namespace GhostSlacking.App.Tests;
 
+[CollectionDefinition("Windows UI", DisableParallelization = true)]
+public sealed class WindowsUiCollection { }
+
+[Collection("Windows UI")]
 public sealed class AvaloniaStartupTests
 {
     [Fact]
     public void Avalonia_platform_and_application_icon_initialize_on_sta_thread()
     {
         Exception? failure = null;
+        var stage = "platform initialization";
         var thread = new Thread(() =>
         {
             try
             {
                 Program.BuildAvaloniaApp().SetupWithoutStarting();
+                stage = "settings and update windows";
                 Assert.NotNull(AppIcon.Instance);
                 Assert.NotNull(AppIcon.TitleBarImage);
                 var settingsWindow = new SettingsWindow(new AppSettings(), _ => true);
@@ -31,6 +37,7 @@ public sealed class AvaloniaStartupTests
                 AssertUpdateWindow();
                 AssertThemePreviewLifecycle();
                 AssertSavedSettingsExport();
+                stage = "tray and notifications";
                 using var trayIcon = new TrayIcon
                 {
                     Icon = AppIcon.Instance,
@@ -49,18 +56,22 @@ public sealed class AvaloniaStartupTests
                 notifications.Show("ready", UserNotificationSeverity.Info);
                 notifications.Show("ready again", UserNotificationSeverity.Info);
                 AssertNotificationWindowComposition(notifications);
+                stage = "notification layout";
                 AssertNotificationWindowsGrowWithText();
                 AssertChatTextAndCapsuleWrapping();
+                stage = "notification transitions";
                 AssertNotificationFadeAndPreview();
                 AssertNotificationFadeInterruption();
                 AssertNotificationStyleSettingSaves();
                 AssertNotificationPreviewSaveAndCancel();
+                stage = "chat hit testing and screen bounds";
                 AssertChatWindowHitTesting();
                 AssertChatHistoryFitsTheWorkingArea();
                 Assert.Equal(2, raisedNotificationHandles.Count);
                 Assert.All(raisedNotificationHandles, handle => Assert.NotEqual(0, handle));
                 trayIcon.IsVisible = false;
                 settingsWindow.Close();
+                stage = "completed";
             }
             catch (Exception exception)
             {
@@ -70,7 +81,9 @@ public sealed class AvaloniaStartupTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
 
-        Assert.True(thread.Join(TimeSpan.FromSeconds(15)));
+        // This checks many windows and notification layouts; installer handshakes
+        // have separate deadlines and must not inherit this functional-test budget.
+        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), $"Avalonia UI probe timed out during {stage}.");
         Assert.Null(failure);
     }
 
@@ -197,8 +210,8 @@ public sealed class AvaloniaStartupTests
             ReleaseVersion.Parse("1.2.0"),
             "1.2.0",
             new Uri("https://github.com/PomDetom/GhostSlacking/releases/tag/v1.2.0"),
-            Asset("GhostSlacking-1.2.0-win-x64.msi"),
-            Asset("GhostSlacking-1.2.0-win-x64.msi.sha256"),
+            Asset("GhostSlacking-1.2.0-win-x64-setup.exe"),
+            Asset("GhostSlacking-1.2.0-win-x64-setup.exe.sha256"),
             Asset("release.json"),
             new string('A', 64),
             [
@@ -284,8 +297,8 @@ public sealed class AvaloniaStartupTests
             ReleaseVersion.Parse("1.2.0"),
             "1.2.0",
             releaseUrl,
-            Asset("GhostSlacking-1.2.0-win-x64.msi"),
-            Asset("GhostSlacking-1.2.0-win-x64.msi.sha256"),
+            Asset("GhostSlacking-1.2.0-win-x64-setup.exe"),
+            Asset("GhostSlacking-1.2.0-win-x64-setup.exe.sha256"),
             Asset("release.json"),
             new string('A', 64),
             [
@@ -300,7 +313,7 @@ public sealed class AvaloniaStartupTests
             ApplicationUpdateStatus.Available,
             "1.1.0",
             release),
-            installerPath: "update.msi");
+            installerPath: "update.exe");
         var window = new UpdateWindow(updates, UiLanguage.Chinese);
         var notes = GetPrivateField<StackPanel>(window, "_notesPanel");
         var install = GetPrivateField<Button>(window, "_installButton");
@@ -312,6 +325,11 @@ public sealed class AvaloniaStartupTests
         Assert.True(warning.IsVisible);
         Assert.Equal("下载并安装", install.Content);
         Assert.Equal("跳过此版本", skip.Content);
+        updates.SetStatus(ApplicationUpdateStatus.Preparing);
+        Assert.False(install.IsEnabled);
+        Assert.False(skip.IsEnabled);
+        Assert.Equal(UiText.Text(UiLanguage.Chinese, "updatePreparing"), GetPrivateField<TextBlock>(window, "_statusText").Text);
+        updates.SetStatus(ApplicationUpdateStatus.Available);
         install.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(1, updates.DownloadCalls);
         Assert.Equal(1, updates.BeginInstallCalls);

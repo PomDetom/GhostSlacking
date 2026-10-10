@@ -7,6 +7,63 @@ namespace GhostSlacking.App.Tests;
 public sealed class UpdaterEngineTests
 {
     [Fact]
+    public void Reused_process_identity_cannot_authorize_shutdown()
+    {
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        Assert.False(new WindowsUpdaterRuntime().PrepareExit(process.Id,
+            process.StartTime.ToUniversalTime().Ticks + 1, process.MainModule!.FileName));
+    }
+
+    [Fact]
+    public void Modified_cache_is_rejected_before_shutdown_or_readiness_acknowledgment()
+    {
+        using var files = new UpdaterTestFiles();
+        File.WriteAllText(files.InstallerPath, "modified");
+        var runtime = new RecordingUpdaterRuntime();
+        var authorized = false;
+        var store = new UpdateCompletionStore(files.ResultPath);
+        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance, TestReleaseSigning.PublicKey)
+            .Run(files.Options, () => { authorized = true; return true; });
+        Assert.Equal(2, exitCode);
+        Assert.False(authorized);
+        Assert.False(runtime.InstallerStarted);
+        Assert.False(runtime.ApplicationStarted);
+        Assert.Equal("verification", store.Consume()?.FailureStage);
+    }
+
+    [Fact]
+    public void Failed_authorization_does_not_close_the_application_or_install()
+    {
+        using var files = new UpdaterTestFiles();
+        var runtime = new RecordingUpdaterRuntime();
+        var exitCode = new UpdaterEngine(runtime, new UpdateCompletionStore(files.ResultPath), NullLogger.Instance,
+            TestReleaseSigning.PublicKey).Run(files.Options, () => false);
+        Assert.Equal(9, exitCode);
+        Assert.False(runtime.InstallerStarted);
+        Assert.False(runtime.ApplicationStarted);
+    }
+
+    [Fact]
+    public void Signed_version_must_match_the_handoff_version()
+    {
+        using var files = new UpdaterTestFiles();
+        var runtime = new RecordingUpdaterRuntime();
+        var exitCode = new UpdaterEngine(runtime, new UpdateCompletionStore(files.ResultPath), NullLogger.Instance,
+            TestReleaseSigning.PublicKey).Run(files.Options with { Version = "1.2.1" });
+        Assert.Equal(2, exitCode);
+        Assert.False(runtime.InstallerStarted);
+    }
+
+    [Fact]
+    public void Completion_result_accepts_prerelease_versions_and_failure_stages()
+    {
+        using var files = new UpdaterTestFiles();
+        var store = new UpdateCompletionStore(files.ResultPath);
+        Assert.True(store.Save(new UpdateCompletionResult("1.2.0-rc.1", UpdateCompletionStatus.LaunchFailed,
+            0, DateTimeOffset.UtcNow, "startup")));
+        Assert.Equal("1.2.0-rc.1", store.Consume()?.Version);
+    }
+    [Fact]
     public void Valid_options_require_the_expected_cache_and_registered_application_paths()
     {
         using var files = new UpdaterTestFiles();
@@ -29,7 +86,7 @@ public sealed class UpdaterEngineTests
     public void Options_reject_an_installer_outside_the_update_cache()
     {
         using var files = new UpdaterTestFiles();
-        var outsideInstaller = Path.Combine(files.Root, "GhostSlacking-1.2.0-win-x64.msi");
+        var outsideInstaller = Path.Combine(files.Root, "GhostSlacking-1.2.0-win-x64-setup.exe");
         File.WriteAllText(outsideInstaller, "test");
         var args = files.Arguments.ToArray();
         args[Array.IndexOf(args, "--installer") + 1] = outsideInstaller;
@@ -81,28 +138,26 @@ public sealed class UpdaterEngineTests
     }
 
     [Fact]
-    public void Windows_installer_uses_elevation_and_passive_non_restarting_arguments()
+    public void Nsis_installer_uses_passive_update_without_elevation()
     {
-        var startInfo = WindowsUpdaterRuntime.CreateInstallerStartInfo(@"C:\updates\GhostSlacking-1.2.0-win-x64.msi");
+        var startInfo = WindowsUpdaterRuntime.CreateInstallerStartInfo(@"C:\updates\GhostSlacking-1.2.0-win-x64-setup.exe");
 
-        Assert.Equal("msiexec.exe", startInfo.FileName);
-        Assert.True(startInfo.UseShellExecute);
-        Assert.Equal("runas", startInfo.Verb);
+        Assert.Equal(@"C:\updates\GhostSlacking-1.2.0-win-x64-setup.exe", startInfo.FileName);
+        Assert.False(startInfo.UseShellExecute);
+        Assert.Equal(string.Empty, startInfo.Verb);
         Assert.Equal(
-            ["/i", @"C:\updates\GhostSlacking-1.2.0-win-x64.msi", "/passive", "/norestart"],
+            ["/PASSIVE", "/UPDATE"],
             startInfo.ArgumentList);
     }
 
     [Theory]
     [InlineData(WindowsUpdaterRuntime.Success)]
-    [InlineData(WindowsUpdaterRuntime.SuccessRebootInitiated)]
-    [InlineData(WindowsUpdaterRuntime.SuccessRebootRequired)]
     public void Successful_installer_codes_write_success_and_restart_the_application(int installerExitCode)
     {
         using var files = new UpdaterTestFiles();
         var runtime = new RecordingUpdaterRuntime { InstallerExitCode = installerExitCode };
         var store = new UpdateCompletionStore(files.ResultPath);
-        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance).Run(files.Options);
+        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance, TestReleaseSigning.PublicKey).Run(files.Options);
 
         Assert.Equal(0, exitCode);
         Assert.True(runtime.ApplicationStarted);
@@ -114,16 +169,16 @@ public sealed class UpdaterEngineTests
     }
 
     [Fact]
-    public void Cancelled_elevation_writes_cancelled_result_and_restores_the_application()
+    public void Cancelled_installer_writes_cancelled_result_and_restores_the_application()
     {
         using var files = new UpdaterTestFiles();
         var runtime = new RecordingUpdaterRuntime
         {
-            InstallerException = new Win32Exception(WindowsUpdaterRuntime.ErrorCancelled)
+            InstallerExitCode = 1
         };
         var store = new UpdateCompletionStore(files.ResultPath);
 
-        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance).Run(files.Options);
+        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance, TestReleaseSigning.PublicKey).Run(files.Options);
 
         Assert.Equal(5, exitCode);
         Assert.True(runtime.ApplicationStarted);
@@ -137,7 +192,7 @@ public sealed class UpdaterEngineTests
         var runtime = new RecordingUpdaterRuntime { InstallerExitCode = 1603 };
         var store = new UpdateCompletionStore(files.ResultPath);
 
-        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance).Run(files.Options);
+        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance, TestReleaseSigning.PublicKey).Run(files.Options);
 
         Assert.Equal(7, exitCode);
         Assert.True(runtime.ApplicationStarted);
@@ -154,7 +209,7 @@ public sealed class UpdaterEngineTests
         var runtime = new RecordingUpdaterRuntime { ParentExited = false };
         var store = new UpdateCompletionStore(files.ResultPath);
 
-        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance).Run(files.Options);
+        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance, TestReleaseSigning.PublicKey).Run(files.Options);
 
         Assert.Equal(4, exitCode);
         Assert.False(runtime.InstallerStarted);
@@ -169,11 +224,11 @@ public sealed class UpdaterEngineTests
         var runtime = new RecordingUpdaterRuntime { ApplicationStartResult = false };
         var store = new UpdateCompletionStore(files.ResultPath);
 
-        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance).Run(files.Options);
+        var exitCode = new UpdaterEngine(runtime, store, NullLogger.Instance, TestReleaseSigning.PublicKey).Run(files.Options);
 
         Assert.Equal(8, exitCode);
         Assert.True(runtime.FatalErrorShown);
-        Assert.Equal(UpdateCompletionStatus.Failed, store.Consume()?.Status);
+        Assert.Equal(UpdateCompletionStatus.LaunchFailed, store.Consume()?.Status);
     }
 
     [Fact]
@@ -198,9 +253,9 @@ public sealed class UpdaterEngineTests
         public bool ApplicationStarted { get; private set; }
         public bool FatalErrorShown { get; private set; }
 
-        public bool WaitForParentExit(int processId, long startTimeUtcTicks, TimeSpan timeout) => ParentExited;
+        public bool PrepareExit(int processId, long startTimeUtcTicks, string applicationPath) => ParentExited;
 
-        public int RunInstaller(string installerPath)
+        public int RunInstaller(string installerPath, string installRoot)
         {
             InstallerStarted = true;
             if (InstallerException is not null)
@@ -211,9 +266,10 @@ public sealed class UpdaterEngineTests
             return InstallerExitCode;
         }
 
-        public bool StartApplication(string applicationPath)
+        public bool StartApplication(string applicationPath, string? expectedVersion, Action confirmed)
         {
             ApplicationStarted = true;
+            if (ApplicationStartResult && expectedVersion is not null) confirmed();
             return ApplicationStartResult;
         }
 
@@ -227,13 +283,23 @@ public sealed class UpdaterEngineTests
             Root = Path.Combine(Path.GetTempPath(), $"GhostSlacking.Updater.Tests.{Guid.NewGuid():N}");
             UpdatesRoot = Path.Combine(Root, "updates");
             InstallLocation = Path.Combine(Root, "installed");
-            InstallerPath = Path.Combine(UpdatesRoot, "1.2.0", "GhostSlacking-1.2.0-win-x64.msi");
+            InstallerPath = Path.Combine(UpdatesRoot, "1.2.0", "GhostSlacking-1.2.0-win-x64-setup.exe");
             ApplicationPath = Path.Combine(InstallLocation, "GhostSlacking.App.exe");
             ReadyEventName = $@"Local\GhostSlacking.Updater.Ready.{Guid.NewGuid():N}";
             ResultPath = Path.Combine(Root, "update-completion.json");
             Directory.CreateDirectory(Path.GetDirectoryName(InstallerPath)!);
             Directory.CreateDirectory(InstallLocation);
             File.WriteAllText(InstallerPath, "test installer");
+            var manifest = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                formatVersion = 2, product = "GhostSlacking", version = "1.2.0", channel = "stable",
+                prerelease = false, architecture = "win-x64",
+                installer = new { file = Path.GetFileName(InstallerPath), bytes = new FileInfo(InstallerPath).Length,
+                    sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(InstallerPath))),
+                    kind = "nsis", scope = "currentUser" }
+            });
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(InstallerPath)!, "release.json"), manifest);
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(InstallerPath)!, "release.json.sig"), TestReleaseSigning.Sign(manifest));
             File.WriteAllText(ApplicationPath, "test application");
             Options = new UpdaterOptions(123, 456, InstallerPath, "1.2.0", ApplicationPath, ReadyEventName);
             Arguments =

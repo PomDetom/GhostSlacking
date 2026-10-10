@@ -1153,17 +1153,19 @@ internal sealed class SettingsWindow : AppWindow
         {
             ApplicationUpdateStatus.Checking => UiText.Text(language, "checkingUpdates"),
             ApplicationUpdateStatus.UpToDate => UiText.Text(language, "upToDate"),
+            ApplicationUpdateStatus.NoCompatibleRelease => UiText.Text(language, "noCompatibleRelease"),
             ApplicationUpdateStatus.Available => string.Format(UiText.Text(language, "updateAvailableDescription"), releaseVersion),
             ApplicationUpdateStatus.Skipped => string.Format(UiText.Text(language, "updateSkippedDescription"), releaseVersion),
             ApplicationUpdateStatus.Downloading => string.Format(UiText.Text(language, "downloadingUpdate"), snapshot.ProgressPercent ?? 0),
             ApplicationUpdateStatus.Verifying => UiText.Text(language, "verifyingUpdate"),
             ApplicationUpdateStatus.Ready => UiText.Text(language, "startingInstaller"),
+            ApplicationUpdateStatus.Preparing => UiText.Text(language, "updatePreparing"),
             ApplicationUpdateStatus.Error => UiText.Text(language, "updateFailed"),
             _ => UiText.Text(language, "updateNotChecked")
         };
 
         var busy = snapshot.Status is ApplicationUpdateStatus.Checking or
-            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying;
+            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Preparing;
         _checkUpdatesButton.Content = UiText.Text(language, "checkUpdates");
         _checkUpdatesButton.IsEnabled = !busy && _updates is not null;
         _updateProgress.IsVisible = snapshot.Status == ApplicationUpdateStatus.Downloading;

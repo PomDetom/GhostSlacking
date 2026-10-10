@@ -9,7 +9,7 @@
 | Phase 0 Technical Spike | 实现基线已完成，手工验收待补 | `SetWindowRgn`、坐标、拾取、交互和恢复路径已沉淀到当前实现；没有单独保留 Spike 工程。 |
 | Phase 1 Ghost Core | 已完成实现 | 单窗口闭环、托盘宿主、设置、快捷键和自动化测试已在当前解决方案中。 |
 | Phase 2 Reliability | Watchdog v1 已完成，其余进行中 | 异常恢复协议和独立进程已落地；注销/关机、权限诊断、DPI 热插拔和长时间观测仍待验证或补齐。 |
-| Phase 3 Productization | 主要代码已完成，发布验收待补 | Avalonia 设置、配置、反馈、单实例、开机启动、GitHub Releases 更新、MSI 和 GitHub Actions 已存在；签名和干净系统验收仍未完成。 |
+| Phase 3 Productization | 主要代码已完成，发布验收待补 | Avalonia 设置、配置、反馈、单实例、开机启动、GitHub Releases 更新、NSIS EXE、发布签名和 GitHub Actions 已存在；Authenticode 和干净系统验收仍未完成。 |
 | Phase 4 Advanced Rendering | Composition 原型与自适应刷新率热路径优化已实现，兼容性验收待补 | 非抓屏 Composition 外扩羽化/模糊、位置无关遮罩缓存、最高 120 Hz 的显示器刷新率自适应和硬边回退已接入；真实设备/窗口性能仍需实测。 |
 
 ## 已完成：Phase 1 Core Demo 与 App 宿主基线
@@ -55,10 +55,11 @@
 ## 已实现：Phase 3 Productization 基线
 
 - Avalonia + FluentAvalonia 设置页、中文/English 文案、跟随系统/浅色/深色主题、主题实时预览与取消回滚、设置保存反馈和单项恢复默认按钮。
-- 左侧“关于”页、GitHub 项目/Release 入口、默认稳定版检查和可选测试版通道、可点击且支持悬停暂停的更新通知、可重复激活的独立更新窗口、中英双语及跨版本 Release 说明、跳过版本后关闭窗口、上次成功检查时间，以及受校验的一键 MSI 自动升级。
-- `Updater` 在应用安全退出后等待主进程和 Watchdog，显示 MSI 被动进度并负责重新启动应用；UAC 取消或安装失败时恢复可用应用，并通过一次性结果文件在下次启动反馈结果。
+- 左侧“关于”页、GitHub 项目/Release 入口、默认稳定版检查和可选测试版通道、可点击且支持悬停暂停的更新通知、可重复激活的独立更新窗口、中英双语及跨版本 Release 说明、跳过版本后关闭窗口、上次成功检查时间，以及受校验的签名 EXE 自动升级。
+- 当 Release 历史仅有旧 MSI 包时，更新检查会报告“暂无兼容的签名更新”，与网络/API 错误区分。
+- `Updater` 在应用安全退出后等待主进程和 Watchdog，显示 NSIS 被动进度并负责重新启动应用；安装取消或失败时尝试重新启动应用，成功安装须确认实际启动版本，并通过一次性结果文件在下次启动反馈结果。
 - JSON 配置归一化、损坏配置回退、每类 2 MB × 5 文件且清理 30 天前备份的滚动日志、日志诊断 ZIP、已保存配置 JSON 导出、单实例互斥、HKCU 开机启动开关和退出时恢复选项。
-- WiX MSI 安装器、开始菜单/桌面快捷方式选项、首次安装和升级完成页的启动选择、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、稳定版/beta/RC 构建和 MSI 校验，GitHub Actions 已配置 Conventional Commits、功能 PR 元数据校验、双语 Release 汇总及分支约束标签发布流程。
+- 当前用户 NSIS EXE 安装器、开始菜单/桌面快捷方式选项、手动安装完成页的启动选择、升级协议与安全关闭检查；`build-release.ps1` 可执行测试、稳定版/beta/RC 构建、清单签名和 EXE 校验，GitHub Actions 已配置 Conventional Commits、功能 PR 元数据校验、双语 Release 汇总及分支约束标签发布流程。
 
 ## 已实现：Phase 4 Advanced Rendering 原型
 
@@ -71,5 +72,14 @@
 
 - Phase 2 其余可靠性工作：注销/关机通知下的尽力恢复、权限级别识别与更具体的用户反馈、DPI/显示器热插拔验证和长时间资源观测。当前 `AppDomain.UnhandledException` 只保留诊断输出；异常终止后的窗口恢复由 Watchdog 负责。
 - Phase 1/2 真实窗口验收：普通 Win32、资源管理器、浏览器、Electron/自绘窗口上的 Ghost/Reveal/Restore、区域内点击/滚轮、焦点与重绘；100%/125%/150% DPI、负坐标与混合缩放双屏、移动/缩放/最小化/关闭、普通/管理员权限目标，以及主进程异常终止后的 Watchdog 真实恢复。自动化测试未替代这些交互式检查。
-- Phase 3 剩余代码签名/发布签名策略、干净 Windows 环境中的安装/升级/卸载回归和完整用户文档验收；诊断与配置导出已完成自动化覆盖，仍需发布环境手工验收。
+- Phase 3 剩余Windows Authenticode 签名、干净 Windows 环境中的安装/升级/卸载回归和完整用户文档验收；诊断与配置导出已完成自动化覆盖，仍需发布环境手工验收。
 - Composition 羽化在 Chrome/Electron、混合 DPI、远程桌面、透明效果关闭和图形设备丢失场景下的手工兼容性与性能验收。
+
+## 安装链路替换（2026-10-10）
+
+- 已实现：当前用户 EXE、系统 .NET 8 x64 轻量检测、旧 MSI 身份检测及拒绝自动迁移、卸载保留用户数据。
+- 已实现：固定公钥发布签名、App/Updater 双重验证、只读包体锁、Ready/Go 授权、安全关闭管道及新版本启动确认。
+- 已实现：原生辅助程序不依赖 .NET 8；目录互斥、暂存解包、事务回退、中断恢复、禁止降级和启动后清理备份。
+- 本地验证：Release .NET 测试、原生事务测试、NSIS beta EXE 编译及 EXE/哈希/签名一致性。真实 App 在空闲状态下约 4.5 秒完成启动会话及 beta 版本确认，随后 App/Watchdog 安全关闭通过；这不代表 Ghost/Peek 状态恢复或完整更新性能已验收。当前机器存在旧 MSI，身份检测正确阻止安装；没有自动卸载旧安装。
+- 发布密钥：固定公钥已嵌入应用，对应私钥保存在仓库外，GitHub Actions 的 `GHOSTSLACKING_RELEASE_SIGNING_KEY` 已配置。私钥仍需维护者自行备份。
+- 待验证：干净 Windows 10/11、缺少/x86-only .NET、真实 Ghost/Peek 窗口恢复、跨权限副本、完整安装更新十次性能测试和 GitHub beta 发布。自动化通过不代表这些场景已验收。

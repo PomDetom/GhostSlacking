@@ -71,7 +71,7 @@ App.exe ↔ Watchdog.exe（当前用户命名管道、心跳和恢复清单）
 Watchdog.exe → Platform/Win32 身份校验与安全恢复 → 目标窗口
 
 GhostSlacking.App.exe → GitHub Releases（可选检查与下载）
-GhostSlacking.App.exe → GhostSlacking.Updater.exe → Windows Installer（校验后升级）
+GhostSlacking.App.exe → GhostSlacking.Updater.exe → NSIS EXE → 原生安装辅助程序（签名校验、安全关闭、事务替换）
 ```
 
 外部依赖限于 Windows 原生窗口系统、用户输入、本地文件系统，以及用于可选更新检查和下载的 GitHub 公共 Releases API；不需要数据库、目标应用 SDK 或用户访问令牌。
@@ -86,13 +86,13 @@ src/
   GhostSlacking.Core/         状态机、领域模型、服务接口
   GhostSlacking.Platform/     Win32 P/Invoke 和 Windows 适配器
   GhostSlacking.Watchdog/     独立异常恢复进程
-  GhostSlacking.Updater/      独立 MSI 升级交接进程
+  GhostSlacking.Updater/      独立签名 EXE 升级交接进程
 tests/
   GhostSlacking.Core.Tests/
   GhostSlacking.App.Tests/
 ```
 
-`GhostSlacking.Watchdog` 引用 Core/Platform 的恢复协议和 Win32 适配；`GhostSlacking.Updater` 引用 Core。App 的构建/发布目标携带 Watchdog，发布目标将 Updater 放入独立子目录。当前没有独立的 `Platform.Tests` 或 `ManualTests` 项目，真实窗口验收以[实施计划的测试矩阵](IMPLEMENTATION_PLAN.md#9-测试矩阵)执行。
+`GhostSlacking.Watchdog` 引用 Core/Platform 的恢复协议和 Win32 适配；`GhostSlacking.Updater` 引用 Core/Platform。App 的构建/发布目标携带 Watchdog，发布目标将 Updater 放入独立子目录。当前没有独立的 `Platform.Tests` 或 `ManualTests` 项目，真实窗口验收以[实施计划的测试矩阵](IMPLEMENTATION_PLAN.md#9-测试矩阵)执行。
 
 ### 5.1 依赖方向
 
@@ -102,10 +102,10 @@ App ───────────────► Core ───────�
  └──────────────► Platform ─────────────┘
 
 Watchdog ───────────► Platform ─────────► Core 恢复协议
-Updater ────────────────────────────────► Core
+Updater ────────────────────────────────► Core / Platform
 ```
 
-`Core` 不引用 UI 框架或 Win32；`Platform` 实现 `Core` 定义的接口并承载无界面的 Win32 HWND；`App` 负责组合依赖、Avalonia 托盘菜单、消息循环和用户反馈。Updater 在主进程安全退出后执行已校验 MSI 的安装与重启交接，不参与目标窗口状态协调。
+`Core` 不引用 UI 框架或 Win32；`Platform` 实现 `Core` 定义的接口并承载无界面的 Win32 HWND；`App` 负责组合依赖、Avalonia 托盘菜单、消息循环和用户反馈。Updater 在主进程安全退出后执行签名 EXE 的安装与启动确认交接，不参与目标窗口状态协调。
 
 ## 6. 核心领域模型
 
@@ -266,9 +266,17 @@ Exit
 
 ### 7.8 GitHub Releases 更新
 
-更新管理器在每次启动后异步检查更新，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`。默认 Stable 通道只检查稳定版，用户开启 Test 通道后才检查 beta/RC，并按完整 SemVer 选择版本；手动检查仍可随时发起。跳过版本只抑制完全相同版本的启动通知和托盘入口，“关于”页仍显示该版本并允许安装。下载前要求 Release 的标签、`release.json`、MSI 文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许启动 MSI。
+更新管理器在每次启动后异步检查更新，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`。默认 Stable 通道只检查稳定版，用户开启 Test 通道后才检查 beta/RC，并按完整 SemVer 选择版本；手动检查仍可随时发起。跳过版本只抑制完全相同版本的启动通知和托盘入口，“关于”页仍显示该版本并允许安装。升级格式切换期间，只有旧 MSI 资产且没有签名 NSIS 包的 Release 会被识别为旧格式并跳过；尚无兼容签名包时显示明确状态，不当作网络错误。下载前要求 Release 的标签、`release.json`、EXE 文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许启动 EXE。
 
-应用内安装仅对注册安装路径与当前程序目录一致的 per-machine MSI 安装生效。升级仍由安装器既有的安全关闭协议负责，不静默提权、不强制终止进程；源码或便携副本只打开 Releases 页面。
+应用内更新仅对 HKCU 注册路径与当前程序目录一致、安装类型为 NSIS、协议版本为 2 且未提权的副本生效。安装根目录保存 `uninstall.exe` 与事务日志，`app` 保存程序，`previous` 保存待启动确认的旧程序；用户数据继续位于独立的 `%LOCALAPPDATA%\GhostSlacking`。未注册副本只打开 Releases 页面。
+
+Core 的 `SignedReleaseManifest` 验证格式 2 清单的 ECDSA P-256/SHA256 签名和包体哈希；App 验证后保存原始清单及签名，临时 Updater 再验证并持有禁止写入/删除的文件句柄。交接使用 Ready/Go 两阶段授权，未收到授权的 Updater 不关闭应用。安装结果按完整 SemVer 保存，成功安装后通过当前用户专用管道，在 15 秒内确认新进程 PID、会话和实际版本；Updater 保存结果后回执，新进程收到回执才消费结果及清理备份。启动确认失败使用独立结果状态。
+
+`InstallationControlServer` 提供当前用户专用、按程序目录派生的管道。原生辅助程序核对服务端可执行文件、PID 和进程启动时间，发出关闭请求；App 强制恢复全部受控窗口，等待 Watchdog 成功退出后才返回 SAFE。恢复失败、身份不符、残留进程或 30 秒超时均阻止程序文件修改，不强制终止进程。
+
+`installer/InstallerHelper.cpp` 使用 Win32 实现运行时检测、按 UpgradeCode 识别旧 MSI、目录锁及事务。NSIS 3.11 以普通用户权限运行，先解包 `.staging`，持久化事务后切换目录和卸载器，最后写 HKCU 注册与当前用户快捷方式。提交前失败或中断由下次安装回退；新版本初始化成功后才清理备份。新卸载器携带同一原生辅助程序，因此不依赖系统 .NET 8，且保留用户设置和日志。
+
+首次安装要求可写的空本地目录；`installation.ini` 标记安装根目录归属，避免在用户误选的非空目录清理 `.staging` 或恢复无关事务。用户目录中的日志记录安装阶段耗时及失败原因；替换阶段的取消按钮和中止回调均被禁用。
 
 ### 7.9 `Watchdog`
 
