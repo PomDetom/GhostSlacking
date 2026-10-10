@@ -19,6 +19,7 @@ internal enum ApplicationUpdateStatus
     Idle,
     Checking,
     UpToDate,
+    NoCompatibleRelease,
     Available,
     Skipped,
     Downloading,
@@ -385,6 +386,12 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
                 _state = _state with { LastSuccessfulCheckUtc = _utcNow() };
                 _stateStore.Save(_state);
 
+                if (release is null)
+                {
+                    SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.NoCompatibleRelease));
+                    return Snapshot;
+                }
+
                 if (release.Version <= _currentVersion)
                 {
                     SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.UpToDate, release));
@@ -618,7 +625,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         }
     }
 
-    private async Task<UpdateRelease> GetLatestReleaseAsync(CancellationToken cancellationToken)
+    private async Task<UpdateRelease?> GetLatestReleaseAsync(CancellationToken cancellationToken)
     {
         var requestUri = _channel == UpdateChannel.Test
             ? new Uri($"{ReleasesApiUri.AbsoluteUri}?per_page={ReleasesPerPage}")
@@ -647,8 +654,18 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             throw new InvalidDataException("No valid release was found for the selected update channel.");
         }
 
+        var skippedLegacyInstaller = false;
+        var skippedInvalidRelease = false;
         foreach (var candidate in candidates)
         {
+            if (HasLegacyMsiInstaller(candidate.Release, candidate.Version!))
+            {
+                skippedLegacyInstaller = true;
+                _logger.Log(LogLevel.Info,
+                    $"Skipping legacy MSI release {candidate.Release.TagName}; signed NSIS installers are required.");
+                continue;
+            }
+
             try
             {
                 return await CreateUpdateReleaseAsync(candidate.Release, candidate.Version!, cancellationToken)
@@ -656,11 +673,29 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             }
             catch (InvalidDataException exception)
             {
+                skippedInvalidRelease = true;
                 _logger.Log(LogLevel.Warning, $"Skipping invalid GitHub release {candidate.Release.TagName}.", exception);
             }
         }
 
+        if (skippedLegacyInstaller && !skippedInvalidRelease)
+        {
+            return null;
+        }
+
         throw new InvalidDataException("No valid installable release was found.");
+    }
+
+    private static bool HasLegacyMsiInstaller(ApiRelease release, ReleaseVersion version)
+    {
+        var expectedMsiName = $"GhostSlacking-{version.Text}-win-x64.msi";
+        var hasMsi = release.Assets?.Any(asset =>
+            string.Equals(asset.Name, expectedMsiName, StringComparison.Ordinal) &&
+            string.Equals(asset.State, "uploaded", StringComparison.OrdinalIgnoreCase)) == true;
+        var hasNsis = release.Assets?.Any(asset =>
+            string.Equals(asset.Name, SignedReleaseManifest.InstallerName(version.Text), StringComparison.Ordinal) &&
+            string.Equals(asset.State, "uploaded", StringComparison.OrdinalIgnoreCase)) == true;
+        return hasMsi && !hasNsis;
     }
 
     private async Task<UpdateRelease> CreateUpdateReleaseAsync(

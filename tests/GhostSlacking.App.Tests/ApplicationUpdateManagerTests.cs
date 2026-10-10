@@ -68,6 +68,23 @@ public sealed class ApplicationUpdateManagerTests
     }
 
     [Fact]
+    public async Task Legacy_msi_releases_report_no_compatible_signed_update()
+    {
+        using var files = new TemporaryUpdateFiles();
+        var legacyRelease = TestRelease.Create("0.1.4-beta.5") with { Prerelease = true, LegacyMsi = true };
+        using var client = new HttpClient(new ReleaseHandler(legacyRelease));
+        var logger = new RecordingLogger();
+        using var manager = CreateManager(files, client, "0.1.4-beta.6", channel: UpdateChannel.Test, logger: logger);
+
+        var snapshot = await manager.CheckAsync();
+
+        Assert.Equal(ApplicationUpdateStatus.NoCompatibleRelease, snapshot.Status);
+        Assert.Null(snapshot.Release);
+        Assert.NotNull(snapshot.LastSuccessfulCheckUtc);
+        Assert.Contains(logger.Messages, message => message.Contains("legacy MSI release", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Startup_check_queries_github_even_after_a_recent_successful_check()
     {
         using var files = new TemporaryUpdateFiles();
@@ -510,6 +527,7 @@ public sealed class ApplicationUpdateManagerTests
         bool Draft = false,
         bool Prerelease = false)
     {
+        public bool LegacyMsi { get; init; }
         public string Tag => $"v{Version}";
         public string InstallerName => SignedReleaseManifest.InstallerName(Version);
         public string Sha256 => Convert.ToHexString(SHA256.HashData(InstallerBytes));
@@ -536,7 +554,13 @@ public sealed class ApplicationUpdateManagerTests
 
         public object ApiData()
         {
-            var assets = new List<object>
+            var assets = LegacyMsi
+                ? new List<object>
+                {
+                    Asset($"GhostSlacking-{Version}-win-x64.msi", InstallerBytes.Length, null),
+                    Asset("release.json", Encoding.UTF8.GetByteCount(ManifestJson()), null)
+                }
+                : new List<object>
             {
                 Asset(InstallerName, InstallerBytes.Length, $"sha256:{Sha256.ToLowerInvariant()}"),
                 Asset("release.json", Encoding.UTF8.GetByteCount(ManifestJson()), null),

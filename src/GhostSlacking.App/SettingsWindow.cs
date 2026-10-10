@@ -1153,6 +1153,7 @@ internal sealed class SettingsWindow : AppWindow
         {
             ApplicationUpdateStatus.Checking => UiText.Text(language, "checkingUpdates"),
             ApplicationUpdateStatus.UpToDate => UiText.Text(language, "upToDate"),
+            ApplicationUpdateStatus.NoCompatibleRelease => UiText.Text(language, "noCompatibleRelease"),
             ApplicationUpdateStatus.Available => string.Format(UiText.Text(language, "updateAvailableDescription"), releaseVersion),
             ApplicationUpdateStatus.Skipped => string.Format(UiText.Text(language, "updateSkippedDescription"), releaseVersion),
             ApplicationUpdateStatus.Downloading => string.Format(UiText.Text(language, "downloadingUpdate"), snapshot.ProgressPercent ?? 0),

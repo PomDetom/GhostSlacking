@@ -720,7 +720,8 @@ internal sealed class GhostApplicationController : IDisposable
         var update = _updates.Snapshot;
         var showUpdate = update.Release is not null &&
             update.Release.Version > ReleaseVersion.Parse(update.CurrentVersion) &&
-            update.Status is not ApplicationUpdateStatus.Skipped and not ApplicationUpdateStatus.UpToDate;
+            update.Status is not ApplicationUpdateStatus.Skipped and not ApplicationUpdateStatus.UpToDate and
+                not ApplicationUpdateStatus.NoCompatibleRelease;
         _updateItem.IsVisible = showUpdate;
         _updateItem.Header = showUpdate
             ? string.Format(UiText.Text(_settings.Language, "updateAvailableTray"), update.Release!.VersionText)

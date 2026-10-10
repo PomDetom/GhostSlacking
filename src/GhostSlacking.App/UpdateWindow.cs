@@ -292,6 +292,7 @@ internal sealed class UpdateWindow : AppWindow
         {
             ApplicationUpdateStatus.Checking => UiText.Text(_language, "checkingUpdates"),
             ApplicationUpdateStatus.UpToDate => UiText.Text(_language, "upToDate"),
+            ApplicationUpdateStatus.NoCompatibleRelease => UiText.Text(_language, "noCompatibleRelease"),
             ApplicationUpdateStatus.Available => string.Format(UiText.Text(_language, "updateAvailableDescription"), snapshot.Release?.VersionText),
             ApplicationUpdateStatus.Skipped => string.Format(UiText.Text(_language, "updateSkippedDescription"), snapshot.Release?.VersionText),
             ApplicationUpdateStatus.Downloading => string.Format(UiText.Text(_language, "downloadingUpdate"), snapshot.ProgressPercent ?? 0),

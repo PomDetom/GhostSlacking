@@ -266,7 +266,7 @@ Exit
 
 ### 7.8 GitHub Releases 更新
 
-更新管理器在每次启动后异步检查更新，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`。默认 Stable 通道只检查稳定版，用户开启 Test 通道后才检查 beta/RC，并按完整 SemVer 选择版本；手动检查仍可随时发起。跳过版本只抑制完全相同版本的启动通知和托盘入口，“关于”页仍显示该版本并允许安装。下载前要求 Release 的标签、`release.json`、EXE 文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许启动 EXE。
+更新管理器在每次启动后异步检查更新，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`。默认 Stable 通道只检查稳定版，用户开启 Test 通道后才检查 beta/RC，并按完整 SemVer 选择版本；手动检查仍可随时发起。跳过版本只抑制完全相同版本的启动通知和托盘入口，“关于”页仍显示该版本并允许安装。升级格式切换期间，只有旧 MSI 资产且没有签名 NSIS 包的 Release 会被识别为旧格式并跳过；尚无兼容签名包时显示明确状态，不当作网络错误。下载前要求 Release 的标签、`release.json`、EXE 文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许启动 EXE。
 
 应用内更新仅对 HKCU 注册路径与当前程序目录一致、安装类型为 NSIS、协议版本为 2 且未提权的副本生效。安装根目录保存 `uninstall.exe` 与事务日志，`app` 保存程序，`previous` 保存待启动确认的旧程序；用户数据继续位于独立的 `%LOCALAPPDATA%\GhostSlacking`。未注册副本只打开 Releases 页面。
 
