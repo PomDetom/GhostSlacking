@@ -9,6 +9,22 @@ namespace GhostSlacking.App.Tests;
 public sealed class ApplicationUpdateManagerTests
 {
     [Fact]
+    public async Task Cached_package_modified_after_download_is_rejected_before_handoff()
+    {
+        using var files = new TemporaryUpdateFiles();
+        using var client = new HttpClient(new ReleaseHandler(TestRelease.Create("1.2.0")));
+        var launcher = new RecordingInstallerLauncher();
+        using var manager = CreateManager(files, client, "1.1.0", installerLauncher: launcher);
+        await manager.CheckAsync();
+        var path = await manager.DownloadInstallerAsync();
+        Assert.NotNull(path);
+        File.WriteAllText(path, "modified cache");
+        Assert.False(manager.BeginAutomaticInstall(path));
+        Assert.Equal(ApplicationUpdateStatus.Error, manager.Snapshot.Status);
+        Assert.Null(launcher.LastRequest);
+    }
+
+    [Fact]
     public async Task New_stable_release_is_reported_and_successful_check_is_persisted()
     {
         using var files = new TemporaryUpdateFiles();
@@ -67,7 +83,7 @@ public sealed class ApplicationUpdateManagerTests
 
         Assert.Equal(ApplicationUpdateStatus.Available, snapshot.Status);
         Assert.Equal(now, snapshot.LastSuccessfulCheckUtc);
-        Assert.Equal(3, handler.RequestCount);
+        Assert.Equal(4, handler.RequestCount);
     }
 
     [Fact]
@@ -81,7 +97,7 @@ public sealed class ApplicationUpdateManagerTests
         await manager.CheckAsync();
         await manager.CheckAsync();
 
-        Assert.Equal(6, handler.RequestCount);
+        Assert.Equal(8, handler.RequestCount);
     }
 
     [Fact]
@@ -304,7 +320,7 @@ public sealed class ApplicationUpdateManagerTests
         var notes = Assert.Single(release.ReleaseNotes);
         Assert.Null(notes.Notes.Chinese);
         Assert.Null(notes.Notes.English);
-        Assert.Contains("history could not be loaded", logger.LastMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(logger.Messages, message => message.Contains("history could not be loaded", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -380,7 +396,7 @@ public sealed class ApplicationUpdateManagerTests
         var snapshot = await manager.CheckAsync();
 
         Assert.Equal(["1.3.0", "1.2.0"], snapshot.Release?.ReleaseNotes.Select(item => item.VersionText));
-        Assert.Equal(4, handler.RequestCount);
+        Assert.Equal(5, handler.RequestCount);
     }
 
     private static GitHubApplicationUpdateManager CreateManager(
@@ -401,7 +417,8 @@ public sealed class ApplicationUpdateManagerTests
             files.UpdatesDirectory,
             currentVersion,
             installationDetector ?? (() => true),
-            channel);
+            channel,
+            TestReleaseSigning.PublicKey);
 
     private sealed class ReleaseHandler(TestRelease release) : HttpMessageHandler
     {
@@ -446,6 +463,11 @@ public sealed class ApplicationUpdateManagerTests
             {
                 return JsonResponse(Release.ManifestJson());
             }
+            if (uri?.EndsWith("/release.json.sig", StringComparison.Ordinal) == true)
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(TestReleaseSigning.Sign(Release.ManifestJson()))
+                };
 
             if (uri?.EndsWith(".sha256", StringComparison.Ordinal) == true)
             {
@@ -455,7 +477,7 @@ public sealed class ApplicationUpdateManagerTests
                 };
             }
 
-            if (uri?.EndsWith(".msi", StringComparison.Ordinal) == true)
+            if (uri?.EndsWith("-setup.exe", StringComparison.Ordinal) == true)
             {
                 InstallerRequested.TrySetResult();
                 if (PauseInstallerDownload)
@@ -489,7 +511,7 @@ public sealed class ApplicationUpdateManagerTests
         bool Prerelease = false)
     {
         public string Tag => $"v{Version}";
-        public string InstallerName => $"GhostSlacking-{Version}-win-x64.msi";
+        public string InstallerName => SignedReleaseManifest.InstallerName(Version);
         public string Sha256 => Convert.ToHexString(SHA256.HashData(InstallerBytes));
         private string DownloadRoot => $"https://github.com/PomDetom/GhostSlacking/releases/download/{Tag}";
 
@@ -517,7 +539,8 @@ public sealed class ApplicationUpdateManagerTests
             var assets = new List<object>
             {
                 Asset(InstallerName, InstallerBytes.Length, $"sha256:{Sha256.ToLowerInvariant()}"),
-                Asset("release.json", 256, null)
+                Asset("release.json", Encoding.UTF8.GetByteCount(ManifestJson()), null),
+                Asset("release.json.sig", 88, null)
             };
             if (!OmitChecksumAsset)
             {
@@ -539,7 +562,7 @@ public sealed class ApplicationUpdateManagerTests
         {
             product = "GhostSlacking",
             version = Version,
-            installerProductVersion = Version.Split('-')[0],
+            formatVersion = 2,
             channel = Version.Contains('-') ? "prerelease" : "stable",
             prerelease = Version.Contains('-'),
             architecture = "win-x64",
@@ -547,7 +570,8 @@ public sealed class ApplicationUpdateManagerTests
             {
                 file = InstallerName,
                 bytes = InstallerBytes.Length,
-                sha256 = Sha256.ToLowerInvariant()
+                sha256 = Sha256.ToLowerInvariant(),
+                kind = "nsis", scope = "currentUser"
             }
         });
 
@@ -579,11 +603,13 @@ public sealed class ApplicationUpdateManagerTests
 
     private sealed class RecordingLogger : ILogger
     {
+        public List<string> Messages { get; } = [];
         public string? LastMessage { get; private set; }
         public Exception? LastException { get; private set; }
 
         public void Log(LogLevel level, string message, Exception? exception = null)
         {
+            Messages.Add(message);
             LastMessage = message;
             LastException = exception;
         }

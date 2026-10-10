@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   package:
-    name: Build and publish MSI
+    name: Build and publish signed user EXE
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -29,6 +29,19 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
+
+      - name: Require release signing key
+        shell: pwsh
+        env:
+          GHOSTSLACKING_RELEASE_SIGNING_KEY: ${{ secrets.GHOSTSLACKING_RELEASE_SIGNING_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GHOSTSLACKING_RELEASE_SIGNING_KEY)) {
+              throw 'Configure GHOSTSLACKING_RELEASE_SIGNING_KEY before publishing a release.'
+          }
+
+      - name: Test native installer transactions
+        shell: pwsh
+        run: .\tests\Installer.Tests.ps1
 
       - name: Validate release tag and source branch
         id: version
@@ -145,6 +158,8 @@ jobs:
 
       - name: Build release package
         shell: pwsh
+        env:
+          GHOSTSLACKING_RELEASE_SIGNING_KEY: ${{ secrets.GHOSTSLACKING_RELEASE_SIGNING_KEY }}
         run: .\build-release.ps1 -Version '${{ steps.version.outputs.value }}'
 
       - name: Upload build records
@@ -179,11 +194,12 @@ jobs:
           IS_PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           $releaseDirectory = "artifacts\releases\$env:RELEASE_VERSION"
-          $installer = "$releaseDirectory\GhostSlacking-$env:RELEASE_VERSION-win-x64.msi"
+          $installer = "$releaseDirectory\GhostSlacking-$env:RELEASE_VERSION-win-x64-setup.exe"
           $checksum = "$installer.sha256"
           $manifest = "$releaseDirectory\release.json"
+          $signature = "$manifest.sig"
           $args = @(
-              'release', 'create', $env:RELEASE_TAG, $installer, $checksum, $manifest,
+              'release', 'create', $env:RELEASE_TAG, $installer, $checksum, $manifest, $signature,
               '--verify-tag', '--notes-file', $env:RELEASE_NOTES_FILE,
               '--title', "GhostSlacking $env:RELEASE_VERSION"
           )

@@ -44,6 +44,7 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
 
     public Guid SessionId { get; }
     public bool IsConnected { get; private set; }
+    public bool ShutdownSucceeded { get; private set; }
     internal int? WatchdogProcessId => _watchdogProcess?.Id;
 
     public void Start()
@@ -279,12 +280,16 @@ public sealed class NamedPipeWatchdogClient : IWatchdogClient
             return;
         }
 
-        _watchdogExitWaitAttempted = true;
         try
         {
             if (!_watchdogProcess.WaitForExit(timeout))
             {
                 _logger.Log(LogLevel.Error, $"Watchdog did not exit within {timeout.TotalSeconds:0} seconds after the main process began shutdown.");
+            }
+            else
+            {
+                _watchdogExitWaitAttempted = true;
+                ShutdownSucceeded = _watchdogProcess.ExitCode == 0;
             }
         }
         catch (InvalidOperationException exception)

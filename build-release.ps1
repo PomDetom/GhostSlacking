@@ -7,11 +7,13 @@ param(
     [string]$Increment,
 
     [switch]$SkipTests,
-    [switch]$OpenOutput
+    [switch]$OpenOutput,
+    [string]$SigningKeyPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'Use PowerShell 7 (pwsh) to build and sign releases.' }
 
 $repositoryRoot = $PSScriptRoot
 $solutionPath = Join-Path $repositoryRoot 'GhostSlacking.sln'
@@ -38,9 +40,9 @@ function Get-AutomaticVersion {
     $knownVersions = [System.Collections.Generic.List[version]]::new()
 
     if (Test-Path -LiteralPath $installerOutputRoot) {
-        Get-ChildItem -LiteralPath $installerOutputRoot -File -Filter 'GhostSlacking-*-win-x64.msi' |
+        Get-ChildItem -LiteralPath $installerOutputRoot -File -Filter 'GhostSlacking-*-win-x64-setup.exe' |
             ForEach-Object {
-                if ($_.BaseName -match '^GhostSlacking-(\d+\.\d+\.\d+)-win-x64$') {
+                if ($_.BaseName -match '^GhostSlacking-(\d+\.\d+\.\d+)-win-x64-setup$') {
                     $knownVersions.Add([version]$Matches[1])
                 }
             }
@@ -63,13 +65,7 @@ function Get-AutomaticVersion {
         return (Get-NextVersion -CurrentVersion $latestVersion -Part $IncrementPart).ToString(3)
     }
 
-    $installerProject = Join-Path $repositoryRoot 'installer\GhostSlacking.Installer.wixproj'
-    $projectText = Get-Content -LiteralPath $installerProject -Raw
-    if ($projectText -notmatch '<ProductVersion[^>]*>(\d+\.\d+\.\d+)</ProductVersion>') {
-        throw '无法从安装器项目确定初始版本，请使用 -Version 指定三段式版本号。'
-    }
-
-    return ([version]$Matches[1]).ToString(3)
+    return (Get-Content -LiteralPath (Join-Path $repositoryRoot 'installer/installer-version.txt') -Raw).Trim()
 }
 
 function Select-PackagingStrategy {
@@ -259,9 +255,9 @@ else {
 $installerVersion = $packageVersion.Split('-')[0]
 
 $releaseDirectory = Join-Path $releaseOutputRoot $packageVersion
-$sourceMsi = Join-Path $installerOutputRoot "GhostSlacking-$installerVersion-win-x64.msi"
-$releaseMsi = Join-Path $releaseDirectory "GhostSlacking-$packageVersion-win-x64.msi"
-$checksumPath = "$releaseMsi.sha256"
+$sourceInstaller = Join-Path $installerOutputRoot "GhostSlacking-$packageVersion-win-x64-setup.exe"
+$releaseInstaller = Join-Path $releaseDirectory "GhostSlacking-$packageVersion-win-x64-setup.exe"
+$checksumPath = "$releaseInstaller.sha256"
 $manifestPath = Join-Path $releaseDirectory 'release.json'
 $logPath = Join-Path $releaseDirectory 'build.log'
 
@@ -295,7 +291,7 @@ try {
             Write-Host "`n==> 已跳过自动化测试" -ForegroundColor Yellow
         }
 
-        Invoke-BuildStep -Name '发布应用并生成 MSI' -Action {
+        Invoke-BuildStep -Name '发布应用并生成当前用户 EXE' -Action {
             # Run the existing script in a child process so this tool's strict
             # mode cannot alter its established execution semantics.
             & $powerShellExecutable -NoLogo -NoProfile -ExecutionPolicy Bypass `
@@ -306,21 +302,21 @@ try {
         Pop-Location
     }
 
-    if (-not (Test-Path -LiteralPath $sourceMsi)) {
-        throw "打包脚本未生成预期文件：$sourceMsi"
+    if (-not (Test-Path -LiteralPath $sourceInstaller)) {
+        throw "打包脚本未生成预期文件：$sourceInstaller"
     }
 
-    Copy-Item -LiteralPath $sourceMsi -Destination $releaseMsi -Force
-    $msiFile = Get-Item -LiteralPath $releaseMsi
-    $hash = Get-FileHash -LiteralPath $releaseMsi -Algorithm SHA256
-    "$($hash.Hash.ToLowerInvariant())  $($msiFile.Name)" |
+    Copy-Item -LiteralPath $sourceInstaller -Destination $releaseInstaller -Force
+    $installerFile = Get-Item -LiteralPath $releaseInstaller
+    $hash = Get-FileHash -LiteralPath $releaseInstaller -Algorithm SHA256
+    "$($hash.Hash.ToLowerInvariant())  $($installerFile.Name)" |
         Set-Content -LiteralPath $checksumPath -Encoding ascii
 
     $git = Get-GitMetadata
     $manifest = [ordered]@{
         product = 'GhostSlacking'
         version = $packageVersion
-        installerProductVersion = $installerVersion
+        formatVersion = 2
         channel = if ($packageVersion.Contains('-')) { 'prerelease' } else { 'stable' }
         prerelease = $packageVersion.Contains('-')
         tag = "v$packageVersion"
@@ -331,15 +327,19 @@ try {
         gitDirty = $git.IsDirty
         testsSkipped = $selectedSkipTests
         installer = [ordered]@{
-            file = $msiFile.Name
-            bytes = $msiFile.Length
+            kind = 'nsis'
+            scope = 'currentUser'
+            file = $installerFile.Name
+            bytes = $installerFile.Length
             sha256 = $hash.Hash.ToLowerInvariant()
         }
     }
     $manifest | ConvertTo-Json -Depth 4 |
         Set-Content -LiteralPath $manifestPath -Encoding utf8
 
-    Write-Host "`n打包成功：$releaseMsi" -ForegroundColor Green
+    & (Join-Path $repositoryRoot 'scripts/sign-release.ps1') -ManifestPath $manifestPath -PrivateKeyPath $SigningKeyPath
+    & (Join-Path $repositoryRoot 'scripts/validate-release.ps1') -ReleaseDirectory $releaseDirectory
+    Write-Host "`n打包成功：$releaseInstaller" -ForegroundColor Green
     Write-Host "SHA256：$($hash.Hash.ToLowerInvariant())"
     Write-Host "清单：  $manifestPath"
     Write-Host "日志：  $logPath"
@@ -354,4 +354,4 @@ if ($selectedOpenOutput) {
     Start-Process explorer.exe -ArgumentList $releaseDirectory
 }
 
-Get-Item -LiteralPath $releaseMsi
+Get-Item -LiteralPath $releaseInstaller

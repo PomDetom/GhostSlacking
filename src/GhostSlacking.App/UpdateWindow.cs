@@ -257,7 +257,7 @@ internal sealed class UpdateWindow : AppWindow
         _progress.Value = snapshot.ProgressPercent ?? 0;
 
         var busy = snapshot.Status is ApplicationUpdateStatus.Checking or
-            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying;
+            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Preparing;
         var updateKnown = release is not null && release.Version > ReleaseVersion.Parse(snapshot.CurrentVersion);
         _installButton.IsVisible = updateKnown;
         _installButton.IsEnabled = updateKnown &&
@@ -296,6 +296,7 @@ internal sealed class UpdateWindow : AppWindow
             ApplicationUpdateStatus.Skipped => string.Format(UiText.Text(_language, "updateSkippedDescription"), snapshot.Release?.VersionText),
             ApplicationUpdateStatus.Downloading => string.Format(UiText.Text(_language, "downloadingUpdate"), snapshot.ProgressPercent ?? 0),
             ApplicationUpdateStatus.Verifying => UiText.Text(_language, "verifyingUpdate"),
+            ApplicationUpdateStatus.Preparing => UiText.Text(_language, "updatePreparing"),
             ApplicationUpdateStatus.Ready => UiText.Text(_language, "startingInstaller"),
             ApplicationUpdateStatus.Error => UiText.Text(_language, "updateFailed"),
             _ => UiText.Text(_language, "updateNotChecked")

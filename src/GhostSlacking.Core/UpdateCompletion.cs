@@ -6,14 +6,16 @@ public enum UpdateCompletionStatus
 {
     Succeeded,
     Cancelled,
-    Failed
+    Failed,
+    LaunchFailed
 }
 
 public sealed record UpdateCompletionResult(
     string Version,
     UpdateCompletionStatus Status,
     int? InstallerExitCode,
-    DateTimeOffset CompletedAtUtc);
+    DateTimeOffset CompletedAtUtc,
+    string? FailureStage = null);
 
 public sealed class UpdateCompletionStore
 {
@@ -83,13 +85,7 @@ public sealed class UpdateCompletionStore
         }
     }
 
-    private static bool IsValidVersion(string versionText) =>
-        Version.TryParse(versionText, out var version) &&
-        version.Major >= 0 &&
-        version.Minor >= 0 &&
-        version.Build >= 0 &&
-        version.Revision < 0 &&
-        string.Equals(version.ToString(3), versionText, StringComparison.Ordinal);
+    private static bool IsValidVersion(string versionText) => ReleaseVersion.TryParse(versionText, out _);
 
     private static void TryDelete(string path)
     {

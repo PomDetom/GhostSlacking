@@ -122,7 +122,7 @@ function Get-ReleaseVersion([string]$VersionText, [string]$Name) {
         default { 0 }
     }
     if ($Matches[4] -and $preReleaseNumber -gt $maximumPreReleaseNumber) {
-        throw "$Name prerelease number exceeds the MSI file-version range: $VersionText"
+        throw "$Name prerelease number exceeds the Windows file-version range: $VersionText"
     }
 
     return [pscustomobject]@{

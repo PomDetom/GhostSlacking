@@ -30,6 +30,7 @@ internal sealed class GhostApplicationController : IDisposable
     private readonly RecoveryManager _recovery;
     private readonly GhostCoordinator _coordinator;
     private readonly IWatchdogClient? _watchdog;
+    private readonly InstallationControlServer _installationControl;
     private readonly Win32WindowPicker _picker;
     private readonly Win32MessageWindow _messageWindow;
     private readonly IDisplayRefreshRateProvider _displayRefreshRates;
@@ -139,6 +140,7 @@ internal sealed class GhostApplicationController : IDisposable
         _coordinator.WindowSelected += OnWindowSelected;
         _coordinator.TargetClosed += (_, _) => UpdateTrayStatus();
         _watchdog = TryStartWatchdog();
+        _installationControl = new InstallationControlServer(AppContext.BaseDirectory, OnCloseRequested, _logger);
         _recovery.ProfilesChanged += OnRecoveryProfilesChanged;
         PublishRecoveryManifest();
 
@@ -167,6 +169,9 @@ internal sealed class GhostApplicationController : IDisposable
             $"UpdateCompletion status={updateResult.Status} version={updateResult.Version} exitCode={updateResult.InstallerExitCode}");
         switch (updateResult.Status)
         {
+            case UpdateCompletionStatus.LaunchFailed:
+                ShowError(UiText.Text(_settings.Language, "updateLaunchFailed"), UserNotificationSource.Error);
+                break;
             case UpdateCompletionStatus.Succeeded:
                 ShowInfo(string.Format(
                     UiText.Text(_settings.Language, "updateCompleted"),
@@ -814,7 +819,7 @@ internal sealed class GhostApplicationController : IDisposable
     private void OnCloseRequested() => Dispatcher.UIThread.Post(() => ExitApplication(restoreAll: true));
 
     private void OnUpdateInstallHandoffStarted(object? sender, EventArgs args) =>
-        Dispatcher.UIThread.Post(() => ExitApplication(restoreAll: true));
+        Dispatcher.UIThread.Post(() => ShowInfo(UiText.Text(_settings.Language, "updatePreparing")));
 
     public void Dispose()
     {
@@ -871,6 +876,9 @@ internal sealed class GhostApplicationController : IDisposable
         }
 
         _watchdog?.Dispose();
+        _installationControl.CompleteShutdown(restoreReport is not null && !restoreReport.HasFailures &&
+            (_watchdog is null || _watchdog is NamedPipeWatchdogClient { ShutdownSucceeded: true }));
+        _installationControl.Dispose();
         _messageWindow.CloseRequested -= OnCloseRequested;
         _messageWindow.DisplayConfigurationChanged -= OnDisplayConfigurationChanged;
         _messageWindow.Dispose();

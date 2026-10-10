@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using GhostSlacking.Core;
+using GhostSlacking.Platform;
 using Microsoft.Win32;
 
 namespace GhostSlacking.App;
@@ -23,6 +24,7 @@ internal enum ApplicationUpdateStatus
     Downloading,
     Verifying,
     Ready,
+    Preparing,
     Error
 }
 
@@ -50,7 +52,9 @@ internal sealed record UpdateRelease(
     UpdateAsset Manifest,
     string ExpectedSha256,
     IReadOnlyList<ReleaseNotesEntry> ReleaseNotes,
-    bool ReleaseHistoryIncomplete = false);
+    bool ReleaseHistoryIncomplete = false,
+    byte[]? ManifestBytes = null,
+    string? SignatureText = null);
 
 internal sealed record ApplicationUpdateSnapshot(
     ApplicationUpdateStatus Status,
@@ -212,6 +216,8 @@ internal sealed class AutomatedUpdateLauncher(
                 initialState: false,
                 EventResetMode.AutoReset,
                 readyEventName);
+            using var authorizationEvent = new EventWaitHandle(false, EventResetMode.AutoReset,
+                readyEventName.Replace(".Ready.", ".Go.", StringComparison.Ordinal));
             var startInfo = new ProcessStartInfo
             {
                 FileName = executablePath,
@@ -234,11 +240,11 @@ internal sealed class AutomatedUpdateLauncher(
 
             if (readyEvent.WaitOne(ReadyTimeout))
             {
+                authorizationEvent.Set();
                 return true;
             }
 
             logger.Log(LogLevel.Warning, "The automatic updater did not acknowledge the handoff.");
-            TryStop(process);
             return false;
 
             void AddArgument(string name, string value)
@@ -269,19 +275,6 @@ internal sealed class AutomatedUpdateLauncher(
         }
     }
 
-    private static void TryStop(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-        }
-    }
 }
 
 internal static partial class ApplicationVersionInfo
@@ -321,10 +314,12 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly string _updatesDirectory;
     private readonly ReleaseVersion _currentVersion;
+    private readonly string? _releasePublicKey;
     private UpdateChannel _channel;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private UpdateState _state;
     private bool _disposed;
+    private long _phaseStartedAt = Stopwatch.GetTimestamp();
 
     public GitHubApplicationUpdateManager(
         ILogger logger,
@@ -336,9 +331,11 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         string? updatesDirectory = null,
         string? currentVersion = null,
         Func<bool>? installationDetector = null,
-        UpdateChannel channel = UpdateChannel.Stable)
+        UpdateChannel channel = UpdateChannel.Stable,
+        string? releasePublicKey = null)
     {
         _logger = logger;
+        _releasePublicKey = releasePublicKey;
         _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GhostSlacking", currentVersion ?? ApplicationVersionInfo.Current()));
@@ -496,6 +493,8 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             }
 
             File.Move(partialPath, installerPath, overwrite: true);
+            await File.WriteAllBytesAsync(Path.Combine(releaseDirectory, "release.json"), release.ManifestBytes!, cancellationToken);
+            await File.WriteAllTextAsync(Path.Combine(releaseDirectory, "release.json.sig"), release.SignatureText!, cancellationToken);
             partialPath = null;
             SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Ready, release, 100));
             return installerPath;
@@ -532,7 +531,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         try
         {
             var release = Snapshot.Release;
-            if (!CanInstallUpdates || release is null || !File.Exists(installerPath))
+            if (!CanInstallUpdates || Snapshot.Status != ApplicationUpdateStatus.Ready || release is null || !File.Exists(installerPath))
             {
                 return false;
             }
@@ -551,6 +550,8 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             }
 
             using var process = Process.GetCurrentProcess();
+            var signed = SignedReleaseManifest.Verify(release.ManifestBytes!, release.SignatureText!, _releasePublicKey);
+            using var verifiedInstaller = signed.OpenVerifiedInstaller(fullInstallerPath);
             var request = new UpdateInstallRequest(
                 fullInstallerPath,
                 release.VersionText,
@@ -559,6 +560,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
                 process.StartTime.ToUniversalTime().Ticks);
             if (_installerLauncher.Launch(request))
             {
+                SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Preparing, release));
                 InstallHandoffStarted?.Invoke(this, EventArgs.Empty);
                 return true;
             }
@@ -566,7 +568,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, release));
             return false;
         }
-        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             _logger.Log(LogLevel.Warning, "The automatic update handoff could not be started.", exception);
             SetSnapshot(CreateSnapshot(ApplicationUpdateStatus.Error, Snapshot.Release));
@@ -673,36 +675,30 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         }
 
         var versionText = releaseVersion.Text;
-        var installerName = $"GhostSlacking-{versionText}-win-x64.msi";
+        var installerName = SignedReleaseManifest.InstallerName(versionText);
         var installer = FindAsset(apiRelease.Assets, installerName);
         var checksum = FindAsset(apiRelease.Assets, $"{installerName}.sha256");
         var manifest = FindAsset(apiRelease.Assets, "release.json");
+        var signature = FindAsset(apiRelease.Assets, "release.json.sig");
         if (installer.Size > MaximumInstallerBytes || checksum.Size > MaximumChecksumBytes ||
-            manifest.Size > MaximumManifestBytes)
+            manifest.Size > MaximumManifestBytes || signature.Size > MaximumChecksumBytes)
         {
             throw new InvalidDataException("One or more release assets exceed the allowed size.");
         }
         ValidateDownloadUri(installer.DownloadUrl, apiRelease.TagName);
         ValidateDownloadUri(checksum.DownloadUrl, apiRelease.TagName);
         ValidateDownloadUri(manifest.DownloadUrl, apiRelease.TagName);
+        ValidateDownloadUri(signature.DownloadUrl, apiRelease.TagName);
 
-        var manifestText = await ReadSmallTextAssetAsync(
+        var manifestBytes = await ReadSmallBytesAssetAsync(
                 manifest,
                 MaximumManifestBytes,
                 cancellationToken)
             .ConfigureAwait(false);
-        var releaseManifest = JsonSerializer.Deserialize<ReleaseManifest>(manifestText, JsonOptions) ??
-            throw new InvalidDataException("The release manifest is empty.");
-        var hasExtendedManifest = releaseManifest.InstallerProductVersion is not null ||
-            releaseManifest.Channel is not null ||
-            releaseManifest.Prerelease;
-        var versionMetadataMatches = !hasExtendedManifest && !releaseVersion.IsPreRelease ||
-            string.Equals(releaseManifest.InstallerProductVersion, releaseVersion.BaseVersionText, StringComparison.Ordinal) &&
-            string.Equals(releaseManifest.Channel, releaseVersion.IsPreRelease ? "prerelease" : "stable", StringComparison.Ordinal) &&
-            releaseManifest.Prerelease == releaseVersion.IsPreRelease;
+        var signatureText = await ReadSmallTextAssetAsync(signature, MaximumChecksumBytes, cancellationToken).ConfigureAwait(false);
+        var releaseManifest = SignedReleaseManifest.Verify(manifestBytes, signatureText, _releasePublicKey);
         if (!string.Equals(releaseManifest.Product, "GhostSlacking", StringComparison.Ordinal) ||
             !string.Equals(releaseManifest.Version, versionText, StringComparison.Ordinal) ||
-            !versionMetadataMatches ||
             !string.Equals(releaseManifest.Architecture, "win-x64", StringComparison.Ordinal) ||
             releaseManifest.Installer is null ||
             !string.Equals(releaseManifest.Installer.File, installerName, StringComparison.Ordinal) ||
@@ -739,7 +735,9 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             manifest,
             expectedHash,
             releaseNotes,
-            historyIncomplete);
+            historyIncomplete,
+            manifestBytes,
+            signatureText);
     }
 
     private async Task<(IReadOnlyList<ReleaseNotesEntry> Notes, bool Incomplete)> GetReleaseNotesHistoryAsync(
@@ -932,6 +930,10 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
     }
 
     private async Task<string> ReadSmallTextAssetAsync(
+        UpdateAsset asset, long maximumBytes, CancellationToken cancellationToken) =>
+        Encoding.UTF8.GetString(await ReadSmallBytesAssetAsync(asset, maximumBytes, cancellationToken));
+
+    private async Task<byte[]> ReadSmallBytesAssetAsync(
         UpdateAsset asset,
         long maximumBytes,
         CancellationToken cancellationToken)
@@ -965,7 +967,7 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
             destination.Write(buffer, 0, read);
         }
 
-        return Encoding.UTF8.GetString(destination.GetBuffer(), 0, checked((int)destination.Length));
+        return destination.ToArray();
     }
 
     private static string ParseChecksum(string content, string installerName)
@@ -981,6 +983,12 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
 
     private void SetSnapshot(ApplicationUpdateSnapshot snapshot)
     {
+        if (Snapshot.Status != snapshot.Status)
+        {
+            _logger.Log(LogLevel.Info,
+                $"UpdatePhase {Snapshot.Status} elapsedMs={Stopwatch.GetElapsedTime(_phaseStartedAt).TotalMilliseconds:F0} next={snapshot.Status}");
+            _phaseStartedAt = Stopwatch.GetTimestamp();
+        }
         Snapshot = snapshot;
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -995,20 +1003,9 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
     {
         try
         {
-            using var localMachine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-            using var key = localMachine.OpenSubKey("Software\\GhostSlacking");
-            var installedLocation = key?.GetValue("InstallLocation") as string;
-            if (string.IsNullOrWhiteSpace(installedLocation))
-            {
-                return false;
-            }
-
-            return string.Equals(
-                Path.TrimEndingDirectorySeparator(Path.GetFullPath(installedLocation)),
-                Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory)),
-                StringComparison.OrdinalIgnoreCase);
+            return UserInstallation.Matches(AppContext.BaseDirectory);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException)
         {
             return false;
         }
@@ -1096,14 +1093,4 @@ internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdat
         [property: JsonPropertyName("browser_download_url")] string? BrowserDownloadUrl,
         string? Digest);
 
-    private sealed record ReleaseManifest(
-        string? Product,
-        string? Version,
-        string? InstallerProductVersion,
-        string? Channel,
-        bool Prerelease,
-        string? Architecture,
-        ReleaseInstallerManifest? Installer);
-
-    private sealed record ReleaseInstallerManifest(string? File, long Bytes, string? Sha256);
 }
