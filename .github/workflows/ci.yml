@@ -39,6 +39,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # GitHub branch updates create merge subjects outside the Conventional Commits format.
           $subjects = @(git log --no-merges --format=%s "$env:PR_BASE_SHA..$env:PR_HEAD_SHA")
           if ($LASTEXITCODE -ne 0 -or $subjects.Count -eq 0) {
               throw "Could not determine pull request commits."
