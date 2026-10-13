@@ -891,16 +891,21 @@ internal sealed class GhostApplicationController : IDisposable
     private IWatchdogClient? TryStartWatchdog()
     {
         var executable = Path.Combine(AppContext.BaseDirectory, "GhostSlacking.Watchdog.exe");
-        var client = new NamedPipeWatchdogClient(executable, _logger);
+        return TryStartWatchdog(new NamedPipeWatchdogClient(executable, _logger), _logger);
+    }
+
+    internal static IWatchdogClient? TryStartWatchdog(IWatchdogClient client, ILogger logger)
+    {
         try
         {
             client.Start();
             return client;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+            System.ComponentModel.Win32Exception or OperationCanceledException)
         {
             client.Dispose();
-            _logger.Log(LogLevel.Error, "Watchdog could not be started; crash recovery is unavailable.", exception);
+            logger.Log(LogLevel.Error, "Watchdog could not be started; crash recovery is unavailable.", exception);
             return null;
         }
     }
