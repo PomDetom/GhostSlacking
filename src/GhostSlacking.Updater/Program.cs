@@ -1,5 +1,6 @@
 using GhostSlacking.Core;
 using Microsoft.Win32;
+using GhostSlacking.Platform;
 
 namespace GhostSlacking.Updater;
 
@@ -23,10 +24,19 @@ internal static class Program
                 return 2;
             }
 
-            using var readyEvent = EventWaitHandle.OpenExisting(options.ReadyEventName);
-            readyEvent.Set();
-            return new UpdaterEngine(new WindowsUpdaterRuntime(), new UpdateCompletionStore(logger: logger), logger)
-                .Run(options);
+            if (UserInstallation.IsElevated) return 2;
+            using var mutex = new Mutex(false, @"Local\GhostSlacking.Update." + InstallationControlServer.PipeName(installedLocation!));
+            try { if (!mutex.WaitOne(0)) return 9; }
+            catch (AbandonedMutexException) { }
+            try
+            {
+                using var readyEvent = EventWaitHandle.OpenExisting(options.ReadyEventName);
+                using var authorizationEvent = EventWaitHandle.OpenExisting(
+                    options.ReadyEventName.Replace(".Ready.", ".Go.", StringComparison.Ordinal));
+                return new UpdaterEngine(new WindowsUpdaterRuntime(), new UpdateCompletionStore(logger: logger), logger)
+                    .Run(options, () => { readyEvent.Set(); return authorizationEvent.WaitOne(TimeSpan.FromSeconds(5)); });
+            }
+            finally { mutex.ReleaseMutex(); }
         }
         catch (Exception exception)
         {
@@ -37,8 +47,6 @@ internal static class Program
 
     private static string? GetInstalledLocation()
     {
-        using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-        using var key = baseKey.OpenSubKey(@"Software\GhostSlacking");
-        return key?.GetValue("InstallLocation") as string;
+        return UserInstallation.Location();
     }
 }

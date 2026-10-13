@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\GhostSlacking.Core\GhostSlacking.Core.csproj" />
+    <ProjectReference Include="..\GhostSlacking.Platform\GhostSlacking.Platform.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="GhostSlacking.App.Tests" />

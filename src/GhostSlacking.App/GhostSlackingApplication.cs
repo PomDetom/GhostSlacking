@@ -13,6 +13,7 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
     private GhostApplicationController? _controller;
     private IDisposable? _startupNotificationRegistration;
     private IDisposable? _updateCheckRegistration;
+    private Task _startupHandshake = Task.CompletedTask;
 
     public override void Initialize()
     {
@@ -31,6 +32,18 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
         {
             lifetime.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
             _controller = new GhostApplicationController(lifetime);
+            _startupHandshake = Task.Run(async () =>
+            {
+                try
+                {
+                    var args = lifetime.Args ?? [];
+                    var confirmed = await GhostSlacking.Platform.UpdateStartupHandshake.ReportAsync(args, ApplicationVersionInfo.Current());
+                    if (confirmed || !args.Contains("--update-session"))
+                        GhostSlacking.Platform.UserInstallation.ConfirmStarted(AppContext.BaseDirectory);
+                }
+                catch (Exception exception) when (exception is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+                { System.Diagnostics.Debug.WriteLine(exception); }
+            });
             lifetime.Exit += OnExit;
             Dispatcher.UIThread.UnhandledException += OnUnhandledException;
         }
@@ -50,9 +63,10 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
         }
     }
 
-    private void ShowStartupNotification()
+    private async void ShowStartupNotification()
     {
         _startupNotificationRegistration = null;
+        await _startupHandshake;
         _controller?.ShowStartupNotification();
     }
 

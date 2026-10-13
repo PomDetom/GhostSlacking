@@ -5,7 +5,13 @@ where pwsh.exe >nul 2>nul
 if %errorlevel% equ 0 (
     set "POWERSHELL_EXE=pwsh.exe"
 ) else (
-    set "POWERSHELL_EXE=powershell.exe"
+    if exist "%ProgramFiles%\PowerShell\7\pwsh.exe" (
+        set "POWERSHELL_EXE=%ProgramFiles%\PowerShell\7\pwsh.exe"
+    ) else (
+        echo PowerShell 7 is required to build and sign releases. Install it and retry.
+        pause
+        exit /b 1
+    )
 )
 
 "%POWERSHELL_EXE%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-release.ps1" -OpenOutput %*

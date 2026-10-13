@@ -25,7 +25,9 @@ GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<版本>-win-x64.msi`，然后按照安装向导完成安装。
+从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<完整版本>-win-x64-setup.exe`，然后按照安装向导完成安装。安装默认仅属于当前用户，程序位于 `%LOCALAPPDATA%\Programs\GhostSlacking\app`，无需为 GhostSlacking 安装或更新授予管理员权限。
+
+旧 MSI 用户须先安全退出程序，在 Windows“已安装的应用”中卸载所有旧版本，再运行新 EXE；用户设置和日志保留。旧 MSI 卸载仍可能出现原有等待，新安装器不会自动调用它。首次安装仍需系统 .NET 8 Runtime x64，安装器不捆绑或自动下载运行时。
 
 GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。
 
@@ -54,11 +56,17 @@ GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。
 
 ## 软件更新
 
-应用会在启动后检查 GitHub Releases。发现新版本时，可点击通知、托盘入口或“关于”页查看中英双语更新说明。点击“下载并安装”后，应用会自动完成下载、校验、安装和重新启动；安装期间仍需确认 Windows UAC 提示。
+应用默认只检查稳定版 GitHub Releases。可以在“关于”页开启测试通道以接收 beta/RC 版本；发现新版本时，可点击通知、托盘入口或“关于”页查看中英双语更新说明。点击“下载并安装”后，应用会自动完成下载、校验、安装和重新启动；更新先验证发布签名和安装包 SHA256，再恢复受控窗口、等待 App 与 Watchdog 安全退出，以被动进度安装并确认新版本启动。正在以管理员身份运行时，请退出后以普通用户运行安装器。
+
+## Git 与发布
+
+日常开发通过独立功能 PR 合入 `dev`，稳定发布通过 `dev` → `master` 发布 PR。测试版只在需要时从 `dev` 创建 `v0.2.0-beta.1` 标签，稳定版在 `master` 上创建 `v0.2.0` 标签；标签工作流才会构建并发布签名 EXE。
+
+完整流程见 [Git 与发布流程](docs/DEVELOPMENT_WORKFLOW.md)。
 
 ## 从源码运行
 
-需要 Windows 10/11 x64、Git 和 [.NET 8 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。
+需要 Windows 10/11 x64、Git 和 [.NET 8 或更新版本的 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。CI 使用 .NET 8 验证最低支持版本。
 
 ```powershell
 git clone https://github.com/PomDetom/GhostSlacking.git
@@ -74,10 +82,12 @@ dotnet run --project src/GhostSlacking.App --configuration Debug
 dotnet test GhostSlacking.sln --configuration Debug
 ```
 
-## 更多信息
+## 开发导航
 
-- [技术架构](docs/ARCHITECTURE.md)
-- [实施计划](docs/IMPLEMENTATION_PLAN.md)
-- [实施状态](docs/IMPLEMENTATION_STATUS.md)
+- [AGENTS.md](AGENTS.md)：仓库规则、项目职责和改动面对应的检查。
+- [技术架构](docs/ARCHITECTURE.md)：当前运行结构、模块边界和恢复不变量。
+- [实施状态](docs/IMPLEMENTATION_STATUS.md)：已实现能力与尚未验证的事项。
+- [实施计划](docs/IMPLEMENTATION_PLAN.md)：阶段目标、验收条件和 Windows 手工矩阵。
+- [Git 与发布流程](docs/DEVELOPMENT_WORKFLOW.md)：分支、PR、仓库设置与版本发布规则。
 
 配置和日志位于 `%LOCALAPPDATA%\GhostSlacking`。遇到异常时，请先按 `Ctrl+Shift+Alt+R` 尝试恢复全部窗口。
