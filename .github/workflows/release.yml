@@ -91,6 +91,7 @@ jobs:
           $previousReleaseTag = @($publishedTagJson | ConvertFrom-Json |
               ForEach-Object { [string]$_.tagName } |
               Where-Object { $_ -ne $tag -and $_ -match '^v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$' } |
+              Where-Object { $isPrerelease -or $_ -notmatch '-' } |
               Select-Object -First 1)
           $previousNotesTag = if ($previousReleaseTag.Count -gt 0) { $previousReleaseTag[0] } else { '' }
 
