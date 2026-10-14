@@ -30,6 +30,8 @@ internal sealed class SettingsWindow : AppWindow
     private static readonly TimeSpan SavedStatusDuration = TimeSpan.FromMilliseconds(2500);
     private static readonly AppSettings DefaultSettings = new();
     private readonly SolidColorBrush _canvasBrush = new();
+    private readonly SolidColorBrush _panelBrush = new();
+    private readonly SolidColorBrush _selectionBrush = new();
     private readonly SolidColorBrush _cardBrush = new();
     private readonly SolidColorBrush _fieldBrush = new();
     private readonly SolidColorBrush _fieldBorderBrush = new();
@@ -47,6 +49,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly Action? _openUpdateWindow;
     private readonly List<(TextBlock Text, string Key)> _localizedText = [];
     private readonly List<(Button Button, string Key)> _localizedButtons = [];
+    private readonly List<(ColumnDefinition Column, bool Hotkey)> _editorColumns = [];
     private readonly Dictionary<string, Control> _pages = [];
     private readonly SettingsEditState _editState;
     private readonly NavigationView _navigation;
@@ -57,7 +60,8 @@ internal sealed class SettingsWindow : AppWindow
     private readonly TextBlock _pageTitle;
     private readonly TextBlock _pageDescription;
     private readonly ContentControl _pageHost;
-    private readonly InfoBar _infoBar;
+    private readonly SettingsSaveBar _saveBar;
+    private readonly Grid _contentShell = new();
     private readonly NumberBox _diameter;
     private readonly NumberBox _diameterStep;
     private readonly NumberBox _softEdgeWidth;
@@ -143,6 +147,7 @@ internal sealed class SettingsWindow : AppWindow
         MinHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = _canvasBrush;
+        CornerRadius = new CornerRadius(12);
         Icon = AppIcon.TitleBarImage;
 
         _diameter = CreateNumberBox(settings.RevealDiameterPx, 64, 800, 8);
@@ -201,27 +206,23 @@ internal sealed class SettingsWindow : AppWindow
 
         _pageTitle = new TextBlock
         {
-            FontSize = 28,
-            FontWeight = FontWeight.SemiBold,
+            FontSize = 26,
+            FontWeight = FontWeight.Medium,
             Foreground = _primaryBrush
         };
         _pageDescription = new TextBlock
         {
-            FontSize = 14,
+            FontSize = 13,
             Foreground = _secondaryBrush,
             Margin = new Thickness(0, 6, 0, 0),
             TextWrapping = TextWrapping.Wrap
         };
         _pageHost = new ContentControl();
-        _infoBar = new InfoBar
-        {
-            IsOpen = false,
-            IsClosable = false,
-            Height = 32,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center,
-            ClipToBounds = true
-        };
+        _saveBar = new SettingsSaveBar(_cardBrush, _fieldBorderBrush, _primaryBrush);
+        _saveBar.SetLanguage(settings.Language);
+        _saveBar.CancelRequested += (_, _) => CancelSettingsEdits();
+        _saveBar.SaveRequested += (_, _) => OnSaveClicked(null, new RoutedEventArgs());
+        _saveBar.PropertyChanged += OnSaveBarPropertyChanged;
         _savedStatusTimer = new DispatcherTimer { Interval = SavedStatusDuration };
         _savedStatusTimer.Tick += OnSavedStatusTimerTick;
 
@@ -237,11 +238,24 @@ internal sealed class SettingsWindow : AppWindow
             IsSettingsVisible = false,
             IsPaneToggleButtonVisible = true,
             AlwaysShowHeader = false,
-            CompactPaneLength = 52,
-            OpenPaneLength = 220,
-            PaneTitle = "GhostSlacking",
+            CompactPaneLength = 56,
+            OpenPaneLength = 184,
+            PaneTitle = UiText.Text(settings.Language, "settingsMenu"),
             Background = _canvasBrush
         };
+        _navigation.Resources["NavigationViewContentGridCornerRadius"] = new CornerRadius(12);
+        _navigation.Resources["NavigationViewContentGridBorderThickness"] = new Thickness(1);
+        _navigation.Resources["NavigationViewContentMargin"] = new Thickness(0, 0, 10d / 3, 10d / 3);
+        _navigation.Resources["NavigationViewContentBackground"] = _panelBrush;
+        _navigation.Resources["NavigationViewContentGridBorderBrush"] = _fieldBorderBrush;
+        _navigation.Resources["NavigationViewDefaultPaneBackground"] = _canvasBrush;
+        _navigation.Resources["NavigationViewItemBackgroundSelected"] = _selectionBrush;
+        _navigation.Resources["NavigationViewItemBackgroundSelectedPointerOver"] = _selectionBrush;
+        _navigation.Resources["NavigationViewItemForegroundSelected"] = _accentBrush;
+        _navigation.Resources["NavigationViewSelectionIndicatorForeground"] = Brushes.Transparent;
+        _navigation.Resources["NavigationViewItemOnLeftIconBoxHeight"] = 20d;
+        _navigation.Resources["NavigationViewItemOnLeftMinHeight"] = 38d;
+        _navigation.Resources["PaneToggleButtonWidth"] = 48d;
         _navigation.MenuItems.Add(_revealItem);
         _navigation.MenuItems.Add(_hotkeysItem);
         _navigation.MenuItems.Add(_generalItem);
@@ -250,7 +264,7 @@ internal sealed class SettingsWindow : AppWindow
 
         PopulateChoices(settings);
         BuildPages(settings.Language);
-        _navigation.Content = CreateContentShell(settings.Language);
+        _navigation.Content = CreateContentShell();
         _pageHost.Content = _pages[RevealPage];
         _navigation.SelectedItem = _revealItem;
         Content = _navigation;
@@ -264,7 +278,7 @@ internal sealed class SettingsWindow : AppWindow
         }
         _language.SelectionChanged += (_, _) =>
         {
-            if (!_updatingLanguage)
+            if (!_initializing && !_updatingLanguage)
             {
                 ApplyLanguage(CurrentLanguage);
                 OnSettingsEdited();
@@ -282,16 +296,15 @@ internal sealed class SettingsWindow : AppWindow
         }
     }
 
-    private Control CreateContentShell(UiLanguage language)
+    private Control CreateContentShell()
     {
-        var root = new Grid();
+        var root = _contentShell;
         root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         root.RowDefinitions.Add(new RowDefinition(GridLength.Star));
-        root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
         var header = new StackPanel
         {
-            Margin = new Thickness(34, 28, 34, 20),
+            Margin = new Thickness(26, 26, 26, 22),
             Children = { _pageTitle, _pageDescription }
         };
         Grid.SetRow(header, 0);
@@ -300,40 +313,33 @@ internal sealed class SettingsWindow : AppWindow
         Grid.SetRow(_pageHost, 1);
         root.Children.Add(_pageHost);
 
-        var footer = new Border
-        {
-            Background = _cardBrush,
-            BorderBrush = _fieldBorderBrush,
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = new Thickness(34, 14)
-        };
-        var footerContent = new Grid();
-        footerContent.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star) { MinWidth = 0 });
-        footerContent.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        _infoBar.MaxWidth = 560;
-        _infoBar.Margin = new Thickness(0, 0, 20, 0);
-        footerContent.Children.Add(_infoBar);
-
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
-            Spacing = 10
-        };
-        var cancel = CreateTextButton(language, "cancel");
-        cancel.Click += (_, _) => Close();
-        var save = CreateTextButton(language, "save");
-        save.Classes.Add("accent");
-        save.Click += OnSaveClicked;
-        buttons.Children.Add(cancel);
-        buttons.Children.Add(save);
-        Grid.SetColumn(buttons, 1);
-        footerContent.Children.Add(buttons);
-        footer.Child = footerContent;
-        Grid.SetRow(footer, 2);
-        root.Children.Add(footer);
+        Grid.SetRowSpan(_saveBar, 2);
+        _saveBar.ZIndex = 1;
+        root.Children.Add(_saveBar);
+        root.SizeChanged += (_, _) => UpdateSaveBarLayout();
         return root;
+    }
+
+    private void OnSaveBarPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs args)
+    {
+        if (args.Property == BoundsProperty || args.Property == IsVisibleProperty)
+        {
+            UpdateSaveBarLayout();
+        }
+    }
+
+    private void UpdateSaveBarLayout()
+    {
+        var availableWidth = Math.Max(0, _contentShell.Bounds.Width - 32);
+        _saveBar.MaxWidth = availableWidth;
+        var clearance = _saveBar.IsVisible ? Math.Max(60, _saveBar.Bounds.Height) + 48 : 0;
+        foreach (var page in _pages.Values.OfType<ScrollViewer>())
+        {
+            if (page.Content is StackPanel stack)
+            {
+                stack.Margin = new Thickness(26, 0, 26, 30 + clearance);
+            }
+        }
     }
 
     private void BuildPages(UiLanguage language)
@@ -492,7 +498,7 @@ internal sealed class SettingsWindow : AppWindow
         var stack = new StackPanel
         {
             Spacing = 24,
-            Margin = new Thickness(34, 0, 34, 30)
+            Margin = new Thickness(26, 0, 26, 30)
         };
         foreach (var section in sections)
         {
@@ -512,7 +518,7 @@ internal sealed class SettingsWindow : AppWindow
         var root = new StackPanel { Spacing = 9 };
         var heading = LocalizedText(language, titleKey);
         heading.FontSize = 12;
-        heading.FontWeight = FontWeight.SemiBold;
+        heading.FontWeight = FontWeight.Medium;
         heading.Foreground = _accentBrush;
         heading.Margin = new Thickness(4, 0, 0, 0);
         root.Children.Add(heading);
@@ -530,11 +536,14 @@ internal sealed class SettingsWindow : AppWindow
         UiLanguage language,
         string titleKey,
         string descriptionKey,
-        Control editor)
+        Control editor,
+        bool hotkey = false)
     {
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(310)));
+        var editorColumn = new ColumnDefinition(new GridLength(hotkey ? 280 : 240));
+        grid.ColumnDefinitions.Add(editorColumn);
+        _editorColumns.Add((editorColumn, hotkey));
 
         var copy = new StackPanel
         {
@@ -542,11 +551,11 @@ internal sealed class SettingsWindow : AppWindow
             Spacing = 4
         };
         var title = LocalizedText(language, titleKey);
-        title.FontSize = 15;
-        title.FontWeight = FontWeight.SemiBold;
+        title.FontSize = 14;
+        title.FontWeight = FontWeight.Medium;
         title.Foreground = _primaryBrush;
         var description = LocalizedText(language, descriptionKey);
-        description.FontSize = 12.5;
+        description.FontSize = 12;
         description.Foreground = _secondaryBrush;
         description.TextWrapping = TextWrapping.Wrap;
         copy.Children.Add(title);
@@ -555,7 +564,7 @@ internal sealed class SettingsWindow : AppWindow
 
         editor.HorizontalAlignment = HorizontalAlignment.Stretch;
         editor.VerticalAlignment = VerticalAlignment.Center;
-        editor.Margin = new Thickness(24, 0, 0, 0);
+        editor.Margin = new Thickness(16, 0, 0, 0);
         Grid.SetColumn(editor, 1);
         grid.Children.Add(editor);
 
@@ -565,7 +574,7 @@ internal sealed class SettingsWindow : AppWindow
             BorderBrush = _fieldBorderBrush,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(18, 15),
+            Padding = new Thickness(16, 14),
             Child = grid
         };
     }
@@ -574,7 +583,7 @@ internal sealed class SettingsWindow : AppWindow
         UiLanguage language,
         string titleKey,
         string descriptionKey,
-        HotkeyEditor editor) => CreateSettingRow(language, titleKey, descriptionKey, editor.Host);
+        HotkeyEditor editor) => CreateSettingRow(language, titleKey, descriptionKey, editor.Host, hotkey: true);
 
     private Control CreateResettable(Control editor, Action reset)
     {
@@ -825,7 +834,9 @@ internal sealed class SettingsWindow : AppWindow
     private static NavigationViewItem CreateNavigationItem(string tag, Symbol symbol) => new()
     {
         Tag = tag,
-        IconSource = new SymbolIconSource { Symbol = symbol }
+        FontSize = 14,
+        CornerRadius = new CornerRadius(9),
+        IconSource = new SymbolIconSource { Symbol = symbol, FontSize = 20 }
     };
 
     private static NumberBox CreateNumberBox(double value, double minimum, double maximum, double step) => new()
@@ -987,6 +998,12 @@ internal sealed class SettingsWindow : AppWindow
             _hotkeysItem.Content = UiText.Text(language, "hotkeySettings");
             _generalItem.Content = UiText.Text(language, "generalSettings");
             _aboutItem.Content = UiText.Text(language, "about");
+            _navigation.PaneTitle = UiText.Text(language, "settingsMenu");
+            _saveBar.SetLanguage(language);
+            foreach (var (column, hotkey) in _editorColumns)
+            {
+                column.Width = new GridLength(hotkey ? 280 : language == UiLanguage.English ? 260 : 240);
+            }
             foreach (var (text, key) in _localizedText)
             {
                 text.Text = UiText.Text(language, key);
@@ -1004,8 +1021,9 @@ internal sealed class SettingsWindow : AppWindow
                 _editState.SavedSettings.PeekFrameRateLimit);
             var themeMode = SelectedChoice(_themeMode, _editState.SavedSettings.ThemeMode);
             var notificationStyle = SelectedChoice(_notificationStyle, _editState.SavedSettings.NotificationStyle);
+            var updateChannel = SelectedChoice(_updateChannel, _editState.SavedSettings.UpdateChannel);
             PopulateLocalizedChoices(language, blur, shape, trigger, frameRateLimit);
-            PopulateUpdateChannels(language, _editState.SavedSettings.UpdateChannel);
+            PopulateUpdateChannels(language, updateChannel);
             PopulateThemeChoices(language, themeMode);
             PopulateNotificationChoices(language, notificationStyle);
             foreach (var button in this.GetLogicalDescendants().OfType<Button>())
@@ -1029,6 +1047,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private async void OnSaveClicked(object? sender, RoutedEventArgs args)
     {
+        CancelKeyCapture();
         var duplicate = FindDuplicateHotkey();
         if (duplicate is not null)
         {
@@ -1037,7 +1056,7 @@ internal sealed class SettingsWindow : AppWindow
                 UiText.ShortcutName(CurrentLanguage, duplicate.Value));
             ShowStatus(
                 SettingsStatus.Warning,
-                UiText.Text(CurrentLanguage, "hotkeySettings"),
+                UiText.Text(CurrentLanguage, "hotkeyConflict"),
                 message,
                 InfoBarSeverity.Warning);
 
@@ -1063,7 +1082,7 @@ internal sealed class SettingsWindow : AppWindow
         {
             ShowStatus(
                 SettingsStatus.Error,
-                UiText.Text(CurrentLanguage, "title"),
+                UiText.Text(CurrentLanguage, "settingsSaveErrorTitle"),
                 UiText.Text(CurrentLanguage, "settingsSaveFailed"),
                 InfoBarSeverity.Error);
             return;
@@ -1071,6 +1090,44 @@ internal sealed class SettingsWindow : AppWindow
 
         _editState.MarkSaved(updated);
         ShowSavedStatus();
+    }
+
+    private void CancelSettingsEdits()
+    {
+        CancelKeyCapture();
+        CancelNotificationPositionPreview();
+        var saved = _editState.SavedSettings;
+        _initializing = true;
+        try
+        {
+            _diameter.Value = saved.RevealDiameterPx;
+            _diameterStep.Value = saved.RevealDiameterStepPx;
+            _softEdgeWidth.Value = saved.RevealSoftEdgeWidthPx;
+            _peekVirtualKey = saved.PeekVirtualKey;
+            _restoreOnExit.IsChecked = saved.RestoreOnExit;
+            _startWithWindows.IsChecked = saved.StartWithWindows;
+            _cardNotificationPlacement = saved.CardNotificationPlacement;
+            _capsuleNotificationPlacement = saved.CapsuleNotificationPlacement;
+            _chatNotificationPlacement = saved.ChatNotificationPlacement;
+            _pickHotkey.Binding = saved.PickHotkey;
+            _windowToggleHotkey.Binding = saved.WindowToggleHotkey;
+            _diameterIncreaseHotkey.Binding = saved.RevealDiameterIncreaseHotkey;
+            _diameterDecreaseHotkey.Binding = saved.RevealDiameterDecreaseHotkey;
+            _restoreHotkey.Binding = saved.RestoreHotkey;
+            _restoreAllHotkey.Binding = saved.RestoreAllHotkey;
+            _settingsHotkey.Binding = saved.SettingsHotkey;
+            _exitHotkey.Binding = saved.ExitHotkey;
+            PopulateChoices(saved);
+            ApplyLanguage(saved.Language);
+            UpdateHotkeyConflicts();
+        }
+        finally
+        {
+            _initializing = false;
+        }
+
+        _applyTheme(saved.ThemeMode);
+        HideStatus();
     }
 
     private async void OnExportLogsClicked(object? sender, RoutedEventArgs args)
@@ -1335,22 +1392,16 @@ internal sealed class SettingsWindow : AppWindow
         _exportStatusKey = null;
         _savedStatusTimer.Stop();
         _editState.SetStatus(status);
-        _infoBar.Title = StatusText(title, message);
-        _infoBar.Message = string.Empty;
-        _infoBar.Severity = severity;
-        ToolTip.SetTip(_infoBar, StatusText(title, message));
-        _infoBar.IsOpen = true;
+        _saveBar.ShowMessage(title, message, severity,
+            GetSettings().Normalize() != _editState.SavedSettings);
     }
 
     private void ShowExportStatus(string key, InfoBarSeverity severity)
     {
         _savedStatusTimer.Stop();
         _exportStatusKey = key;
-        _infoBar.Title = UiText.Text(CurrentLanguage, key);
-        _infoBar.Message = string.Empty;
-        _infoBar.Severity = severity;
-        ToolTip.SetTip(_infoBar, _infoBar.Title);
-        _infoBar.IsOpen = true;
+        _saveBar.ShowMessage(UiText.Text(CurrentLanguage, key), string.Empty, severity,
+            GetSettings().Normalize() != _editState.SavedSettings);
         _savedStatusTimer.Start();
     }
 
@@ -1359,37 +1410,32 @@ internal sealed class SettingsWindow : AppWindow
         _exportStatusKey = null;
         _savedStatusTimer.Stop();
         _editState.SetStatus(SettingsStatus.None);
-        _infoBar.IsOpen = false;
+        _saveBar.Hide();
     }
 
     private void RefreshStatusText()
     {
         if (_exportStatusKey is not null)
         {
-            _infoBar.Title = UiText.Text(CurrentLanguage, _exportStatusKey);
-            ToolTip.SetTip(_infoBar, _infoBar.Title);
+            _saveBar.UpdateTitle(UiText.Text(CurrentLanguage, _exportStatusKey));
             return;
         }
 
         switch (_editState.Status)
         {
             case SettingsStatus.Modified:
-                _infoBar.Title = StatusText(
+                _saveBar.ShowMessage(
                     UiText.Text(CurrentLanguage, "settingsModified"),
-                    UiText.Text(CurrentLanguage, "settingsHint"));
-                _infoBar.Message = string.Empty;
-                ToolTip.SetTip(_infoBar, _infoBar.Title);
+                    UiText.Text(CurrentLanguage, "settingsHint"),
+                    InfoBarSeverity.Warning,
+                    showActions: true);
                 break;
             case SettingsStatus.Saved:
-                _infoBar.Title = UiText.Text(CurrentLanguage, "saveSucceeded");
-                _infoBar.Message = string.Empty;
-                ToolTip.SetTip(_infoBar, _infoBar.Title);
+                _saveBar.ShowMessage(UiText.Text(CurrentLanguage, "saveSucceeded"), string.Empty,
+                    InfoBarSeverity.Success, showActions: false);
                 break;
         }
     }
-
-    private static string StatusText(string title, string message) =>
-        string.IsNullOrEmpty(message) ? title : $"{title} · {message}";
 
     private void OnSavedStatusTimerTick(object? sender, EventArgs args)
     {
@@ -1397,7 +1443,6 @@ internal sealed class SettingsWindow : AppWindow
         {
             _exportStatusKey = null;
             _savedStatusTimer.Stop();
-            _infoBar.IsOpen = false;
             OnSettingsEdited();
             return;
         }
@@ -1405,7 +1450,7 @@ internal sealed class SettingsWindow : AppWindow
         if (_editState.ExpireSaved())
         {
             _savedStatusTimer.Stop();
-            _infoBar.IsOpen = false;
+            _saveBar.Hide();
         }
     }
 
@@ -1414,13 +1459,15 @@ internal sealed class SettingsWindow : AppWindow
     private void ApplyThemePalette()
     {
         var dark = AppTheme.IsDark(ActualThemeVariant);
-        _canvasBrush.Color = Color.Parse(dark ? "#000000" : "#F5F9FC");
-        _cardBrush.Color = Color.Parse(dark ? "#0A0A0A" : "#FFFFFF");
-        _fieldBrush.Color = dark ? AppTheme.DarkFieldColor : Color.Parse("#F8FAFC");
-        _fieldBorderBrush.Color = Color.Parse(dark ? "#2A2A2A" : "#DCE7EF");
-        _primaryBrush.Color = Color.Parse(dark ? "#F5F5F5" : "#172033");
-        _secondaryBrush.Color = Color.Parse(dark ? "#A3A3A3" : "#667085");
-        _accentBrush.Color = AppTheme.AccentColor;
+        _canvasBrush.Color = Color.Parse(dark ? "#161819" : "#F2F4F5");
+        _panelBrush.Color = Color.Parse(dark ? "#202223" : "#FBFCFC");
+        _selectionBrush.Color = Color.Parse(dark ? "#25433E" : "#DCEFEB");
+        _cardBrush.Color = Color.Parse(dark ? "#27292A" : "#FFFFFF");
+        _fieldBrush.Color = Color.Parse(dark ? "#1E2021" : "#F6F8F8");
+        _fieldBorderBrush.Color = Color.Parse(dark ? "#3A3E3F" : "#E0E6E7");
+        _primaryBrush.Color = Color.Parse(dark ? "#F0F3F3" : "#202829");
+        _secondaryBrush.Color = Color.Parse(dark ? "#A4AFB1" : "#697577");
+        _accentBrush.Color = Color.Parse(dark ? "#55D5C7" : "#087F79");
         _errorBrush.Color = Color.Parse(dark ? "#FF8A80" : "#C42B1C");
 
         TitleBar.BackgroundColor = _canvasBrush.Color;
@@ -1447,6 +1494,8 @@ internal sealed class SettingsWindow : AppWindow
         _applyTheme(_editState.SavedSettings.ThemeMode);
         _savedStatusTimer.Stop();
         _savedStatusTimer.Tick -= OnSavedStatusTimerTick;
+        _saveBar.PropertyChanged -= OnSaveBarPropertyChanged;
+        _saveBar.Dispose();
         _exportLogsButton.Click -= OnExportLogsClicked;
         _exportSettingsButton.Click -= OnExportSettingsClicked;
         _checkUpdatesButton.Click -= OnCheckUpdatesClicked;

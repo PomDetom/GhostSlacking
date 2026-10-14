@@ -32,6 +32,8 @@ public sealed class AvaloniaStartupTests
                 var settingsWindow = new SettingsWindow(new AppSettings(), _ => true);
                 Assert.Same(AppIcon.TitleBarImage, settingsWindow.Icon);
                 AssertDefaultSettingsWindowLayout(settingsWindow);
+                AssertSaveBarFitsSingleLineMessages();
+                AssertSettingsCancelAndSaveLifecycle();
                 AssertPeekFrameRateSetting(settingsWindow);
                 AssertAboutPage();
                 AssertUpdateWindow();
@@ -160,27 +162,165 @@ public sealed class AvaloniaStartupTests
     private static void AssertDefaultSettingsWindowLayout(SettingsWindow settingsWindow)
     {
         var navigation = GetPrivateField<NavigationView>(settingsWindow, "_navigation");
-        var infoBar = GetPrivateField<InfoBar>(settingsWindow, "_infoBar");
+        var saveBar = GetPrivateField<SettingsSaveBar>(settingsWindow, "_saveBar");
         var exportLogs = GetPrivateField<Button>(settingsWindow, "_exportLogsButton");
         var exportSettings = GetPrivateField<Button>(settingsWindow, "_exportSettingsButton");
-        var footerContent = Assert.IsType<Grid>(infoBar.Parent);
-        var footer = Assert.IsType<Border>(footerContent.Parent);
+        var shell = Assert.IsType<Grid>(saveBar.Parent);
         var content = Assert.IsAssignableFrom<Control>(settingsWindow.Content);
 
         Assert.Equal(settingsWindow.MinWidth, settingsWindow.Width);
         Assert.Equal(settingsWindow.MinHeight, settingsWindow.Height);
         Assert.False(navigation.IsPaneOpen);
-        Assert.Equal(32, infoBar.Height);
-        Assert.Equal(HorizontalAlignment.Left, infoBar.HorizontalAlignment);
+        Assert.Equal(56, navigation.CompactPaneLength);
+        Assert.Equal(184, navigation.OpenPaneLength);
+        Assert.Equal(new Avalonia.CornerRadius(12), settingsWindow.CornerRadius);
+        Assert.Equal(new Avalonia.CornerRadius(12), navigation.Resources["NavigationViewContentGridCornerRadius"]);
+        Assert.Equal(new Avalonia.Thickness(0, 0, 10d / 3, 10d / 3), navigation.Resources["NavigationViewContentMargin"]);
+        Assert.False(saveBar.IsVisible);
+        Assert.False(saveBar.IsEnabled);
+        Assert.Equal(2, shell.RowDefinitions.Count);
+        Assert.Equal(HorizontalAlignment.Center, saveBar.HorizontalAlignment);
         Assert.Equal("导出日志", exportLogs.Content);
         Assert.Equal("导出配置", exportSettings.Content);
 
-        content.Measure(new Avalonia.Size(settingsWindow.Width, settingsWindow.Height));
-        var closedHeight = footer.DesiredSize.Height;
-        infoBar.IsOpen = true;
-        content.Measure(new Avalonia.Size(settingsWindow.Width, settingsWindow.Height));
-        Assert.Equal(closedHeight, footer.DesiredSize.Height);
-        infoBar.IsOpen = false;
+        var size = new Avalonia.Size(settingsWindow.Width, settingsWindow.Height);
+        content.Measure(size);
+        content.Arrange(new Avalonia.Rect(size));
+        var pageHost = GetPrivateField<ContentControl>(settingsWindow, "_pageHost");
+        var viewportHeight = pageHost.Bounds.Height;
+        var diameter = GetPrivateField<NumberBox>(settingsWindow, "_diameter");
+        diameter.Value += 8;
+        content.Measure(size);
+        content.Arrange(new Avalonia.Rect(size));
+        Assert.True(saveBar.IsVisible);
+        Assert.Equal(viewportHeight, pageHost.Bounds.Height);
+        diameter.Value -= 8;
+        Assert.False(saveBar.IsEnabled);
+    }
+
+    private static void AssertSaveBarFitsSingleLineMessages()
+    {
+        using var bar = new SettingsSaveBar(Brushes.White, Brushes.Gray, Brushes.Black) { MaxWidth = 600 };
+        var host = new Window
+        {
+            Width = 680,
+            Height = 240,
+            Content = new Grid { Children = { bar } }
+        };
+        Avalonia.Size Measure()
+        {
+            host.UpdateLayout();
+            return bar.Bounds.Size;
+        }
+
+        try
+        {
+            host.Show();
+            bar.SetLanguage(UiLanguage.Chinese);
+            bar.ShowMessage("未保存", "保存后生效", InfoBarSeverity.Warning, showActions: true);
+            var shortMessage = Measure();
+            bar.SetLanguage(UiLanguage.English);
+            bar.ShowMessage("Unsaved changes", "Applies on save", InfoBarSeverity.Warning, showActions: true);
+            var longMessage = Measure();
+            Assert.True(longMessage.Width > shortMessage.Width, $"Short: {shortMessage}; long: {longMessage}");
+            Assert.Equal(60, shortMessage.Height);
+            Assert.Equal(shortMessage.Height, longMessage.Height);
+            bar.ShowMessage("Save failed. Retry.", "Settings could not be saved. Check the log and configuration file permissions.",
+                InfoBarSeverity.Error, showActions: true);
+            Assert.Equal(60, Measure().Height);
+            Assert.Contains("configuration file permissions", Assert.IsType<string>(Avalonia.Controls.ToolTip.GetTip(bar)));
+            bar.ShowMessage("Saved", string.Empty, InfoBarSeverity.Success, showActions: false);
+            var savedMessage = Measure();
+            Assert.True(savedMessage.Width < longMessage.Width);
+            Assert.Equal(60, savedMessage.Height);
+        }
+        finally
+        {
+            host.Close();
+        }
+    }
+
+    private static void AssertSettingsCancelAndSaveLifecycle()
+    {
+        var saved = (new AppSettings
+        {
+            RevealDiameterPx = 232,
+            RevealDiameterStepPx = 24,
+            RevealSoftEdgeWidthPx = 20,
+            Language = UiLanguage.English,
+            ThemeMode = UiThemeMode.Dark,
+            UpdateChannel = UpdateChannel.Test,
+            NotificationStyle = NotificationStyle.Chat,
+            CardNotificationPlacement = new NotificationPlacement(.2, .3),
+            CapsuleNotificationPlacement = new NotificationPlacement(.4, .5),
+            ChatNotificationPlacement = new NotificationPlacement(.6, .7)
+        }).Normalize();
+        var previews = new List<UiThemeMode>();
+        var saveCalls = 0;
+        var failSave = false;
+        var window = new SettingsWindow(saved, _ => { saveCalls++; return !failSave; }, previews.Add);
+        var bar = GetPrivateField<SettingsSaveBar>(window, "_saveBar");
+        GetPrivateField<NumberBox>(window, "_diameter").Value = 320;
+        GetPrivateField<NumberBox>(window, "_diameterStep").Value = 32;
+        GetPrivateField<NumberBox>(window, "_softEdgeWidth").Value = 40;
+        foreach (var name in new[] { "_blurLevel", "_shape", "_peekMode", "_peekFrameRateLimit", "_themeMode", "_notificationStyle", "_logLevel", "_updateChannel", "_language" })
+        {
+            var combo = GetPrivateField<ComboBox>(window, name);
+            combo.SelectedIndex = (combo.SelectedIndex + 1) % combo.Items.Count;
+        }
+        foreach (var name in new[] { "_restoreOnExit", "_startWithWindows" })
+        {
+            var toggle = GetPrivateField<ToggleSwitch>(window, name);
+            toggle.IsChecked = toggle.IsChecked != true;
+        }
+        Assert.Equal(0, GetPrivateField<ComboBox>(window, "_updateChannel").SelectedIndex);
+        foreach (var name in new[] { "_cardNotificationPlacement", "_capsuleNotificationPlacement", "_chatNotificationPlacement" })
+        {
+            typeof(SettingsWindow).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(window, new NotificationPlacement(.8, .9));
+        }
+        typeof(SettingsWindow).GetField("_peekVirtualKey", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, 0x7B);
+        var editors = (Array)typeof(SettingsWindow).GetMethod("GetHotkeyEditors", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null)!;
+        for (var index = 0; index < editors.Length; index++)
+        {
+            var editor = editors.GetValue(index)!;
+            editor.GetType().GetProperty("Binding")!.SetValue(editor, new HotkeyBinding(0x61 + index, ShortcutModifiers.Control));
+        }
+
+        GetPrivateField<Button>(bar, "_cancel").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        var state = GetPrivateField<SettingsEditState>(window, "_editState");
+        var current = (AppSettings)typeof(SettingsWindow).GetMethod("GetSettings", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null)!;
+        Assert.Equal(saved, current.Normalize());
+        Assert.Equal(SettingsStatus.None, state.Status);
+        Assert.False(bar.IsEnabled);
+        Assert.Equal(UiThemeMode.Dark, previews[^1]);
+        Assert.Equal(0, saveCalls);
+        Assert.Equal("Cancel", GetPrivateField<Button>(bar, "_cancel").Content);
+
+        var diameter = GetPrivateField<NumberBox>(window, "_diameter");
+        diameter.Value = 240;
+        GetPrivateField<Button>(bar, "_save").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(SettingsStatus.Saved, state.Status);
+        Assert.False(GetPrivateField<StackPanel>(bar, "_actions").IsVisible);
+        typeof(SettingsWindow).GetMethod("OnSavedStatusTimerTick", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(window, [null, EventArgs.Empty]);
+        Assert.Equal(SettingsStatus.None, state.Status);
+        Assert.False(bar.IsEnabled);
+        diameter.Value = 248;
+        GetPrivateField<Button>(bar, "_cancel").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(240, diameter.Value);
+
+        failSave = true;
+        diameter.Value = 256;
+        GetPrivateField<Button>(bar, "_save").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(SettingsStatus.Error, state.Status);
+        Assert.Equal(256, diameter.Value);
+        Assert.Equal(240, state.SavedSettings.RevealDiameterPx);
+        Assert.True(GetPrivateField<StackPanel>(bar, "_actions").IsVisible);
+        failSave = false;
+        GetPrivateField<Button>(bar, "_save").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(256, state.SavedSettings.RevealDiameterPx);
+        window.Close();
     }
 
     private static void AssertPeekFrameRateSetting(SettingsWindow settingsWindow)
