@@ -211,13 +211,14 @@ public sealed record GhostWindowProfile(WindowSnapshot Original, RevealSettings 
 
 public sealed record AppSettings
 {
-    public int SchemaVersion { get; init; } = 7;
+    public int SchemaVersion { get; init; } = 8;
     public UiLanguage Language { get; init; } = UiLanguage.Chinese;
     public UiThemeMode ThemeMode { get; init; } = UiThemeMode.System;
     public NotificationStyle NotificationStyle { get; init; } = NotificationStyle.Card;
     public NotificationPlacement CardNotificationPlacement { get; init; } = new(1, 1);
     public NotificationPlacement CapsuleNotificationPlacement { get; init; } = new(1, 1);
     public NotificationPlacement ChatNotificationPlacement { get; init; } = new(0, 1);
+    public NotificationHudSettings NotificationHud { get; init; } = new();
     public int RevealDiameterPx { get; init; } = 144;
     public int RevealDiameterStepPx { get; init; } = 16;
     public int RevealSoftEdgeWidthPx { get; init; } = 16;
@@ -242,7 +243,7 @@ public sealed record AppSettings
 
     public AppSettings Normalize() => this with
     {
-        SchemaVersion = 7,
+        SchemaVersion = 8,
         Language = Language is UiLanguage.Chinese or UiLanguage.English ? Language : UiLanguage.Chinese,
         ThemeMode = ThemeMode is UiThemeMode.System or UiThemeMode.Light or UiThemeMode.Dark
             ? ThemeMode
@@ -253,6 +254,7 @@ public sealed record AppSettings
         CardNotificationPlacement = CardNotificationPlacement.Normalize(),
         CapsuleNotificationPlacement = CapsuleNotificationPlacement.Normalize(),
         ChatNotificationPlacement = ChatNotificationPlacement.Normalize(),
+        NotificationHud = NotificationHud?.Normalize() ?? new NotificationHudSettings(),
         RevealDiameterPx = Math.Clamp(RevealDiameterPx, 64, 800),
         RevealDiameterStepPx = Math.Clamp(RevealDiameterStepPx, 8, 256),
         RevealSoftEdgeWidthPx = Math.Clamp(RevealSoftEdgeWidthPx, 0, 128),

@@ -162,9 +162,10 @@ public sealed class Win32WindowApi : IWindowApi
         }
 
         var style = Win32NativeMethods.GetWindowLongPtr(hwnd, Win32NativeMethods.GWL_EXSTYLE);
+        var noActivateStyle = style | (nint)Win32NativeMethods.WS_EX_NOACTIVATE;
         var updated = enabled
-            ? style | (nint)Win32NativeMethods.WS_EX_TRANSPARENT
-            : style & ~(nint)Win32NativeMethods.WS_EX_TRANSPARENT;
+            ? noActivateStyle | (nint)Win32NativeMethods.WS_EX_TRANSPARENT
+            : noActivateStyle & ~(nint)Win32NativeMethods.WS_EX_TRANSPARENT;
         if (updated == style)
         {
             return NativeResult.Ok("SetWindowLongPtr(NotificationClickThrough)");

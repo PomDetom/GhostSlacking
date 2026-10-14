@@ -7,68 +7,50 @@ namespace GhostSlacking.App.Tests;
 public sealed class NotificationLayoutTests
 {
     [Theory]
-    [InlineData(1.0)]
+    [InlineData(1)]
+    [InlineData(1.25)]
     [InlineData(1.5)]
-    public void Relative_positions_keep_different_notification_sizes_inside_the_working_area(double scaling)
+    [InlineData(2)]
+    public void Hud_and_its_shadow_fit_all_position_extremes_at_the_active_dpi(double scaling)
     {
-        var area = new PixelRect(1920, -200, 1920, 1080);
-        var shortPosition = NotificationLayout.Position(area, scaling, new Size(120, 40), new NotificationPlacement(1, 1));
-        var longPosition = NotificationLayout.Position(area, scaling, new Size(360, 120), new NotificationPlacement(1, 1));
-
-        Assert.Equal(area.Right - 16, shortPosition.X + (int)Math.Ceiling(120 * scaling));
-        Assert.Equal(area.Bottom - 16, shortPosition.Y + (int)Math.Ceiling(40 * scaling));
-        Assert.Equal(area.Right - 16, longPosition.X + (int)Math.Ceiling(360 * scaling));
-        Assert.Equal(area.Bottom - 16, longPosition.Y + (int)Math.Ceiling(120 * scaling));
-    }
-
-    [Fact]
-    public void Dragged_position_round_trips_as_relative_coordinates()
-    {
-        var area = new PixelRect(-1600, 0, 1600, 900);
-        var size = new Size(230, 65);
-        var original = new NotificationPlacement(0.3, 0.7);
-        var point = NotificationLayout.Position(area, 1.25, size, original);
-        var restored = NotificationLayout.FromPosition(area, 1.25, size, point);
-
-        Assert.InRange(restored.X, 0.299, 0.301);
-        Assert.InRange(restored.Y, 0.699, 0.701);
-    }
-
-    [Fact]
-    public void Dragged_position_is_clamped_to_visible_bounds()
-    {
-        var placement = NotificationLayout.FromPosition(
-            new PixelRect(0, 0, 1000, 800),
-            1,
-            new Size(200, 50),
-            new PixelPoint(2000, -500));
-
-        Assert.Equal(new NotificationPlacement(1, 0), placement);
-    }
-
-    [Fact]
-    public void Chat_stack_keeps_the_newest_contiguous_rows_that_fit()
-    {
-        var visible = NotificationLayout.VisibleChatRows([100, 300, 100, 100, 100], 250, 4);
-
-        Assert.Equal([3, 4], visible);
+        var area = new PixelRect(-1600, -200, 1600, 900);
+        foreach (var x in new[] { 0, 50, 100 })
+            foreach (var y in new[] { 0, 50, 100 })
+            {
+                var geometry = NotificationLayout.Calculate(area, scaling, new NotificationHudSettings
+                {
+                    Width = 300,
+                    Height = 96,
+                    HorizontalPosition = x,
+                    VerticalPosition = y
+                });
+                Assert.InRange(geometry.Position.X, area.X, area.Right - (int)Math.Ceiling(geometry.WindowSize.Width * scaling));
+                Assert.InRange(geometry.Position.Y, area.Y, area.Bottom - (int)Math.Ceiling(geometry.WindowSize.Height * scaling));
+            }
     }
 
     [Theory]
-    [InlineData(1.0)]
+    [InlineData(1)]
     [InlineData(1.5)]
-    public void Chat_stack_uses_pixel_heights_at_the_active_dpi(double scaling)
+    [InlineData(2)]
+    public void Default_hud_is_bottom_centered_with_an_18_dip_gap(double scaling)
     {
-        var heights = new[] { 70, 80, 90 }.Select(height => (int)Math.Ceiling(height * scaling)).ToArray();
-        var availableHeight = (int)Math.Ceiling(180 * scaling);
-        var gap = (int)Math.Ceiling(4 * scaling);
-
-        Assert.Equal([1, 2], NotificationLayout.VisibleChatRows(heights, availableHeight, gap));
+        var area = new PixelRect(1920, -200, 1920, 1080);
+        var geometry = NotificationLayout.Calculate(area, scaling, new NotificationHudSettings());
+        var surfaceX = geometry.Position.X + (int)Math.Round(NotificationLayout.ShadowPadding * scaling);
+        var surfaceY = geometry.Position.Y + (int)Math.Round(NotificationLayout.ShadowPadding * scaling);
+        Assert.InRange(surfaceX + geometry.SurfaceSize.Width * scaling / 2, area.X + area.Width / 2.0 - 1, area.X + area.Width / 2.0 + 1);
+        Assert.InRange(area.Bottom - surfaceY - geometry.SurfaceSize.Height * scaling, 18 * scaling - 1, 18 * scaling + 1);
     }
 
     [Fact]
-    public void Oversized_newest_chat_row_is_still_selected()
+    public void Narrow_working_area_reduces_rendered_size_without_changing_saved_preferences()
     {
-        Assert.Equal([2], NotificationLayout.VisibleChatRows([20, 20, 500], 200, 4));
+        var settings = new NotificationHudSettings { Width = 300 };
+        var geometry = NotificationLayout.Calculate(new PixelRect(0, 0, 320, 240), 2, settings);
+        Assert.Equal(128, geometry.SurfaceSize.Width);
+        Assert.True(geometry.WindowSize.Width * 2 <= 320);
+        Assert.True(geometry.WindowSize.Height * 2 <= 240);
+        Assert.Equal(300, settings.Width);
     }
 }

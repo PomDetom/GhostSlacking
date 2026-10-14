@@ -88,7 +88,7 @@ public sealed class Win32MessageWindow : IDisposable
             instance?.HotkeyPressed?.Invoke(wParam.ToInt32());
         }
 
-        if (message == Win32NativeMethods.WM_DISPLAYCHANGE)
+        if (message is Win32NativeMethods.WM_DISPLAYCHANGE or Win32NativeMethods.WM_SETTINGCHANGE)
         {
             instance?.DisplayConfigurationChanged?.Invoke();
         }

@@ -173,19 +173,13 @@ internal sealed class GhostApplicationController : IDisposable
                 ShowError(UiText.Text(_settings.Language, "updateLaunchFailed"), UserNotificationSource.Error);
                 break;
             case UpdateCompletionStatus.Succeeded:
-                ShowInfo(string.Format(
-                    UiText.Text(_settings.Language, "updateCompleted"),
-                    updateResult.Version),
-                    UserNotificationSource.Startup);
+                ShowSuccess(UiText.Text(_settings.Language, "updateCompleted"), UserNotificationSource.Startup);
                 break;
             case UpdateCompletionStatus.Cancelled:
                 ShowInfo(UiText.Text(_settings.Language, "updateCancelled"), UserNotificationSource.Startup);
                 break;
             default:
-                ShowError(string.Format(
-                    UiText.Text(_settings.Language, "automaticUpdateFailed"),
-                    updateResult.Version),
-                    UserNotificationSource.Error);
+                ShowError(UiText.Text(_settings.Language, "automaticUpdateFailed"), UserNotificationSource.Error);
                 break;
         }
     }
@@ -198,9 +192,7 @@ internal sealed class GhostApplicationController : IDisposable
             if (snapshot.Status == ApplicationUpdateStatus.Available && snapshot.Release is not null && !_isExiting)
             {
                 await Dispatcher.UIThread.InvokeAsync(() => _notifications.Show(
-                    string.Format(
-                        UiText.Text(_settings.Language, "updateAvailableNotification"),
-                        snapshot.Release.VersionText),
+                    UiText.Text(_settings.Language, "updateAvailableNotification"),
                     UserNotificationSeverity.Info,
                     OpenUpdateWindow,
                     UserNotificationSource.Update));
@@ -272,6 +264,7 @@ internal sealed class GhostApplicationController : IDisposable
     private void OnDisplayConfigurationChanged()
     {
         _displayRefreshRates.Invalidate();
+        _notifications?.RefreshLayout();
         _logger.Log(LogLevel.Debug, "Display configuration changed; refresh-rate cache invalidated.");
     }
 
@@ -777,15 +770,18 @@ internal sealed class GhostApplicationController : IDisposable
         _notifications.Show(message, UserNotificationSeverity.Info, source: source);
     }
 
-    private void OnWindowSelected(TargetWindow target)
+    private void ShowSuccess(string message, UserNotificationSource source)
     {
-        ShowInfo(
-            string.Format(
-                UiText.Text(_settings.Language, "windowSelected"),
-                target.ProcessName ?? (UiText.IsChinese(_settings.Language) ? "窗口" : "window"),
-                UiText.PeekKeyName(_settings.Language, _settings.PeekVirtualKey)),
-            UserNotificationSource.Selection);
+        if (_isExiting)
+        {
+            return;
+        }
+
+        _notifications.Show(message, UserNotificationSeverity.Success, source: source);
     }
+
+    private void OnWindowSelected(TargetWindow target) =>
+        ShowSuccess(UiText.Text(_settings.Language, "windowSelected"), UserNotificationSource.Selection);
 
     internal void ReportUnhandledException(Exception exception)
     {
