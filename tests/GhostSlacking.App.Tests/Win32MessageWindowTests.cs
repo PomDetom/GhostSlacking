@@ -47,6 +47,8 @@ public sealed class Win32MessageWindowTests
         SendMessage(window.Handle, 0x007E, 0, 0);
 
         Assert.Equal(1, notifications);
+        SendMessage(window.Handle, 0x001A, 0, 0);
+        Assert.Equal(2, notifications);
     }
 
     [Fact]

@@ -58,17 +58,12 @@ public sealed class AvaloniaStartupTests
                 notifications.Show("ready", UserNotificationSeverity.Info);
                 notifications.Show("ready again", UserNotificationSeverity.Info);
                 AssertNotificationWindowComposition(notifications);
-                stage = "notification layout";
-                AssertNotificationWindowsGrowWithText();
-                AssertChatTextAndCapsuleWrapping();
-                stage = "notification transitions";
+                stage = "HUD layout and lifecycle";
+                AssertNotificationWindowsKeepFixedGeometry();
                 AssertNotificationFadeAndPreview();
                 AssertNotificationFadeInterruption();
-                AssertNotificationStyleSettingSaves();
-                AssertNotificationPreviewSaveAndCancel();
-                stage = "chat hit testing and screen bounds";
-                AssertChatWindowHitTesting();
-                AssertChatHistoryFitsTheWorkingArea();
+                AssertNotificationHudSettingSavesAndCancels();
+                AssertNotificationHitTesting();
                 Assert.Equal(2, raisedNotificationHandles.Count);
                 Assert.All(raisedNotificationHandles, handle => Assert.NotEqual(0, handle));
                 trayIcon.IsVisible = false;
@@ -263,7 +258,7 @@ public sealed class AvaloniaStartupTests
         GetPrivateField<NumberBox>(window, "_diameter").Value = 320;
         GetPrivateField<NumberBox>(window, "_diameterStep").Value = 32;
         GetPrivateField<NumberBox>(window, "_softEdgeWidth").Value = 40;
-        foreach (var name in new[] { "_blurLevel", "_shape", "_peekMode", "_peekFrameRateLimit", "_themeMode", "_notificationStyle", "_logLevel", "_updateChannel", "_language" })
+        foreach (var name in new[] { "_blurLevel", "_shape", "_peekMode", "_peekFrameRateLimit", "_themeMode", "_logLevel", "_updateChannel", "_language" })
         {
             var combo = GetPrivateField<ComboBox>(window, name);
             combo.SelectedIndex = (combo.SelectedIndex + 1) % combo.Items.Count;
@@ -274,11 +269,11 @@ public sealed class AvaloniaStartupTests
             toggle.IsChecked = toggle.IsChecked != true;
         }
         Assert.Equal(0, GetPrivateField<ComboBox>(window, "_updateChannel").SelectedIndex);
-        foreach (var name in new[] { "_cardNotificationPlacement", "_capsuleNotificationPlacement", "_chatNotificationPlacement" })
-        {
-            typeof(SettingsWindow).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!
-                .SetValue(window, new NotificationPlacement(.8, .9));
-        }
+        GetPrivateField<NumberBox>(window, "_notificationWidth").Value = 200;
+        GetPrivateField<NumberBox>(window, "_notificationHeight").Value = 60;
+        GetPrivateField<NumberBox>(window, "_notificationRadius").Value = 16;
+        GetPrivateField<NumberBox>(window, "_notificationHorizontalPosition").Value = 20;
+        GetPrivateField<NumberBox>(window, "_notificationVerticalPosition").Value = 30;
         typeof(SettingsWindow).GetField("_peekVirtualKey", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, 0x7B);
         var editors = (Array)typeof(SettingsWindow).GetMethod("GetHotkeyEditors", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null)!;
         for (var index = 0; index < editors.Length; index++)
@@ -516,340 +511,176 @@ public sealed class AvaloniaStartupTests
 
     private static void AssertNotificationWindowComposition(AvaloniaNotificationService notifications)
     {
-        var field = typeof(AvaloniaNotificationService).GetField("_window", BindingFlags.Instance | BindingFlags.NonPublic);
-        var notificationWindow = Assert.IsAssignableFrom<Window>(field?.GetValue(notifications));
-        var windowBackground = Assert.IsAssignableFrom<ISolidColorBrush>(notificationWindow.Background);
-        var surface = Assert.IsType<Border>(notificationWindow.Content);
-
-        Assert.Equal(Colors.Transparent, windowBackground.Color);
-        Assert.Contains(WindowTransparencyLevel.Transparent, notificationWindow.TransparencyLevelHint);
-        Assert.True(surface.ClipToBounds);
-        Assert.Equal(new Avalonia.Thickness(0), surface.Margin);
-        var accent = GetPrivateField<Border>(notificationWindow, "_accent");
-        var body = GetPrivateField<Border>(notificationWindow, "_cardBody");
-        Assert.Equal(4, accent.Width);
-        Assert.Equal(new Avalonia.CornerRadius(8, 0, 0, 8), accent.CornerRadius);
-        Assert.Equal(new Avalonia.Thickness(0, 1, 1, 1), body.BorderThickness);
-        Assert.Equal(
-            AvaloniaNotificationService.ResolvePalette(null, UserNotificationSeverity.Info).Surface,
-            Assert.IsAssignableFrom<ISolidColorBrush>(surface.Background).Color);
-        Assert.Equal(AppTheme.AccentColor, Assert.IsAssignableFrom<ISolidColorBrush>(accent.Background).Color);
-
-        ((NotificationWindow)notificationWindow).Update("error", UserNotificationSeverity.Error, false);
-        Assert.Equal(
-            AvaloniaNotificationService.ResolvePalette(null, UserNotificationSeverity.Error).Surface,
-            Assert.IsAssignableFrom<ISolidColorBrush>(surface.Background).Color);
-        Assert.Equal(
-            AvaloniaNotificationService.ResolvePalette(null, UserNotificationSeverity.Error).Accent,
-            Assert.IsAssignableFrom<ISolidColorBrush>(accent.Background).Color);
+        var window = GetPrivateField<NotificationWindow>(notifications, "_window");
+        var surface = GetPrivateField<Border>(window, "_surface");
+        Assert.False(window.ShowActivated);
+        Assert.False(window.ShowInTaskbar);
+        Assert.Contains(WindowTransparencyLevel.Transparent, window.TransparencyLevelHint);
+        Assert.Equal(132, surface.Width);
+        Assert.Equal(44, surface.Height);
+        Assert.Equal(new Avalonia.CornerRadius(10), surface.CornerRadius);
+        var neutral = Assert.IsAssignableFrom<ISolidColorBrush>(surface.Background).Color;
+        window.Update("恢复未成功", UserNotificationSeverity.Error, false);
+        Assert.Equal(neutral, Assert.IsAssignableFrom<ISolidColorBrush>(surface.Background).Color);
+        Assert.Equal(AppTheme.Palette(window.ActualThemeVariant).Border,
+            Assert.IsAssignableFrom<ISolidColorBrush>(surface.BorderBrush).Color);
     }
 
-    private static void AssertNotificationWindowsGrowWithText()
+    private static void AssertNotificationWindowsKeepFixedGeometry()
     {
-        foreach (var style in new[] { NotificationStyle.Card, NotificationStyle.Capsule, NotificationStyle.Chat })
+        var window = new NotificationWindow();
+        var surface = GetPrivateField<Border>(window, "_surface");
+        var text = GetPrivateField<TextBlock>(window, "_message");
+        var icon = GetPrivateField<Avalonia.Controls.Shapes.Path>(window, "_icon");
+        foreach (var severity in Enum.GetValues<UserNotificationSeverity>())
+        foreach (var message in new[] { "程序已启动", "已隐藏窗口", "发现新版本", "恢复未成功", new string('长', 500) })
         {
-            var window = new NotificationWindow(style);
-            window.Update("已隐藏", UserNotificationSeverity.Info, false);
-            var shortWidth = window.Width;
-            var shortHeight = window.Height;
-            window.Update(string.Join(" ", Enumerable.Repeat("A longer notification message", 12)),
-                UserNotificationSeverity.Error, false);
-
-            Assert.True(window.Width > shortWidth, $"{style}: width {shortWidth} -> {window.Width}");
-            Assert.True(window.Height > shortHeight, $"{style}: height {shortHeight} -> {window.Height}");
-            Assert.InRange(window.Width, 1, style == NotificationStyle.Chat ? 430 : 370);
-            window.Close();
+            window.Update(message, severity, false);
+            Assert.Equal(132, surface.Width);
+            Assert.Equal(44, surface.Height);
+            Assert.Equal(18, icon.Width);
+            Assert.Equal(65, text.Width);
+            Assert.Equal(TextWrapping.NoWrap, text.TextWrapping);
+            Assert.Equal(TextTrimming.CharacterEllipsis, text.TextTrimming);
         }
-    }
-
-    private static void AssertChatTextAndCapsuleWrapping()
-    {
-        var chat = new NotificationWindow(NotificationStyle.Chat);
-        chat.Update("清晰的聊天消息", UserNotificationSeverity.Info, false);
-        var chatText = GetPrivateField<TextBlock>(chat, "_message");
-        var shadow = GetPrivateField<TextBlock>(chat, "_shadow");
-        Assert.Equal(14, chatText.FontSize);
-        Assert.Equal(FontWeight.SemiBold, chatText.FontWeight);
-        Assert.Equal(14, shadow.FontSize);
-        Assert.Equal(1.5, Assert.IsType<TranslateTransform>(shadow.RenderTransform).X);
-        Assert.Equal(chatText.Text, shadow.Text);
-
-        var longMessage = new string('长', 200);
-        chat.Update(longMessage, UserNotificationSeverity.Info, false);
-        var baselineWidth = chat.Width;
-        var baselineHeight = chat.Height;
-        chat.Update(longMessage, UserNotificationSeverity.Info, false, chatTextWidth: 600);
-        var wideHeight = chat.Height;
-        Assert.True(wideHeight < baselineHeight);
-        chat.UpdateChat(longMessage, UserNotificationSeverity.Info, false,
-            availableHeight: (baselineHeight + wideHeight) / 2,
-            maximumTextWidth: 600);
-        Assert.True(chat.Width > baselineWidth);
-        Assert.True(chat.Width <= 606);
-        Assert.True(chat.Height <= (baselineHeight + wideHeight) / 2);
-        var chatSurface = GetPrivateField<Border>(chat, "_surface");
-        chatSurface.Measure(new Avalonia.Size(chat.Width, chat.Height));
-        Assert.True(chatSurface.DesiredSize.Height <= chat.Height);
-        chat.Close();
-
-        var capsule = new NotificationWindow(NotificationStyle.Capsule);
-        capsule.Update("窗口已隐藏，请按快捷键查看当前窗口状态。窗口已隐藏，请按快捷键查看当前窗口状态。",
-            UserNotificationSeverity.Info, false);
-        var capsuleText = GetPrivateField<TextBlock>(capsule, "_message");
-        var capsuleSurface = GetPrivateField<Border>(capsule, "_surface");
-        Assert.Equal(new Avalonia.CornerRadius(12), capsuleSurface.CornerRadius);
-        Assert.NotNull(capsuleText.Text);
-        Assert.Contains('\n', capsuleText.Text);
-        Assert.True(capsule.Width <= 322, $"Capsule width is {capsule.Width}");
-        capsule.Close();
+        foreach (var language in Enum.GetValues<UiLanguage>())
+        foreach (var key in new[] { "startupReady", "clickToPick", "pickCancelled", "windowSelected", "updateAvailableNotification", "restoreFailed", "settingsSaveFailed", "updatePreparing", "updateCompleted", "updateCancelled" })
+        {
+            var message = UiText.Text(language, key);
+            var measure = new TextBlock { Text = message, FontFamily = text.FontFamily, FontWeight = text.FontWeight, FontSize = 13 };
+            measure.Measure(new Avalonia.Size(double.PositiveInfinity, double.PositiveInfinity));
+            Assert.True(measure.DesiredSize.Width <= 65, $"{language}/{key}: {measure.DesiredSize.Width}");
+            if (language == UiLanguage.Chinese) Assert.Equal(5, message.Length);
+        }
+        window.Close();
     }
 
     private static void AssertNotificationFadeAndPreview()
     {
+        var window = new NotificationWindow();
+        window.Update("程序已启动", UserNotificationSeverity.Info, false);
         var now = DateTimeOffset.UtcNow;
-        var card = new NotificationWindow(NotificationStyle.Card);
-        card.Update("fade", UserNotificationSeverity.Info, false);
-        card.BeginFadeIn(now, reset: true);
-        Assert.Equal(0, card.Opacity);
-        card.Show();
-        card.AdvanceFade(now.Add(AvaloniaNotificationService.FadeInDuration));
-        Assert.Equal(1, card.Opacity);
-        card.BeginFadeOut(now.AddSeconds(2.3), AvaloniaNotificationService.FadeOutDuration);
-        card.AdvanceFade(now.AddSeconds(2.4));
-        Assert.InRange(card.Opacity, 0.7, 0.8);
-        card.BeginFadeIn(now.AddSeconds(2.4), reset: true);
-        Assert.Equal(0, card.Opacity);
-        card.AdvanceFade(now.AddSeconds(2.4).Add(AvaloniaNotificationService.FadeInDuration));
-        Assert.Equal(1, card.Opacity);
-        card.BeginFadeOut(now.AddSeconds(2.5), AvaloniaNotificationService.FadeOutDuration);
-        card.AdvanceFade(now.AddSeconds(2.5).Add(AvaloniaNotificationService.FadeOutDuration));
-        Assert.False(card.IsVisible);
-        card.Close();
-
-        var preview = new NotificationWindow(NotificationStyle.Card, preview: true);
+        window.BeginFadeIn(now, reset: true);
+        window.Show();
+        window.AdvanceFade(now.AddMilliseconds(150));
+        Assert.Equal(1, window.Opacity);
+        window.BeginFadeOut(now.AddSeconds(2), AvaloniaNotificationService.FadeOutDuration);
+        window.AdvanceFade(now.AddSeconds(2.2));
+        Assert.False(window.IsVisible);
+        window.Close();
+        var preview = new NotificationWindow(preview: true);
         preview.BeginFadeIn(now, reset: true);
         Assert.Equal(1, preview.Opacity);
+        Assert.False(preview.ShowActivated);
         preview.Close();
     }
 
     private static void AssertNotificationFadeInterruption()
     {
-        using var cardNotifications = new AvaloniaNotificationService(() => Point.Empty, NullLogger.Instance);
-        cardNotifications.Show("first", UserNotificationSeverity.Info);
-        var card = GetPrivateField<NotificationWindow>(cardNotifications, "_window");
-        var now = DateTimeOffset.UtcNow.AddMilliseconds(-250);
-        card.BeginFadeIn(now, reset: true);
-        card.AdvanceFade(now.AddMilliseconds(150));
-        card.BeginFadeOut(now.AddMilliseconds(150), AvaloniaNotificationService.FadeOutDuration);
-        card.AdvanceFade(now.AddMilliseconds(250));
-        Assert.True(card.IsFadingOut);
-        cardNotifications.Show("second", UserNotificationSeverity.Info);
-        Assert.False(card.IsFadingOut);
-        Assert.InRange(card.Opacity, 0.7, 0.8);
-        card.AdvanceFade(DateTimeOffset.UtcNow.Add(AvaloniaNotificationService.FadeInDuration));
-        Assert.Equal(1, card.Opacity);
-        cardNotifications.Show("third", UserNotificationSeverity.Info);
-        Assert.Equal(1, card.Opacity);
-
-        card.BeginFadeIn(now, reset: true);
-        card.AdvanceFade(now.AddMilliseconds(75));
-        var replacingOpacity = card.Opacity;
-        cardNotifications.Show("fourth", UserNotificationSeverity.Info);
-        Assert.Equal(replacingOpacity, card.Opacity);
-
-        using var chatNotifications = new AvaloniaNotificationService(
-            () => Point.Empty,
-            NullLogger.Instance,
+        using var notifications = new AvaloniaNotificationService(() => Point.Empty, NullLogger.Instance,
             settings: new AppSettings { NotificationStyle = NotificationStyle.Chat });
-        chatNotifications.Show("first", UserNotificationSeverity.Info);
-        var chatWindows = GetPrivateField<Dictionary<Guid, NotificationWindow>>(chatNotifications, "_chatWindows");
-        var firstRow = Assert.Single(chatWindows.Values);
-        Assert.Equal(1, firstRow.Opacity);
-        now = DateTimeOffset.UtcNow.AddMilliseconds(-250);
-        firstRow.BeginFadeOut(now.AddMilliseconds(150), AvaloniaNotificationService.FadeOutDuration);
-        firstRow.AdvanceFade(now.AddMilliseconds(250));
-        chatNotifications.Show("second", UserNotificationSeverity.Info);
-        Assert.False(firstRow.IsFadingOut);
-        Assert.Equal(1, firstRow.Opacity);
-        Assert.Equal(1, Assert.Single(chatWindows.Values, window => window != firstRow).Opacity);
+        notifications.Show("程序已启动", UserNotificationSeverity.Info);
+        var window = GetPrivateField<NotificationWindow>(notifications, "_window");
+        var now = DateTimeOffset.UtcNow.AddMilliseconds(-250);
+        window.BeginFadeIn(now, reset: true);
+        window.AdvanceFade(now.AddMilliseconds(150));
+        window.BeginFadeOut(now.AddMilliseconds(150), AvaloniaNotificationService.FadeOutDuration);
+        window.AdvanceFade(now.AddMilliseconds(250));
+        notifications.Show("已隐藏窗口", UserNotificationSeverity.Success);
+        Assert.False(window.IsFadingOut);
+        Assert.Same(window, GetPrivateField<NotificationWindow>(notifications, "_window"));
+        window.AdvanceFade(DateTimeOffset.UtcNow.AddMilliseconds(150));
+        Assert.Equal(1, window.Opacity);
+        notifications.Show("恢复未成功", UserNotificationSeverity.Error);
+        Assert.Equal(1, window.Opacity);
     }
 
-    private static void AssertNotificationStyleSettingSaves()
+    private static void AssertNotificationHudSettingSavesAndCancels()
     {
         AppSettings? saved = null;
-        var window = new SettingsWindow(new AppSettings(), settings =>
-        {
-            saved = settings;
-            return true;
-        });
-        GetPrivateField<ComboBox>(window, "_notificationStyle").SelectedIndex = 2;
-        InvokeSave(window);
-
-        Assert.Equal(NotificationStyle.Chat, saved?.NotificationStyle);
-        window.Close();
-    }
-
-    private static void AssertNotificationPreviewSaveAndCancel()
-    {
-        AppSettings? saved = null;
-        var window = new SettingsWindow(new AppSettings(), settings =>
-        {
-            saved = settings;
-            return true;
-        });
-        var begin = typeof(SettingsWindow).GetMethod("BeginNotificationPositionPreview", BindingFlags.Instance | BindingFlags.NonPublic);
-        var complete = typeof(SettingsWindow).GetMethod("CompleteNotificationPositionPreview", BindingFlags.Instance | BindingFlags.NonPublic);
-        var cancel = typeof(SettingsWindow).GetMethod("CancelNotificationPositionPreview", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(begin);
-        Assert.NotNull(complete);
-        Assert.NotNull(cancel);
-
-        begin.Invoke(window, null);
+        var failSave = true;
+        var original = new AppSettings { NotificationStyle = NotificationStyle.Chat };
+        var window = new SettingsWindow(original, settings => { if (failSave) return false; saved = settings; return true; });
+        GetPrivateField<NumberBox>(window, "_notificationRadius").Value = 16;
+        GetPrivateField<NumberBox>(window, "_notificationWidth").Value = 180;
+        GetPrivateField<NumberBox>(window, "_notificationHeight").Value = 52;
+        GetPrivateField<NumberBox>(window, "_notificationHorizontalPosition").Value = 20;
+        GetPrivateField<NumberBox>(window, "_notificationVerticalPosition").Value = 30;
+        typeof(SettingsWindow).GetMethod("BeginNotificationPreview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
         var preview = GetPrivateField<NotificationWindow>(window, "_notificationPreview");
-        var screen = preview.Screens.Primary;
-        Assert.NotNull(screen);
-        preview.Position = NotificationLayout.Position(
-            screen.WorkingArea,
-            screen.Scaling,
-            new Avalonia.Size(preview.Width, preview.Height),
-            new NotificationPlacement(0.3, 0.4));
-        complete.Invoke(window, null);
+        Assert.True(GetPrivateField<Avalonia.Threading.DispatcherTimer>(window, "_notificationPreviewTimer").IsEnabled);
+        Assert.Equal(180, GetPrivateField<Border>(preview, "_surface").Width);
+        GetPrivateField<NumberBox>(window, "_notificationWidth").Value = 200;
+        Assert.Equal(200, GetPrivateField<Border>(preview, "_surface").Width);
+        InvokeSave(window);
+        Assert.Null(saved);
+        Assert.False(GetPrivateField<Avalonia.Threading.DispatcherTimer>(window, "_notificationPreviewTimer").IsEnabled);
+        Assert.Equal(200, GetPrivateField<NumberBox>(window, "_notificationWidth").Value);
+        failSave = false;
         InvokeSave(window);
         Assert.NotNull(saved);
-        Assert.InRange(saved.CardNotificationPlacement.X, 0.29, 0.31);
-        Assert.InRange(saved.CardNotificationPlacement.Y, 0.39, 0.41);
-
-        begin.Invoke(window, null);
-        preview = GetPrivateField<NotificationWindow>(window, "_notificationPreview");
-        preview.Position = NotificationLayout.Position(
-            screen.WorkingArea,
-            screen.Scaling,
-            new Avalonia.Size(preview.Width, preview.Height),
-            new NotificationPlacement(0.8, 0.9));
-        cancel.Invoke(window, null);
-        InvokeSave(window);
-        Assert.InRange(saved.CardNotificationPlacement.X, 0.29, 0.31);
-        Assert.InRange(saved.CardNotificationPlacement.Y, 0.39, 0.41);
+        Assert.Equal(new NotificationHudSettings { CornerRadius = 16, Width = 200, Height = 52, HorizontalPosition = 20, VerticalPosition = 30 }, saved.NotificationHud);
+        Assert.Equal(original.NotificationStyle, saved.NotificationStyle);
+        GetPrivateField<NumberBox>(window, "_notificationWidth").Value = 250;
+        var bar = GetPrivateField<SettingsSaveBar>(window, "_saveBar");
+        GetPrivateField<Button>(bar, "_cancel").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(200, GetPrivateField<NumberBox>(window, "_notificationWidth").Value);
+        Assert.Null(typeof(SettingsWindow).GetField("_notificationPreview", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
         window.Close();
     }
 
-    private static void AssertChatWindowHitTesting()
+    private static void AssertNotificationHitTesting()
     {
-        var clickThrough = new List<bool>();
         var platform = new Win32WindowApi();
+        var foreground = GetForegroundWindow();
+        using var notifications = new AvaloniaNotificationService(() => Point.Empty, NullLogger.Instance,
+            bringToFront: platform.BringToTopWithoutActivation,
+            setClickThrough: platform.SetNotificationClickThrough);
+        notifications.Show("程序已启动", UserNotificationSeverity.Info);
+        var window = GetPrivateField<NotificationWindow>(notifications, "_window");
+        var handle = window.TryGetPlatformHandle()!.Handle;
+        var style = Win32NativeMethods.GetWindowLongPtr(handle, Win32NativeMethods.GWL_EXSTYLE);
+        Assert.NotEqual(0, style & (nint)Win32NativeMethods.WS_EX_TRANSPARENT);
+        Assert.NotEqual(0, style & (nint)Win32NativeMethods.WS_EX_NOACTIVATE);
+        Assert.Equal(foreground, GetForegroundWindow());
         var clicks = 0;
-        using var notifications = new AvaloniaNotificationService(
-            () => Point.Empty,
-            NullLogger.Instance,
-            settings: new AppSettings { NotificationStyle = NotificationStyle.Chat },
-            setClickThrough: (handle, enabled) =>
-            {
-                clickThrough.Add(enabled);
-                return platform.SetNotificationClickThrough(handle, enabled);
-            });
-
-        notifications.Show("ordinary", UserNotificationSeverity.Info);
-        var chatWindows = GetPrivateField<Dictionary<Guid, NotificationWindow>>(notifications, "_chatWindows");
-        var ordinary = Assert.Single(chatWindows.Values);
-        var ordinaryHandle = ordinary.TryGetPlatformHandle()?.Handle ?? 0;
-        Assert.NotEqual(0, ordinaryHandle);
-        Assert.Equal(1, ordinary.Opacity);
-        Assert.NotEqual(0, Win32NativeMethods.GetWindowLongPtr(ordinaryHandle, Win32NativeMethods.GWL_EXSTYLE) &
-            (nint)Win32NativeMethods.WS_EX_TRANSPARENT);
-
-        notifications.Show("open update", UserNotificationSeverity.Info, () => clicks++);
-        var actionable = Assert.Single(chatWindows.Values, window => window != ordinary);
-        Assert.Equal(1, ordinary.Opacity);
-        Assert.Equal(1, actionable.Opacity);
-        var actionableHandle = actionable.TryGetPlatformHandle()?.Handle ?? 0;
-        Assert.NotEqual(0, actionableHandle);
-        Assert.Equal(0, Win32NativeMethods.GetWindowLongPtr(actionableHandle, Win32NativeMethods.GWL_EXSTYLE) &
-            (nint)Win32NativeMethods.WS_EX_TRANSPARENT);
-
-        Assert.Contains(true, clickThrough);
-        Assert.Contains(false, clickThrough);
-
-        var history = GetPrivateField<ChatNotificationQueue>(notifications, "_chat");
-        var actionId = history.Entries[^1].Id;
-        var fadeStart = DateTimeOffset.UtcNow.AddMilliseconds(-100);
-        foreach (var window in chatWindows.Values)
-        {
-            window.BeginFadeOut(fadeStart, AvaloniaNotificationService.FadeOutDuration);
-            window.AdvanceFade(fadeStart.AddMilliseconds(100));
-        }
-
-        var hoverMethod = typeof(AvaloniaNotificationService).GetMethod("OnChatPointerEntered", BindingFlags.Instance | BindingFlags.NonPublic);
-        var exitMethod = typeof(AvaloniaNotificationService).GetMethod("OnChatPointerExited", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(hoverMethod);
-        Assert.NotNull(exitMethod);
-        hoverMethod.Invoke(notifications, [actionId]);
-        Assert.True(history.IsPaused);
-        Assert.All(chatWindows.Values, window => Assert.Equal(1, window.Opacity));
-        exitMethod.Invoke(notifications, [actionId]);
-        Assert.False(history.IsPaused);
-
-        var clickMethod = typeof(AvaloniaNotificationService).GetMethod("OnChatClicked", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(clickMethod);
-        clickMethod.Invoke(notifications, [actionId]);
+        notifications.Show("发现新版本", UserNotificationSeverity.Info, () => clicks++);
+        style = Win32NativeMethods.GetWindowLongPtr(handle, Win32NativeMethods.GWL_EXSTYLE);
+        Assert.Equal(0, style & (nint)Win32NativeMethods.WS_EX_TRANSPARENT);
+        Assert.NotEqual(0, style & (nint)Win32NativeMethods.WS_EX_NOACTIVATE);
+        Assert.Equal(foreground, GetForegroundWindow());
+        notifications.PauseForHover();
+        Assert.True(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);
+        notifications.Configure(new AppSettings { NotificationHud = new NotificationHudSettings { Width = 200 } });
+        Assert.Equal(200, GetPrivateField<Border>(window, "_surface").Width);
+        Assert.True(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);
+        notifications.ResumeAfterHover();
+        Assert.False(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);
+        var click = typeof(AvaloniaNotificationService).GetMethod("OnWindowClicked", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        click.Invoke(notifications, [window, EventArgs.Empty]);
+        click.Invoke(notifications, [window, EventArgs.Empty]);
         Assert.Equal(1, clicks);
-        Assert.False(history.IsVisible);
-        Assert.Equal(2, history.Entries.Count);
-        Assert.All(chatWindows.Values, window => Assert.True(window.IsVisible));
-        var fadeSample = DateTimeOffset.UtcNow.AddMilliseconds(100);
-        Assert.All(chatWindows.Values, window => window.AdvanceFade(fadeSample));
-        var fadingOpacities = chatWindows.Values.Select(window => window.Opacity).ToArray();
-        Assert.All(fadingOpacities, opacity => Assert.InRange(opacity, 0.7, 0.8));
-        Assert.InRange(fadingOpacities.Max() - fadingOpacities.Min(), 0, 0.02);
-        Assert.All(chatWindows.Values, window => window.AdvanceFade(DateTimeOffset.UtcNow.AddMilliseconds(250)));
-        Assert.All(chatWindows.Values, window => Assert.False(window.IsVisible));
-        clickMethod.Invoke(notifications, [actionId]);
+        Assert.Null(GetPrivateField<TransientNotificationState>(notifications, "_state").Current);
+        notifications.Show("发现新版本", UserNotificationSeverity.Info, () => clicks++);
+        GetPrivateField<TransientNotificationState>(notifications, "_state").Show(
+            "expired", UserNotificationSeverity.Info, DateTimeOffset.UtcNow.AddSeconds(-10), () => clicks++);
+        notifications.PauseForHover();
+        Assert.False(window.IsVisible);
+        click.Invoke(notifications, [window, EventArgs.Empty]);
         Assert.Equal(1, clicks);
 
-        notifications.Show("next", UserNotificationSeverity.Info);
-        Assert.Equal(3, history.Entries.Count);
-        Assert.True(history.IsVisible);
-        Assert.All(chatWindows.Values, window => Assert.Equal(1, window.Opacity));
-        Assert.NotEqual(0, Win32NativeMethods.GetWindowLongPtr(actionableHandle, Win32NativeMethods.GWL_EXSTYLE) &
-            (nint)Win32NativeMethods.WS_EX_TRANSPARENT);
+        var unsafeRaiseCalls = 0;
+        using var failed = new AvaloniaNotificationService(() => Point.Empty, NullLogger.Instance,
+            bringToFront: _ => { unsafeRaiseCalls++; return NativeResult.Ok("test"); },
+            setClickThrough: (_, _) => NativeResult.Failed("test", 5, "denied"));
+        failed.Show("程序已启动", UserNotificationSeverity.Info);
+        Assert.False(GetPrivateField<NotificationWindow>(failed, "_window").IsVisible);
+        Assert.Null(GetPrivateField<TransientNotificationState>(failed, "_state").Current);
+        Assert.Equal(0, unsafeRaiseCalls);
     }
 
-    private static void AssertChatHistoryFitsTheWorkingArea()
-    {
-        using var notifications = new AvaloniaNotificationService(
-            () => Point.Empty,
-            NullLogger.Instance,
-            settings: new AppSettings { NotificationStyle = NotificationStyle.Chat });
-        for (var index = 0; index < ChatNotificationQueue.MaximumHistory; index++)
-        {
-            notifications.Show($"{index}: {new string('长', 500)}", UserNotificationSeverity.Info);
-        }
-
-        var history = GetPrivateField<ChatNotificationQueue>(notifications, "_chat");
-        var windows = GetPrivateField<Dictionary<Guid, NotificationWindow>>(notifications, "_chatWindows");
-        var first = windows[history.Entries[0].Id];
-        var screen = first.Screens.ScreenFromPoint(new Avalonia.PixelPoint(0, 0)) ?? first.Screens.Primary;
-        Assert.NotNull(screen);
-        var gap = (int)Math.Ceiling(4 * screen.Scaling);
-        var availableHeight = screen.WorkingArea.Height - 32;
-        var heights = history.Entries
-            .Select(entry => (int)Math.Ceiling(windows[entry.Id].Height * screen.Scaling))
-            .ToArray();
-        var expected = NotificationLayout.VisibleChatRows(heights, availableHeight, gap);
-
-        Assert.Equal(ChatNotificationQueue.MaximumHistory, history.Entries.Count);
-        Assert.Contains(history.Entries.Count - 1, expected);
-        for (var index = 0; index < history.Entries.Count; index++)
-        {
-            var window = windows[history.Entries[index].Id];
-            Assert.Equal(expected.Contains(index), window.IsVisible);
-            if (window.IsVisible && heights[index] <= availableHeight)
-            {
-                Assert.InRange(window.Position.Y,
-                    screen.WorkingArea.Y + 16,
-                    screen.WorkingArea.Bottom - 16 - heights[index]);
-            }
-        }
-    }
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
 
     private static T GetPrivateField<T>(object instance, string name) where T : class
     {

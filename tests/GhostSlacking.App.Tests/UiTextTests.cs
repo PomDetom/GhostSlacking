@@ -6,24 +6,24 @@ namespace GhostSlacking.App.Tests;
 public sealed class UiTextTests
 {
     [Theory]
-    [InlineData(UiLanguage.Chinese, "GhostSlacking 已启动，正在系统托盘运行。")]
-    [InlineData(UiLanguage.English, "GhostSlacking is running in the system tray.")]
+    [InlineData(UiLanguage.Chinese, "程序已启动")]
+    [InlineData(UiLanguage.English, "Ready")]
     public void Startup_notification_matches_the_selected_language(UiLanguage language, string expected)
     {
         Assert.Equal(expected, UiText.Text(language, "startupReady"));
     }
 
     [Theory]
-    [InlineData(UiLanguage.Chinese, "窗口选择已开启。请单击目标窗口，或按 Esc 取消。")]
-    [InlineData(UiLanguage.English, "Window selection is active. Click the target window, or press Esc to cancel.")]
+    [InlineData(UiLanguage.Chinese, "请点击窗口")]
+    [InlineData(UiLanguage.English, "Select")]
     public void Window_picker_prompt_matches_the_selected_language(UiLanguage language, string expected)
     {
         Assert.Equal(expected, UiText.Text(language, "clickToPick"));
     }
 
     [Theory]
-    [InlineData(UiLanguage.Chinese, "已取消选择窗口。")]
-    [InlineData(UiLanguage.English, "Window selection cancelled.")]
+    [InlineData(UiLanguage.Chinese, "已取消选择")]
+    [InlineData(UiLanguage.English, "Cancelled")]
     public void Escape_cancellation_has_localized_feedback(UiLanguage language, string expected)
     {
         Assert.Equal(expected, UiText.Text(language, "pickCancelled"));
@@ -44,8 +44,8 @@ public sealed class UiTextTests
     }
 
     [Theory]
-    [InlineData(UiLanguage.Chinese, "GhostSlacking 已成功升级到版本 1.2.0。", "已取消软件更新，GhostSlacking 已恢复运行。", "版本 1.2.0 自动升级失败，GhostSlacking 已恢复运行。请重试或查看日志。")]
-    [InlineData(UiLanguage.English, "GhostSlacking was updated successfully to version 1.2.0.", "The software update was cancelled and GhostSlacking is running again.", "The automatic update to version 1.2.0 failed. GhostSlacking is running again; retry or check the logs.")]
+    [InlineData(UiLanguage.Chinese, "更新已完成", "已取消更新", "更新未成功")]
+    [InlineData(UiLanguage.English, "Updated", "Cancelled", "Failed")]
     public void Automatic_update_results_have_localized_feedback(
         UiLanguage language,
         string succeeded,
@@ -58,24 +58,24 @@ public sealed class UiTextTests
     }
 
     [Theory]
-    [InlineData(UserErrorKind.SelectionStateCaptureFailed, "无法选择该窗口。未能安全保存窗口状态，未作任何更改。")]
-    [InlineData(UserErrorKind.GhostActivationFailed, "无法隐藏所选窗口。已尝试恢复原状态，请确认窗口显示正常。")]
-    [InlineData(UserErrorKind.WindowPlacementCorrectionFailed, "无法保持窗口位置。正在恢复窗口，请确认其显示正常。")]
-    [InlineData(UserErrorKind.HideWindowFailed, "无法隐藏目标窗口。请执行“恢复窗口”退出隐藏模式。")]
-    [InlineData(UserErrorKind.RevealWindowFailed, "无法更新局部显示。请重试，或执行“恢复窗口”。")]
-    [InlineData(UserErrorKind.RestoreFailed, "未能完整恢复窗口。请再次执行“恢复所有窗口”，或查看日志。")]
+    [InlineData(UserErrorKind.SelectionStateCaptureFailed, "选窗未成功")]
+    [InlineData(UserErrorKind.GhostActivationFailed, "隐藏未成功")]
+    [InlineData(UserErrorKind.WindowPlacementCorrectionFailed, "窗口需恢复")]
+    [InlineData(UserErrorKind.HideWindowFailed, "隐藏未成功")]
+    [InlineData(UserErrorKind.RevealWindowFailed, "显示未成功")]
+    [InlineData(UserErrorKind.RestoreFailed, "恢复未成功")]
     public void Core_errors_have_scenario_specific_Chinese_copy(UserErrorKind kind, string expected)
     {
         Assert.Equal(expected, UiText.Error(UiLanguage.Chinese, kind));
     }
 
     [Theory]
-    [InlineData(UserErrorKind.SelectionStateCaptureFailed, "That window could not be selected because its state could not be saved safely.")]
-    [InlineData(UserErrorKind.GhostActivationFailed, "The selected window could not be hidden. Check that it was restored normally.")]
-    [InlineData(UserErrorKind.WindowPlacementCorrectionFailed, "The window position could not be preserved. Check that it was restored normally.")]
-    [InlineData(UserErrorKind.HideWindowFailed, "The target could not be hidden. Run Restore Window to leave hidden mode.")]
-    [InlineData(UserErrorKind.RevealWindowFailed, "The local reveal could not be updated. Retry or run Restore Window.")]
-    [InlineData(UserErrorKind.RestoreFailed, "The window could not be fully restored. Run Restore All Windows again or check the log.")]
+    [InlineData(UserErrorKind.SelectionStateCaptureFailed, "Failed")]
+    [InlineData(UserErrorKind.GhostActivationFailed, "Failed")]
+    [InlineData(UserErrorKind.WindowPlacementCorrectionFailed, "Restore")]
+    [InlineData(UserErrorKind.HideWindowFailed, "Failed")]
+    [InlineData(UserErrorKind.RevealWindowFailed, "Failed")]
+    [InlineData(UserErrorKind.RestoreFailed, "Failed")]
     public void Core_errors_have_scenario_specific_English_copy(UserErrorKind kind, string expected)
     {
         Assert.Equal(expected, UiText.Error(UiLanguage.English, kind));
@@ -87,10 +87,10 @@ public sealed class UiTextTests
         var unknown = (UserErrorKind)int.MaxValue;
 
         Assert.Equal(
-            "操作未能完成。请重试；若仍失败，请查看日志。",
+            "操作未成功",
             UiText.Error(UiLanguage.Chinese, unknown));
         Assert.Equal(
-            "The operation could not be completed. Try again; if it still fails, check the log.",
+            "Failed",
             UiText.Error(UiLanguage.English, unknown));
     }
 }
