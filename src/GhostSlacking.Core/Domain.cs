@@ -211,7 +211,7 @@ public sealed record GhostWindowProfile(WindowSnapshot Original, RevealSettings 
 
 public sealed record AppSettings
 {
-    public int SchemaVersion { get; init; } = 8;
+    public int SchemaVersion { get; init; } = 10;
     public UiLanguage Language { get; init; } = UiLanguage.Chinese;
     public UiThemeMode ThemeMode { get; init; } = UiThemeMode.System;
     public NotificationStyle NotificationStyle { get; init; } = NotificationStyle.Card;
@@ -237,13 +237,16 @@ public sealed record AppSettings
     public HotkeyBinding ExitHotkey { get; init; } = new(0x51, ShortcutModifiers.Control | ShortcutModifiers.Alt);
     public HotkeyBinding RevealDiameterIncreaseHotkey { get; init; } = new(0, ShortcutModifiers.None);
     public HotkeyBinding RevealDiameterDecreaseHotkey { get; init; } = new(0, ShortcutModifiers.None);
+    public bool ExperimentalBackgroundInteraction { get; init; }
+    public bool ContinuousBackgroundInteraction { get; init; }
+    public HotkeyBinding BackgroundInteractionHotkey { get; init; } = HotkeyBinding.Disabled;
     public bool StartWithWindows { get; init; }
     public bool RestoreOnExit { get; init; } = true;
     public LogLevel MinimumLogLevel { get; init; } = LogLevel.Info;
 
     public AppSettings Normalize() => this with
     {
-        SchemaVersion = 8,
+        SchemaVersion = 10,
         Language = Language is UiLanguage.Chinese or UiLanguage.English ? Language : UiLanguage.Chinese,
         ThemeMode = ThemeMode is UiThemeMode.System or UiThemeMode.Light or UiThemeMode.Dark
             ? ThemeMode
@@ -276,6 +279,7 @@ public sealed record AppSettings
             ? UpdateChannel
             : UpdateChannel.Stable,
         PickHotkey = PickHotkey.Normalize(0x50, ShortcutModifiers.Control | ShortcutModifiers.Alt),
+        BackgroundInteractionHotkey = BackgroundInteractionHotkey.Normalize(0, ShortcutModifiers.None),
         WindowToggleVirtualKey = WindowToggleVirtualKey is >= 1 and <= 255 ? WindowToggleVirtualKey : 0x47,
         WindowToggleHotkey = NormalizeWindowToggleHotkey(),
         RestoreHotkey = RestoreHotkey.Normalize(0x52, ShortcutModifiers.Control | ShortcutModifiers.Alt),

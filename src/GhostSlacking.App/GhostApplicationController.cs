@@ -1,4 +1,4 @@
-using Avalonia.Controls;
+﻿using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform;
 using Avalonia.Threading;
@@ -19,6 +19,13 @@ internal sealed class GhostApplicationController : IDisposable
     private const int PickHotkey = 6;
     private const int DiameterIncreaseHotkey = 7;
     private const int DiameterDecreaseHotkey = 8;
+    private const int BackgroundInteractionHotkey = 9;
+    private readonly Win32BackgroundInteraction _backgroundInteraction;
+    private readonly AvaloniaNotificationService _backgroundHud;
+    private bool _lastPeekKeyDown;
+    private BackgroundArmStatus? _backgroundStartWait;
+    private WindowSnapshot? _backgroundWaitTarget;
+    private bool _invalidContinuousGesture;
     private readonly FileLogger _logger;
     private readonly DataExportService _dataExport;
     private readonly UpdateCompletionStore _updateCompletionStore;
@@ -132,11 +139,53 @@ internal sealed class GhostApplicationController : IDisposable
             _windows.BringToTopWithoutActivation,
             _settings,
             _windows.SetNotificationClickThrough);
+        _backgroundHud = new AvaloniaNotificationService(
+            _windows.GetCursorPosition, _logger, _windows.BringToTopWithoutActivation,
+            _settings, _windows.SetNotificationClickThrough);
+        _backgroundInteraction = new Win32BackgroundInteraction(
+            _windows, () => _coordinator.State, () => _coordinator.CurrentProfile,
+            action => Dispatcher.UIThread.Post(action), _logger);
+        _backgroundInteraction.Preparing += waiting =>
+            _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, waiting ? "backgroundPending" : "backgroundStarting"));
+        _backgroundInteraction.Started += () =>
+        {
+            _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, "backgroundActive"));
+            UpdateTrayStatus();
+        };
+        _backgroundInteraction.InputPending += pending =>
+        {
+            if (!_isExiting) _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, pending ? "backgroundStarting" : "backgroundActive"));
+        };
+        _backgroundInteraction.Stopped += OnBackgroundInteractionStopped;
+        _backgroundInteraction.InputRejected += OnBackgroundInputRejected;
+        _backgroundInteraction.InputResumed += () =>
+        {
+            if (!_isExiting) _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, "backgroundActive"));
+        };
+        _backgroundInteraction.ShortcutPressed += id =>
+        {
+            // The hook already stopped the session. Its own toggle must not arm it again.
+            if (id != BackgroundInteractionHotkey) OnHotkeyPressed(id);
+        };
         _updates.Changed += OnUpdateStateChanged;
         _updates.InstallHandoffStarted += OnUpdateInstallHandoffStarted;
 
-        _coordinator.StateChanged += (_, _) => UpdateTrayStatus();
-        _coordinator.UserErrorOccurred += (_, error) => ShowCoreError(error.Kind);
+        _coordinator.StateChanged += (_, change) =>
+        {
+            if (change.State != GhostState.Reveal)
+            {
+                _backgroundInteraction.Stop(change.State is GhostState.Ghost or GhostState.Restoring
+                    ? BackgroundInteractionStopReason.RevealEnded : BackgroundInteractionStopReason.TargetChanged);
+                if (change.State != GhostState.Ghost) ResetPeekIntent();
+                if (change.State is GhostState.Visible or GhostState.Idle) _backgroundInteraction.RecordTargetInputState("restored");
+            }
+            UpdateTrayStatus();
+        };
+        _coordinator.UserErrorOccurred += (_, error) =>
+        {
+            _backgroundInteraction.Stop(BackgroundInteractionStopReason.DeliveryFailed);
+            ShowCoreError(error.Kind);
+        };
         _coordinator.WindowSelected += OnWindowSelected;
         _coordinator.TargetClosed += (_, _) => UpdateTrayStatus();
         _watchdog = TryStartWatchdog();
@@ -205,10 +254,89 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void OnPeekTimerTick(object? sender, EventArgs args)
     {
-        _peekDown = _peekState.Update(_windows.IsKeyDown(_settings.PeekVirtualKey), _settings.PeekTrigger);
+        var peekKeyDown = _windows.IsKeyDown(_settings.PeekVirtualKey);
+        var peekPressed = peekKeyDown && !_lastPeekKeyDown;
+        _lastPeekKeyDown = peekKeyDown;
+        if (!peekKeyDown) _invalidContinuousGesture = false;
+        _backgroundInteraction.Poll();
+        if (_backgroundStartWait is not null && !BackgroundStartPolicy.KeepWaiting(_backgroundWaitTarget, _coordinator.CurrentProfile?.Original, _peekDown)) ResetPeekIntent();
+        if (_backgroundInteraction.BlocksReveal && peekPressed)
+        {
+            _backgroundInteraction.AcknowledgeRevealBlock();
+        }
+        if (_backgroundInteraction.BlocksReveal)
+        {
+            _peekState.Reset(peekKeyDown);
+            _peekDown = false;
+        }
+        else
+        {
+            _peekDown = _peekState.Update(peekKeyDown, _settings.PeekTrigger);
+        }
         var cursor = _windows.GetCursorPosition();
         var startedAt = Stopwatch.GetTimestamp();
-        _coordinator.UpdatePeek(cursor, _peekDown);
+        var continuous = _settings.ExperimentalBackgroundInteraction && _settings.ContinuousBackgroundInteraction;
+        var show = _peekDown;
+        if (continuous)
+        {
+            if (_settings.PeekTrigger != PeekTrigger.Toggle)
+            {
+                if (_peekDown && !_invalidContinuousGesture)
+                {
+                    _invalidContinuousGesture = true;
+                    ShowError(UiText.Text(_settings.Language, "backgroundToggleRequired"));
+                }
+                ResetPeekIntent();
+                show = false;
+            }
+            else if (_isExiting || _pickerActive || _settingsWindow is not null || _updateWindow is not null)
+            {
+                _backgroundInteraction.Stop(BackgroundInteractionStopReason.RevealEnded);
+                ResetPeekIntent();
+                show = false;
+            }
+            else if (!_peekDown || _coordinator.CurrentProfile?.Original.ScreenBounds.Contains(cursor) != true)
+            {
+                _backgroundInteraction.Stop(_peekDown ? BackgroundInteractionStopReason.CursorLeft : BackgroundInteractionStopReason.RevealEnded);
+                if (!_peekDown) ClearBackgroundStartWait();
+                show = false;
+            }
+            else
+            {
+                if (!_backgroundInteraction.IsActive && !_backgroundInteraction.IsPending && _coordinator.State == GhostState.Reveal)
+                    _coordinator.UpdatePeek(cursor, false);
+                if (_backgroundInteraction.IsDraining && !_backgroundInteraction.BlocksReveal) SetBackgroundStartWait(BackgroundArmStatus.AwaitingRelease);
+                if (!_backgroundInteraction.IsActive && !_backgroundInteraction.IsPending &&
+                    !_backgroundInteraction.IsDraining && !_backgroundInteraction.BlocksReveal &&
+                    BackgroundStartPolicy.CanResume(_backgroundStartWait, _backgroundInteraction.HasSeparateForeground) &&
+                    _coordinator.State is GhostState.Ghost or GhostState.Reveal)
+                {
+                    var result = ArmBackgroundInteraction(prepareHidden: true);
+                    if (result.Status is BackgroundArmStatus.AwaitingForeground or BackgroundArmStatus.AwaitingRelease)
+                        SetBackgroundStartWait(result.Status);
+                    else if (result.Status == BackgroundArmStatus.Preparing)
+                        ClearBackgroundStartWait(hide: false);
+                    else
+                    {
+                        ClearBackgroundStartWait();
+                        _logger.Log(LogLevel.Warning, $"ContinuousBackgroundInteraction prepare failed operation={result.Operation} error={result.ErrorCode}");
+                        ResetPeekIntent();
+                        ShowError(UiText.Text(_settings.Language, "backgroundFailed"));
+                    }
+                }
+                _backgroundInteraction.Poll();
+                show = _peekDown && (_backgroundInteraction.IsReady || _backgroundInteraction.IsActive);
+            }
+        }
+        _coordinator.UpdatePeek(cursor, show);
+        if (continuous && show && _backgroundInteraction.IsReady && !_backgroundInteraction.ActivateReveal())
+        {
+            // A new event arrived while the target was being shown. Keep it gated,
+            // hide again and prepare a fresh session after the physical release.
+            _backgroundInteraction.Stop(BackgroundInteractionStopReason.RevealEnded);
+            _coordinator.UpdatePeek(cursor, false);
+        }
+        _backgroundInteraction.Poll();
         var revealActive = _peekDown && _coordinator.State == GhostState.Reveal;
         UpdateRevealFrameRate(cursor, revealActive);
         var updateDuration = Stopwatch.GetElapsedTime(startedAt);
@@ -265,6 +393,7 @@ internal sealed class GhostApplicationController : IDisposable
     {
         _displayRefreshRates.Invalidate();
         _notifications?.RefreshLayout();
+        _backgroundHud?.RefreshLayout();
         _logger.Log(LogLevel.Debug, "Display configuration changed; refresh-rate cache invalidated.");
     }
 
@@ -289,17 +418,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void RegisterHotkeys()
     {
-        (int Id, HotkeyBinding Binding)[] shortcuts =
-        [
-            (PickHotkey, _settings.PickHotkey),
-            (WindowVisibilityHotkey, _settings.WindowToggleHotkey),
-            (RestoreHotkey, _settings.RestoreHotkey),
-            (EmergencyRestoreHotkey, _settings.RestoreAllHotkey),
-            (SettingsHotkey, _settings.SettingsHotkey),
-            (QuitHotkey, _settings.ExitHotkey),
-            (DiameterIncreaseHotkey, _settings.RevealDiameterIncreaseHotkey),
-            (DiameterDecreaseHotkey, _settings.RevealDiameterDecreaseHotkey)
-        ];
+        var shortcuts = GetShortcuts();
         var duplicates = shortcuts
             .Where(shortcut => !shortcut.Binding.IsDisabled)
             .GroupBy(shortcut => shortcut.Binding)
@@ -313,16 +432,28 @@ internal sealed class GhostApplicationController : IDisposable
             {
                 continue;
             }
-
             if (duplicates.Contains(shortcut.Binding))
             {
                 _logger.Log(LogLevel.Warning, $"Duplicate hotkey was not registered: {UiText.ShortcutName(_settings.Language, shortcut.Binding)}");
                 continue;
             }
-
             RegisterShortcut(shortcut.Id, shortcut.Binding);
         }
     }
+
+    private (int Id, HotkeyBinding Binding)[] GetShortcuts() =>
+        [
+            (PickHotkey, _settings.PickHotkey),
+            (WindowVisibilityHotkey, _settings.WindowToggleHotkey),
+            (RestoreHotkey, _settings.RestoreHotkey),
+            (EmergencyRestoreHotkey, _settings.RestoreAllHotkey),
+            (SettingsHotkey, _settings.SettingsHotkey),
+            (QuitHotkey, _settings.ExitHotkey),
+            (DiameterIncreaseHotkey, _settings.RevealDiameterIncreaseHotkey),
+            (DiameterDecreaseHotkey, _settings.RevealDiameterDecreaseHotkey),
+            (BackgroundInteractionHotkey, _settings.ExperimentalBackgroundInteraction
+                ? _settings.BackgroundInteractionHotkey : HotkeyBinding.Disabled)
+        ];
 
     private void RegisterShortcut(int id, HotkeyBinding binding)
     {
@@ -355,6 +486,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void OnHotkeyPressed(int id)
     {
+        if (id != BackgroundInteractionHotkey) CancelBackgroundInteraction();
         switch (id)
         {
             case PickHotkey:
@@ -381,11 +513,154 @@ internal sealed class GhostApplicationController : IDisposable
             case DiameterDecreaseHotkey:
                 AdjustRevealDiameter(-1);
                 break;
+            case BackgroundInteractionHotkey:
+                ToggleBackgroundInteraction();
+                break;
         }
+    }
+
+    private void ToggleBackgroundInteraction()
+    {
+        if (_backgroundStartWait is not null)
+        {
+            CancelBackgroundInteraction();
+            return;
+        }
+        if (_backgroundInteraction.IsActive || _backgroundInteraction.IsPending)
+        {
+            _backgroundInteraction.Stop();
+            return;
+        }
+        if (!_settings.ExperimentalBackgroundInteraction) return;
+        if (_settings.ContinuousBackgroundInteraction)
+        {
+            var hadIntent = _peekDown;
+            CancelBackgroundInteraction();
+            ShowInfo(UiText.Text(_settings.Language, hadIntent ? "backgroundStopped" : "backgroundUnavailable"));
+            return;
+        }
+        if (_settings.PeekTrigger != PeekTrigger.Toggle)
+        {
+            ShowError(UiText.Text(_settings.Language, "backgroundToggleRequired"));
+            return;
+        }
+        var result = ArmBackgroundInteraction();
+        if (result.Status is BackgroundArmStatus.AwaitingForeground or BackgroundArmStatus.AwaitingRelease)
+        {
+            CancelBackgroundInteraction();
+            ShowInfo(UiText.Text(_settings.Language, result.Status == BackgroundArmStatus.AwaitingForeground ? "backgroundFocusFirst" : "backgroundPending"));
+        }
+        else if (!result.Success)
+        {
+            _logger.Log(LogLevel.Warning, $"BackgroundInteraction arm failed operation={result.Operation} error={result.ErrorCode}");
+            ShowError(UiText.Text(_settings.Language, _coordinator.State == GhostState.Reveal ? "backgroundFailed" : "backgroundUnavailable"));
+        }
+    }
+
+    private BackgroundArmResult ArmBackgroundInteraction(bool prepareHidden = false)
+    {
+        var shortcuts = GetShortcuts().Where(item => !item.Binding.IsDisabled)
+            .GroupBy(item => item.Binding).Where(group => group.Count() == 1).SelectMany(group => group)
+            .ToDictionary(item => item.Id, item => item.Binding);
+        return _backgroundInteraction.Arm(shortcuts, prepareHidden, _settings.PeekVirtualKey);
+    }
+
+    private void SetBackgroundStartWait(BackgroundArmStatus status)
+    {
+        if (_backgroundStartWait == status && _backgroundWaitTarget == _coordinator.CurrentProfile?.Original) return;
+        _backgroundStartWait = status;
+        _backgroundWaitTarget = _coordinator.CurrentProfile?.Original;
+        _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, status == BackgroundArmStatus.AwaitingForeground ? "backgroundFocusFirst" : "backgroundPending"));
+    }
+
+    private void ClearBackgroundStartWait(bool hide = true)
+    {
+        if (_backgroundStartWait is null) return;
+        _backgroundStartWait = null;
+        _backgroundWaitTarget = null;
+        if (hide) _backgroundHud.Hide();
+    }
+
+    private void ResetPeekIntent()
+    {
+        ClearBackgroundStartWait();
+        _peekState.Reset(_windows.IsKeyDown(_settings.PeekVirtualKey));
+        _peekDown = false;
+    }
+
+    private void CancelBackgroundInteraction()
+    {
+        ResetPeekIntent();
+        _backgroundInteraction.Stop(BackgroundInteractionStopReason.RevealEnded);
+        if (_coordinator.State == GhostState.Reveal)
+            _coordinator.UpdatePeek(_windows.GetCursorPosition(), false);
+        _backgroundHud.Hide();
+    }
+
+    private void OnBackgroundInteractionStopped(BackgroundInteractionStopReason reason)
+    {
+        if (_isExiting) return;
+        if (_backgroundStartWait is not null && !_backgroundInteraction.BlocksReveal &&
+            reason is BackgroundInteractionStopReason.CursorLeft or BackgroundInteractionStopReason.RevealEnded)
+        {
+            UpdateTrayStatus();
+            return;
+        }
+        _backgroundHud.Hide();
+        if (_backgroundInteraction.BlocksReveal)
+        {
+            _peekState.Reset(_windows.IsKeyDown(_settings.PeekVirtualKey));
+            _peekDown = false;
+            if (_coordinator.State == GhostState.Reveal)
+                _coordinator.UpdatePeek(_windows.GetCursorPosition(), false);
+        }
+        if (reason == BackgroundInteractionStopReason.PeekClosed ||
+            (_settings.ExperimentalBackgroundInteraction && _settings.ContinuousBackgroundInteraction &&
+             reason is BackgroundInteractionStopReason.RevealEnded or BackgroundInteractionStopReason.CursorLeft))
+        {
+            UpdateTrayStatus();
+            return;
+        }
+        var key = reason switch
+        {
+            BackgroundInteractionStopReason.ForegroundChanged => "backgroundForegroundChanged",
+            BackgroundInteractionStopReason.UnsupportedInput or BackgroundInteractionStopReason.TargetChanged => "backgroundUnsupported",
+            BackgroundInteractionStopReason.DeliveryFailed => "backgroundFailed",
+            BackgroundInteractionStopReason.CleanupFailed => "backgroundCleanupFailed",
+            _ => "backgroundStopped"
+        };
+        if (reason is BackgroundInteractionStopReason.UnsupportedInput or BackgroundInteractionStopReason.DeliveryFailed or BackgroundInteractionStopReason.CleanupFailed)
+            ShowError(UiText.Text(_settings.Language, key));
+        else ShowInfo(UiText.Text(_settings.Language, key));
+        UpdateTrayStatus();
+    }
+
+    private void OnBackgroundInputRejected(BackgroundInputRejectionReason reason)
+    {
+        if (_isExiting || !_backgroundInteraction.IsActive) return;
+        var key = reason switch
+        {
+            BackgroundInputRejectionReason.PendingTextOperation => "backgroundStarting",
+            BackgroundInputRejectionReason.DiscoveryUnavailable => "backgroundDiscoveryRejected",
+            BackgroundInputRejectionReason.PasteUnavailable => "backgroundPasteRejected",
+            BackgroundInputRejectionReason.PasteRequiresEmptyEditor => "backgroundEmptyEditorRequired",
+            BackgroundInputRejectionReason.RichContentUnverified => "backgroundRichContentRejected",
+            BackgroundInputRejectionReason.ClipboardUnavailable => "backgroundClipboardRejected",
+            BackgroundInputRejectionReason.ControlUnavailable => "backgroundControlRejected",
+            BackgroundInputRejectionReason.NoInputRecipient => "backgroundClickEditor",
+            BackgroundInputRejectionReason.ImeComposition => "backgroundImeRejected",
+            BackgroundInputRejectionReason.DeadKey => "backgroundDeadKeyRejected",
+            BackgroundInputRejectionReason.SystemShortcut => "backgroundSystemKeyRejected",
+            BackgroundInputRejectionReason.UnsupportedMouse => "backgroundMouseRejected",
+            BackgroundInputRejectionReason.OutsideEditor => "backgroundTextOnly",
+            _ => "backgroundKeyRejected"
+        };
+        _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, key));
     }
 
     private void BeginPicking()
     {
+        CancelBackgroundInteraction();
         if (_pickerActive || _pickerEscapeGate.AwaitingRelease)
         {
             return;
@@ -487,6 +762,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void ToggleWindowVisibility()
     {
+        CancelBackgroundInteraction();
         if (_coordinator.CurrentProfile is null)
         {
             ShowError(UiText.Text(_settings.Language, "selectWindowFirst"));
@@ -498,18 +774,21 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void RestoreCurrent(string reason)
     {
+        CancelBackgroundInteraction();
         _coordinator.RestoreCurrent(reason);
         UpdateTrayStatus();
     }
 
     private void RestoreAll(string reason)
     {
+        CancelBackgroundInteraction();
         _coordinator.RestoreAll(reason);
         UpdateTrayStatus();
     }
 
     private void OpenSettings(string? initialPage = null)
     {
+        CancelBackgroundInteraction();
         if (_settingsWindow is not null)
         {
             if (_settingsWindow.WindowState == WindowState.Minimized)
@@ -557,6 +836,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void OpenUpdateWindow()
     {
+        CancelBackgroundInteraction();
         if (_isExiting || _updates.Snapshot.Release is null)
         {
             return;
@@ -641,6 +921,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     private bool SaveSettings(AppSettings updated)
     {
+        CancelBackgroundInteraction();
         var previousKey = _settings.PeekVirtualKey;
         var previousTrigger = _settings.PeekTrigger;
         updated = updated.Normalize();
@@ -651,6 +932,7 @@ internal sealed class GhostApplicationController : IDisposable
 
         _settings = updated;
         _notifications.Configure(_settings);
+        _backgroundHud.Configure(_settings);
         _updates.SetChannel(_settings.UpdateChannel);
         _logger.MinimumLevel = _settings.MinimumLogLevel;
         AppTheme.Apply(_settings.ThemeMode);
@@ -724,6 +1006,10 @@ internal sealed class GhostApplicationController : IDisposable
         _restoreAllItem.IsEnabled = profile is not null;
         _toggleItem.IsEnabled = profile is not null;
         _trayIcon.ToolTipText = $"GhostSlacking - {UiText.State(_settings.Language, _coordinator.State)}";
+        if (_backgroundInteraction.IsActive)
+        {
+            _trayIcon.ToolTipText += $" / {UiText.Text(_settings.Language, "backgroundActive")}";
+        }
     }
 
     private void OnUpdateStateChanged(object? sender, EventArgs args)
@@ -785,6 +1071,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     internal void ReportUnhandledException(Exception exception)
     {
+        _backgroundInteraction.Stop(BackgroundInteractionStopReason.DeliveryFailed);
         _logger.Log(LogLevel.Error, "An unexpected Avalonia UI error occurred.", exception);
         ShowError(UiText.Text(_settings.Language, "unexpected"));
     }
@@ -828,6 +1115,8 @@ internal sealed class GhostApplicationController : IDisposable
         _disposed = true;
         _isExiting = true;
         _updateCancellation.Cancel();
+        _backgroundInteraction.Dispose();
+        _backgroundHud.Dispose();
         CancelPicking();
         RestoreReport? restoreReport = null;
         if (_settings.RestoreOnExit || _forceRestoreOnExit)

@@ -1,4 +1,4 @@
-using GhostSlacking.App;
+﻿using GhostSlacking.App;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -7,6 +7,9 @@ using System.Drawing;
 using System.Reflection;
 using GhostSlacking.Core;
 using GhostSlacking.Platform;
+using Avalonia.VisualTree;
+using Avalonia.Controls.Documents;
+using Avalonia.Controls.Presenters;
 
 namespace GhostSlacking.App.Tests;
 
@@ -32,9 +35,12 @@ public sealed class AvaloniaStartupTests
                 var settingsWindow = new SettingsWindow(new AppSettings(), _ => true);
                 Assert.Same(AppIcon.TitleBarImage, settingsWindow.Icon);
                 AssertDefaultSettingsWindowLayout(settingsWindow);
+                stage = "experiment icon state and rendering";
+                AssertExperimentIconRendering();
                 AssertSaveBarFitsSingleLineMessages();
                 AssertSettingsCancelAndSaveLifecycle();
                 AssertPeekFrameRateSetting(settingsWindow);
+                AssertBackgroundInteractionSetting();
                 AssertAboutPage();
                 AssertUpdateWindow();
                 AssertThemePreviewLifecycle();
@@ -59,11 +65,13 @@ public sealed class AvaloniaStartupTests
                 notifications.Show("ready again", UserNotificationSeverity.Info);
                 AssertNotificationWindowComposition(notifications);
                 stage = "HUD layout and lifecycle";
-                AssertNotificationWindowsKeepFixedGeometry();
+                AssertNotificationWindowsAdaptToContent();
+                AssertNotificationMeasurementAcrossThemesAndDpi();
                 AssertNotificationFadeAndPreview();
                 AssertNotificationFadeInterruption();
                 AssertNotificationHudSettingSavesAndCancels();
                 AssertNotificationHitTesting();
+                AssertPersistentBackgroundHud();
                 Assert.Equal(2, raisedNotificationHandles.Count);
                 Assert.All(raisedNotificationHandles, handle => Assert.NotEqual(0, handle));
                 trayIcon.IsVisible = false;
@@ -193,6 +201,65 @@ public sealed class AvaloniaStartupTests
         Assert.False(saveBar.IsEnabled);
     }
 
+    private static void AssertExperimentIconRendering()
+    {
+        var window = new SettingsWindow(new AppSettings(), _ => true) { ShowActivated = false };
+        var navigation = GetPrivateField<NavigationView>(window, "_navigation");
+        var items = navigation.MenuItems.Cast<NavigationViewItem>().ToArray();
+        var experiment = items[3];
+        var reference = items[2];
+        var directory = Environment.GetEnvironmentVariable("GHOST_ICON_OUTPUT");
+        window.Show();
+        try
+        {
+            foreach (var theme in new[] { Avalonia.Styling.ThemeVariant.Light, Avalonia.Styling.ThemeVariant.Dark })
+            foreach (var expanded in new[] { false, true })
+            {
+                window.RequestedThemeVariant = theme;
+                navigation.IsPaneOpen = expanded;
+                foreach (var state in new[] { "normal", "selected", "hover", "pressed", "disabled" })
+                {
+                    IBrush? referenceBrush = null;
+                    foreach (var item in new[] { reference, experiment })
+                    {
+                        navigation.SelectedItem = state == "selected" ? item : items[0];
+                        item.IsEnabled = state != "disabled";
+                        ((IPseudoClasses)item.Classes).Set(":pointerover", state is "hover" or "pressed");
+                        ((IPseudoClasses)item.Classes).Set(":pressed", state == "pressed");
+                        window.UpdateLayout();
+                        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                        var icon = item == experiment
+                            ? item.GetVisualDescendants().OfType<FAPathIcon>().Cast<Control>().First()
+                            : item.GetVisualDescendants().OfType<SymbolIcon>().Cast<Control>().First();
+                        var host = icon.GetVisualAncestors().OfType<ContentPresenter>().First(parent => parent.Name == "Icon");
+                        var brush = icon.GetValue(TextElement.ForegroundProperty);
+                        Assert.Equal(host.GetValue(TextElement.ForegroundProperty), brush);
+                        Assert.Equal(1, icon.Opacity);
+                        Assert.InRange(icon.Bounds.Width, 1, 24);
+                        Assert.InRange(icon.Bounds.Height, 1, 24);
+                        if (item == reference) referenceBrush = brush;
+                        else Assert.Equal(referenceBrush, brush);
+                        ((IPseudoClasses)item.Classes).Set(":pointerover", false);
+                        ((IPseudoClasses)item.Classes).Set(":pressed", false);
+                        item.IsEnabled = true;
+                    }
+                }
+                navigation.SelectedItem = items[0];
+                window.UpdateLayout();
+                if (directory is null) continue;
+                Directory.CreateDirectory(directory);
+                foreach (var scale in new[] { 1d, 1.25, 1.5, 2 })
+                {
+                    using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(
+                        new Avalonia.PixelSize((int)(window.Bounds.Width * scale), (int)(window.Bounds.Height * scale)), new Avalonia.Vector(96 * scale, 96 * scale));
+                    bitmap.Render(window);
+                    bitmap.Save(Path.Combine(directory, $"icons-{theme}-{(expanded ? "open" : "compact")}-{(int)(scale * 100)}.png"));
+                }
+            }
+        }
+        finally { window.Close(); }
+    }
+
     private static void AssertSaveBarFitsSingleLineMessages()
     {
         using var bar = new SettingsSaveBar(Brushes.White, Brushes.Gray, Brushes.Black) { MaxWidth = 600 };
@@ -263,7 +330,7 @@ public sealed class AvaloniaStartupTests
             var combo = GetPrivateField<ComboBox>(window, name);
             combo.SelectedIndex = (combo.SelectedIndex + 1) % combo.Items.Count;
         }
-        foreach (var name in new[] { "_restoreOnExit", "_startWithWindows" })
+        foreach (var name in new[] { "_restoreOnExit", "_startWithWindows", "_backgroundInteraction", "_continuousInteraction" })
         {
             var toggle = GetPrivateField<ToggleSwitch>(window, name);
             toggle.IsChecked = toggle.IsChecked != true;
@@ -335,6 +402,57 @@ public sealed class AvaloniaStartupTests
         Assert.Equal(
             PeekFrameRateLimit.Fps90,
             GetPrivateField<SettingsEditState>(settingsWindow, "_editState").SavedSettings.PeekFrameRateLimit);
+    }
+
+    private static void AssertBackgroundInteractionSetting()
+    {
+        AppSettings? saved = null;
+        var window = new SettingsWindow(new AppSettings(), settings => { saved = settings; return true; });
+        var toggle = GetPrivateField<ToggleSwitch>(window, "_backgroundInteraction");
+        Assert.False(toggle.IsChecked == true);
+        var continuous = GetPrivateField<ToggleSwitch>(window, "_continuousInteraction");
+        Assert.False(continuous.IsChecked == true);
+        Assert.False(continuous.IsEnabled);
+        var navigation = GetPrivateField<NavigationView>(window, "_navigation");
+        var items = navigation.MenuItems.Cast<NavigationViewItem>().ToArray();
+        Assert.Equal("general", items[2].Tag);
+        Assert.Equal("experiments", items[3].Tag);
+        var flask = Assert.IsType<PathIconSource>(items[3].IconSource);
+        Assert.False(flask.IsSet(IconSource.ForegroundProperty));
+        var editor = typeof(SettingsWindow).GetField("_backgroundInteractionHotkey", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+        var binding = editor.GetType().GetProperty("Binding")!;
+        Assert.Equal(HotkeyBinding.Disabled, binding.GetValue(editor));
+        toggle.IsChecked = true;
+        Assert.True(continuous.IsEnabled);
+        continuous.IsChecked = true;
+        binding.SetValue(editor, new HotkeyBinding(0x49, ShortcutModifiers.Control | ShortcutModifiers.Shift));
+        GetPrivateField<ComboBox>(window, "_language").SelectedIndex = 1;
+        InvokeSave(window);
+        Assert.NotNull(saved);
+        Assert.True(saved.ExperimentalBackgroundInteraction);
+        Assert.True(saved.ContinuousBackgroundInteraction);
+        Assert.Equal(new HotkeyBinding(0x49, ShortcutModifiers.Control | ShortcutModifiers.Shift), saved.BackgroundInteractionHotkey);
+        Assert.NotEqual("backgroundInteractionDescription", UiText.Text(UiLanguage.English, "backgroundInteractionDescription"));
+        Assert.NotEqual("backgroundInteractionDescription", UiText.Text(UiLanguage.Chinese, "backgroundInteractionDescription"));
+        window.Close();
+    }
+
+    private static void AssertPersistentBackgroundHud()
+    {
+        using var service = new AvaloniaNotificationService(() => Point.Empty, NullLogger.Instance);
+        service.ShowPersistent("BG input");
+        var state = GetPrivateField<TransientNotificationState>(service, "_state");
+        state.Show("BG input", UserNotificationSeverity.Info, DateTimeOffset.UtcNow.AddHours(-1));
+        typeof(AvaloniaNotificationService).GetMethod("OnTimerTick", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(service, [null, EventArgs.Empty]);
+        Assert.NotNull(state.Current);
+        service.PauseForHover();
+        Assert.NotNull(state.Current);
+        var hud = GetPrivateField<NotificationWindow>(service, "_window");
+        Assert.False(hud.ShowActivated);
+        service.Hide();
+        Assert.Null(state.Current);
+        Assert.False(hud.IsVisible);
     }
 
     private static void AssertAboutPage()
@@ -516,7 +634,7 @@ public sealed class AvaloniaStartupTests
         Assert.False(window.ShowActivated);
         Assert.False(window.ShowInTaskbar);
         Assert.Contains(WindowTransparencyLevel.Transparent, window.TransparencyLevelHint);
-        Assert.Equal(132, surface.Width);
+        Assert.InRange(surface.Width, 64, 132);
         Assert.Equal(44, surface.Height);
         Assert.Equal(new Avalonia.CornerRadius(10), surface.CornerRadius);
         var neutral = Assert.IsAssignableFrom<ISolidColorBrush>(surface.Background).Color;
@@ -526,31 +644,57 @@ public sealed class AvaloniaStartupTests
             Assert.IsAssignableFrom<ISolidColorBrush>(surface.BorderBrush).Color);
     }
 
-    private static void AssertNotificationWindowsKeepFixedGeometry()
+    private static void AssertNotificationWindowsAdaptToContent()
     {
         var window = new NotificationWindow();
         var surface = GetPrivateField<Border>(window, "_surface");
         var text = GetPrivateField<TextBlock>(window, "_message");
         var icon = GetPrivateField<Avalonia.Controls.Shapes.Path>(window, "_icon");
+        var content = GetPrivateField<Grid>(window, "_content");
+        Assert.Equal(Avalonia.Layout.HorizontalAlignment.Center, content.HorizontalAlignment);
+        Assert.Equal(9, content.ColumnDefinitions[1].Width.Value);
+        Assert.Equal(GridUnitType.Auto, content.ColumnDefinitions[2].Width.GridUnitType);
+        window.Update("交互中", UserNotificationSeverity.Info, false);
+        window.Configure(new NotificationHudSettings());
+        Assert.InRange(surface.Width, 64, 99);
+        Assert.Equal(13, text.FontSize);
+        window.Measure(new Avalonia.Size(window.Width, window.Height));
+        window.Arrange(new Avalonia.Rect(0, 0, window.Width, window.Height));
+        Assert.True(content.Bounds.Width < 110);
+        Assert.InRange(Math.Abs(content.Bounds.Center.X - surface.Bounds.Width / 2), 0, 1);
         foreach (var severity in Enum.GetValues<UserNotificationSeverity>())
         foreach (var message in new[] { "程序已启动", "已隐藏窗口", "发现新版本", "恢复未成功", new string('长', 500) })
         {
             window.Update(message, severity, false);
-            Assert.Equal(132, surface.Width);
+            window.Configure(new NotificationHudSettings());
+            if (message.Length == 500) Assert.Equal(132, surface.Width);
+            Assert.InRange(surface.Width, 64, 132);
             Assert.Equal(44, surface.Height);
             Assert.Equal(18, icon.Width);
-            Assert.Equal(65, text.Width);
+            Assert.True(double.IsNaN(text.Width));
+            Assert.InRange(text.FontSize, 11, 13);
             Assert.Equal(TextWrapping.NoWrap, text.TextWrapping);
             Assert.Equal(TextTrimming.CharacterEllipsis, text.TextTrimming);
         }
+        window.Configure(new NotificationHudSettings { Width = 100, Height = 32 });
         foreach (var language in Enum.GetValues<UiLanguage>())
-        foreach (var key in new[] { "startupReady", "clickToPick", "pickCancelled", "windowSelected", "updateAvailableNotification", "restoreFailed", "settingsSaveFailed", "updatePreparing", "updateCompleted", "updateCancelled" })
+        foreach (var key in new[] { "backgroundStarting", "backgroundPending", "backgroundActive", "backgroundStopped",
+                     "backgroundForegroundChanged", "backgroundUnsupported", "backgroundFailed", "backgroundCleanupFailed",
+                     "backgroundUnavailable", "backgroundToggleRequired", "backgroundClickEditor", "backgroundTextOnly",
+                     "backgroundImeRejected", "backgroundDeadKeyRejected", "backgroundSystemKeyRejected", "backgroundMouseRejected", "backgroundFocusFirst", "backgroundDiscoveryRejected" })
         {
-            var message = UiText.Text(language, key);
-            var measure = new TextBlock { Text = message, FontFamily = text.FontFamily, FontWeight = text.FontWeight, FontSize = 13 };
+            window.Update(UiText.Text(language, key), UserNotificationSeverity.Info, false);
+            window.Configure(new NotificationHudSettings { Width = 100, Height = 32 });
+            var measure = new TextBlock
+            {
+                Text = text.Text, FontFamily = text.FontFamily, FontWeight = text.FontWeight,
+                FontSize = text.FontSize, LetterSpacing = text.LetterSpacing
+            };
             measure.Measure(new Avalonia.Size(double.PositiveInfinity, double.PositiveInfinity));
-            Assert.True(measure.DesiredSize.Width <= 65, $"{language}/{key}: {measure.DesiredSize.Width}");
-            if (language == UiLanguage.Chinese) Assert.Equal(5, message.Length);
+            Assert.InRange(text.FontSize, 11, 13);
+            Assert.True(measure.DesiredSize.Width <= surface.Width - 49 + 0.5, $"{language}/{key}: {measure.DesiredSize.Width}");
+            Assert.InRange(surface.Width, 64, 100);
+            Assert.Equal(32, surface.Height);
         }
         window.Close();
     }
@@ -573,6 +717,33 @@ public sealed class AvaloniaStartupTests
         Assert.Equal(1, preview.Opacity);
         Assert.False(preview.ShowActivated);
         preview.Close();
+    }
+
+    private static void AssertNotificationMeasurementAcrossThemesAndDpi()
+    {
+        var settings = new NotificationHudSettings();
+        var window = new NotificationWindow(preview: true);
+        var surface = GetPrivateField<Border>(window, "_surface");
+        foreach (var theme in new[] { Avalonia.Styling.ThemeVariant.Light, Avalonia.Styling.ThemeVariant.Dark })
+        foreach (var scaling in new[] { 1, 1.25, 1.5, 2 })
+        {
+            window.RequestedThemeVariant = theme;
+            window.Update("交互中", UserNotificationSeverity.Info, false);
+            var shortWidth = window.MeasurePreferredWidth(settings, scaling);
+            Assert.Equal(shortWidth, window.MeasurePreferredWidth(settings, scaling));
+            var geometry = NotificationLayout.Calculate(new Avalonia.PixelRect(-1920, 0, 1920, 1080), scaling, settings, shortWidth);
+            window.Configure(settings, geometry);
+            Assert.InRange(surface.Width, 64, 99);
+            Assert.Equal(13, GetPrivateField<TextBlock>(window, "_message").FontSize);
+            window.Update(new string('长', 100), UserNotificationSeverity.Info, false);
+            var longWidth = window.MeasurePreferredWidth(settings, scaling);
+            Assert.True(longWidth > shortWidth);
+            window.Configure(settings, NotificationLayout.Calculate(new Avalonia.PixelRect(-1920, 0, 1920, 1080), scaling, settings, longWidth));
+            Assert.Equal(132, surface.Width);
+        }
+        Assert.Equal("最大宽度", UiText.Text(UiLanguage.Chinese, "notificationWidth"));
+        Assert.Equal("Maximum width", UiText.Text(UiLanguage.English, "notificationWidth"));
+        window.Close();
     }
 
     private static void AssertNotificationFadeInterruption()
@@ -609,9 +780,16 @@ public sealed class AvaloniaStartupTests
         typeof(SettingsWindow).GetMethod("BeginNotificationPreview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
         var preview = GetPrivateField<NotificationWindow>(window, "_notificationPreview");
         Assert.True(GetPrivateField<Avalonia.Threading.DispatcherTimer>(window, "_notificationPreviewTimer").IsEnabled);
-        Assert.Equal(180, GetPrivateField<Border>(preview, "_surface").Width);
+        Assert.InRange(GetPrivateField<Border>(preview, "_surface").Width, 64, 180);
         GetPrivateField<NumberBox>(window, "_notificationWidth").Value = 200;
-        Assert.Equal(200, GetPrivateField<Border>(preview, "_surface").Width);
+        Assert.InRange(GetPrivateField<Border>(preview, "_surface").Width, 64, 200);
+        using (var runtime = new AvaloniaNotificationService(() => Point.Empty, NullLogger.Instance,
+            settings: new AppSettings { NotificationHud = new NotificationHudSettings { Width = 200, Height = 52, CornerRadius = 16 } }))
+        {
+            runtime.Show(UiText.Text(UiLanguage.Chinese, "notificationPreviewMessage"), UserNotificationSeverity.Info);
+            var runtimeWindow = GetPrivateField<NotificationWindow>(runtime, "_window");
+            Assert.Equal(GetPrivateField<Border>(preview, "_surface").Width, GetPrivateField<Border>(runtimeWindow, "_surface").Width);
+        }
         InvokeSave(window);
         Assert.Null(saved);
         Assert.False(GetPrivateField<Avalonia.Threading.DispatcherTimer>(window, "_notificationPreviewTimer").IsEnabled);
@@ -652,7 +830,7 @@ public sealed class AvaloniaStartupTests
         notifications.PauseForHover();
         Assert.True(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);
         notifications.Configure(new AppSettings { NotificationHud = new NotificationHudSettings { Width = 200 } });
-        Assert.Equal(200, GetPrivateField<Border>(window, "_surface").Width);
+        Assert.InRange(GetPrivateField<Border>(window, "_surface").Width, 64, 200);
         Assert.True(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);
         notifications.ResumeAfterHover();
         Assert.False(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);

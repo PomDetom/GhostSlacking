@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
@@ -25,6 +25,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
     private PixelPoint _screenPoint;
     private DateTimeOffset _nextLayoutCheck;
     private bool _disposed;
+    private bool _persistent;
 
     internal static UserNotificationPalette ResolvePalette(ThemeVariant? variant, UserNotificationSeverity severity)
     {
@@ -78,7 +79,8 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
         if (_window is null) return;
         var screen = _window.Screens.ScreenFromPoint(_screenPoint) ?? _window.Screens.Primary;
         if (screen is null) return;
-        var geometry = NotificationLayout.Calculate(screen.WorkingArea, screen.Scaling, _settings.NotificationHud);
+        var preferredWidth = _window.MeasurePreferredWidth(_settings.NotificationHud, screen.Scaling);
+        var geometry = NotificationLayout.Calculate(screen.WorkingArea, screen.Scaling, _settings.NotificationHud, preferredWidth);
         _window.Configure(_settings.NotificationHud, geometry);
         if (_window.Position != geometry.Position) _window.Position = geometry.Position;
     }
@@ -95,6 +97,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
 
         try
         {
+            _persistent = false;
             var now = DateTimeOffset.UtcNow;
             if (_state.Current is { } current && UserNotificationPolicy.ShouldSuppress(source, current, _state.IsPaused, now))
             {
@@ -107,6 +110,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             if (_window is null)
             {
                 _window = new NotificationWindow();
+                _window.ContentMetricsChanged += (_, _) => RefreshLayout();
                 _window.Clicked += OnWindowClicked;
                 _window.PointerEntered += (_, _) => PauseForHover();
                 _window.PointerExited += (_, _) => ResumeAfterHover();
@@ -140,6 +144,22 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             _timer.Stop();
             _logger.Log(LogLevel.Warning, "Avalonia notification could not be shown.", exception);
         }
+    }
+
+    // Used by a dedicated instance for the explicit background-input session.
+    internal void ShowPersistent(string message)
+    {
+        if (_persistent && _state.Current?.Message == message) return;
+        Show(message, UserNotificationSeverity.Info);
+        _persistent = _state.Current is not null;
+    }
+
+    internal void Hide()
+    {
+        _persistent = false;
+        _state.Clear();
+        _window?.Hide();
+        _timer.Stop();
     }
 
     private void SetClickThrough(bool enabled)
@@ -176,6 +196,7 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
 
     internal void PauseForHover()
     {
+        if (_persistent) return;
         var now = DateTimeOffset.UtcNow;
         if (_state.Expire(now))
         {
@@ -197,10 +218,10 @@ internal sealed class AvaloniaNotificationService : IUserNotificationService
             _nextLayoutCheck = now.AddMilliseconds(100);
         }
         var fadeDuration = FAUISettings.AreAnimationsEnabled() ? FadeOutDuration : TimeSpan.Zero;
-        if (_state.Current is { } current && !_state.IsPaused && now >= current.ExpiresAt - fadeDuration)
+        if (!_persistent && _state.Current is { } current && !_state.IsPaused && now >= current.ExpiresAt - fadeDuration)
             _window?.BeginFadeOut(now, current.ExpiresAt - now);
         _window?.AdvanceFade(now);
-        if (_state.Expire(now)) _window?.Hide();
+        if (!_persistent && _state.Expire(now)) _window?.Hide();
         if (_state.Current is null && _window?.IsVisible != true) _timer.Stop();
     }
 
