@@ -1,16 +1,27 @@
-using GhostSlacking.Core;
+﻿using GhostSlacking.Core;
 
 namespace GhostSlacking.Core.Tests;
 
 public sealed class NotificationHudSettingsTests
 {
     [Fact]
+    public void Schema_10_saved_width_is_preserved_as_the_notification_cap_without_new_fields()
+    {
+        var settings = AppSettingsJson.Deserialize("{\"SchemaVersion\":10,\"NotificationHud\":{\"Width\":180,\"Height\":52,\"CornerRadius\":16}}");
+        var restored = AppSettingsJson.Deserialize(AppSettingsJson.Serialize(settings));
+        Assert.Equal(10, restored.SchemaVersion);
+        Assert.Equal(180, restored.NotificationHud.Width);
+        Assert.Equal(52, restored.NotificationHud.Height);
+        Assert.Equal(16, restored.NotificationHud.CornerRadius);
+    }
+
+    [Fact]
     public void Legacy_styles_receive_the_same_hud_defaults_and_preserve_other_preferences()
     {
         foreach (var style in new[] { "Card", "Capsule", "Chat" })
         {
             var settings = AppSettingsJson.Deserialize("{\"SchemaVersion\":7,\"NotificationStyle\":\"" + style + "\",\"Language\":\"English\",\"RevealDiameterPx\":320}");
-            Assert.Equal(8, settings.SchemaVersion);
+            Assert.Equal(10, settings.SchemaVersion);
             Assert.Equal(new NotificationHudSettings(), settings.NotificationHud);
             Assert.Equal(UiLanguage.English, settings.Language);
             Assert.Equal(320, settings.RevealDiameterPx);

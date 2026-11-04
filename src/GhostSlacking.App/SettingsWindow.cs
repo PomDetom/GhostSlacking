@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -26,6 +26,7 @@ internal sealed class SettingsWindow : AppWindow
     private const string RevealPage = "reveal";
     private const string HotkeysPage = "hotkeys";
     private const string GeneralPage = "general";
+    private const string ExperimentsPage = "experiments";
     private const string AboutPage = "about";
     private static readonly TimeSpan SavedStatusDuration = TimeSpan.FromMilliseconds(2500);
     private static readonly AppSettings DefaultSettings = new();
@@ -56,6 +57,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly NavigationViewItem _revealItem;
     private readonly NavigationViewItem _hotkeysItem;
     private readonly NavigationViewItem _generalItem;
+    private readonly NavigationViewItem _experimentsItem;
     private readonly NavigationViewItem _aboutItem;
     private readonly TextBlock _pageTitle;
     private readonly TextBlock _pageDescription;
@@ -94,6 +96,9 @@ internal sealed class SettingsWindow : AppWindow
     private readonly Button _releasePageButton;
     private readonly ToggleSwitch _restoreOnExit;
     private readonly ToggleSwitch _startWithWindows;
+    private readonly ToggleSwitch _backgroundInteraction;
+    private readonly ToggleSwitch _continuousInteraction;
+    private readonly HotkeyEditor _backgroundInteractionHotkey;
     private readonly HotkeyEditor _pickHotkey;
     private readonly HotkeyEditor _windowToggleHotkey;
     private readonly HotkeyEditor _restoreHotkey;
@@ -190,6 +195,9 @@ internal sealed class SettingsWindow : AppWindow
         _releasePageButton.Click += OnReleasePageClicked;
         _restoreOnExit = new ToggleSwitch { IsChecked = settings.RestoreOnExit };
         _startWithWindows = new ToggleSwitch { IsChecked = settings.StartWithWindows };
+        _backgroundInteraction = new ToggleSwitch { IsChecked = settings.ExperimentalBackgroundInteraction };
+        _continuousInteraction = new ToggleSwitch { IsChecked = settings.ContinuousBackgroundInteraction };
+        _backgroundInteractionHotkey = CreateHotkeyEditor(settings.BackgroundInteractionHotkey, HotkeyBinding.Disabled);
         _peekKeyButton = CreateCaptureButton();
 
         _pickHotkey = CreateHotkeyEditor(settings.PickHotkey, DefaultSettings.PickHotkey);
@@ -230,6 +238,13 @@ internal sealed class SettingsWindow : AppWindow
         _revealItem = CreateNavigationItem(RevealPage, Symbol.View);
         _hotkeysItem = CreateNavigationItem(HotkeysPage, Symbol.Keyboard);
         _generalItem = CreateNavigationItem(GeneralPage, Symbol.Settings);
+        _experimentsItem = CreateNavigationItem(ExperimentsPage, Symbol.Settings);
+        _experimentsItem.IconSource = new PathIconSource
+        {
+            Data = ExperimentNavigationIcon.Geometry,
+            Stretch = Stretch.Uniform
+        };
+        ExperimentNavigationIcon.FollowNavigationForeground(_experimentsItem);
         _aboutItem = CreateNavigationItem(AboutPage, Symbol.Help);
         _navigation = new NavigationView
         {
@@ -260,6 +275,7 @@ internal sealed class SettingsWindow : AppWindow
         _navigation.MenuItems.Add(_revealItem);
         _navigation.MenuItems.Add(_hotkeysItem);
         _navigation.MenuItems.Add(_generalItem);
+        _navigation.MenuItems.Add(_experimentsItem);
         _navigation.FooterMenuItems.Add(_aboutItem);
         _navigation.SelectionChanged += OnNavigationSelectionChanged;
 
@@ -361,6 +377,21 @@ internal sealed class SettingsWindow : AppWindow
                 CreateSettingRow(language, "peekMode", "peekModeDescription", CreateResettable(_peekMode, () => SelectChoice(_peekMode, DefaultSettings.PeekTrigger))),
                 CreateSettingRow(language, "peekKey", "peekKeyDescription", CreatePeekKeyEditor())
             ])
+        ]);
+
+        var experimentalNote = LocalizedText(language, "backgroundInteractionNote");
+        experimentalNote.FontSize = 13;
+        experimentalNote.Foreground = _secondaryBrush;
+        experimentalNote.TextWrapping = TextWrapping.Wrap;
+        _pages[ExperimentsPage] = CreatePage(
+        [
+            CreateSection(language, "backgroundInteractionSection",
+            [
+                CreateSettingRow(language, "backgroundInteraction", "backgroundInteractionDescription", _backgroundInteraction),
+                CreateSettingRow(language, "continuousInteraction", "continuousInteractionDescription", _continuousInteraction),
+                CreateHotkeyRow(language, "backgroundInteractionHotkey", "backgroundInteractionHotkeyDescription", _backgroundInteractionHotkey)
+            ]),
+            experimentalNote
         ]);
 
         _pages[HotkeysPage] = CreatePage(
@@ -649,6 +680,7 @@ internal sealed class SettingsWindow : AppWindow
         var cursor = _getCursorPosition();
         _notificationPreviewScreenPoint = new PixelPoint(cursor.X, cursor.Y);
         _notificationPreview = new NotificationWindow(preview: true);
+        _notificationPreview.ContentMetricsChanged += (_, _) => UpdateNotificationPreview(updateContent: false);
         UpdateNotificationPreview();
         _notificationPreview.Show();
         UpdateNotificationPreview();
@@ -669,15 +701,17 @@ internal sealed class SettingsWindow : AppWindow
     private void UpdateNotificationPreview(bool updateContent = true)
     {
         if (_notificationPreview is null) return;
+        // Content must be current before measuring and positioning the capsule.
+        if (updateContent) _notificationPreview.Update(UiText.Text(CurrentLanguage, "notificationPreviewMessage"), UserNotificationSeverity.Info, false);
         var hud = GetNotificationHudSettings();
         var screen = _notificationPreview.Screens.ScreenFromPoint(_notificationPreviewScreenPoint) ?? _notificationPreview.Screens.Primary;
         if (screen is not null)
         {
-            var geometry = NotificationLayout.Calculate(screen.WorkingArea, screen.Scaling, hud);
+            var preferredWidth = _notificationPreview.MeasurePreferredWidth(hud, screen.Scaling);
+            var geometry = NotificationLayout.Calculate(screen.WorkingArea, screen.Scaling, hud, preferredWidth);
             _notificationPreview.Configure(hud, geometry);
             if (_notificationPreview.Position != geometry.Position) _notificationPreview.Position = geometry.Position;
         }
-        if (updateContent) _notificationPreview.Update(UiText.Text(CurrentLanguage, "notificationPreviewMessage"), UserNotificationSeverity.Info, false);
     }
 
     private void CancelNotificationPreview()
@@ -909,6 +943,7 @@ internal sealed class SettingsWindow : AppWindow
         {
             HotkeysPage => ("hotkeySettings", "hotkeySettingsDescription"),
             GeneralPage => ("generalSettings", "generalSettingsDescription"),
+            ExperimentsPage => ("experimentalSettings", "experimentalSettingsDescription"),
             AboutPage => ("about", "aboutDescription"),
             _ => ("revealSettings", "revealSettingsDescription")
         };
@@ -925,6 +960,7 @@ internal sealed class SettingsWindow : AppWindow
             _revealItem.Content = UiText.Text(language, "revealSettings");
             _hotkeysItem.Content = UiText.Text(language, "hotkeySettings");
             _generalItem.Content = UiText.Text(language, "generalSettings");
+            _experimentsItem.Content = UiText.Text(language, "experimentalSettings");
             _aboutItem.Content = UiText.Text(language, "about");
             _navigation.PaneTitle = UiText.Text(language, "settingsMenu");
             _saveBar.SetLanguage(language);
@@ -975,6 +1011,19 @@ internal sealed class SettingsWindow : AppWindow
     private async void OnSaveClicked(object? sender, RoutedEventArgs args)
     {
         CancelKeyCapture();
+        var candidate = GetSettings().Normalize();
+        if (candidate.ExperimentalBackgroundInteraction && candidate.ContinuousBackgroundInteraction && candidate.PeekTrigger != PeekTrigger.Toggle)
+        {
+            var message = UiText.Text(CurrentLanguage, "continuousToggleRequired");
+            ShowStatus(SettingsStatus.Warning, UiText.Text(CurrentLanguage, "backgroundToggleRequired"), message, InfoBarSeverity.Warning);
+            await new ContentDialog
+            {
+                Title = UiText.Text(CurrentLanguage, "experimentalSettings"),
+                Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, MaxWidth = 440 },
+                CloseButtonText = UiText.Text(CurrentLanguage, "ok")
+            }.ShowAsync(this);
+            return;
+        }
         var duplicate = FindDuplicateHotkey();
         if (duplicate is not null)
         {
@@ -1033,6 +1082,9 @@ internal sealed class SettingsWindow : AppWindow
             _peekVirtualKey = saved.PeekVirtualKey;
             _restoreOnExit.IsChecked = saved.RestoreOnExit;
             _startWithWindows.IsChecked = saved.StartWithWindows;
+            _backgroundInteraction.IsChecked = saved.ExperimentalBackgroundInteraction;
+            _continuousInteraction.IsChecked = saved.ContinuousBackgroundInteraction;
+            _backgroundInteractionHotkey.Binding = saved.BackgroundInteractionHotkey;
             _notificationRadius.Value = saved.NotificationHud.CornerRadius;
             _notificationWidth.Value = saved.NotificationHud.Width;
             _notificationHeight.Value = saved.NotificationHud.Height;
@@ -1242,6 +1294,9 @@ internal sealed class SettingsWindow : AppWindow
         RevealDiameterDecreaseHotkey = _diameterDecreaseHotkey.Binding,
         RestoreOnExit = _restoreOnExit.IsChecked == true,
         StartWithWindows = _startWithWindows.IsChecked == true,
+        ExperimentalBackgroundInteraction = _backgroundInteraction.IsChecked == true,
+        ContinuousBackgroundInteraction = _continuousInteraction.IsChecked == true,
+        BackgroundInteractionHotkey = _backgroundInteractionHotkey.Binding,
         MinimumLogLevel = SelectedChoice(_logLevel, _editState.SavedSettings.MinimumLogLevel)
     };
 
@@ -1260,6 +1315,19 @@ internal sealed class SettingsWindow : AppWindow
         _themeMode.SelectionChanged += OnThemeModeSelectionChanged;
         _restoreOnExit.IsCheckedChanged += (_, _) => OnSettingsEdited();
         _startWithWindows.IsCheckedChanged += (_, _) => OnSettingsEdited();
+        _backgroundInteraction.IsCheckedChanged += (_, _) =>
+        {
+            UpdateExperimentalControls();
+            OnSettingsEdited();
+        };
+        _continuousInteraction.IsCheckedChanged += (_, _) => OnSettingsEdited();
+        UpdateExperimentalControls();
+    }
+
+    private void UpdateExperimentalControls()
+    {
+        _continuousInteraction.IsEnabled = _backgroundInteraction.IsChecked == true;
+        _backgroundInteractionHotkey.Host.IsEnabled = _backgroundInteraction.IsChecked == true;
     }
 
     private void OnThemeModeSelectionChanged(object? sender, SelectionChangedEventArgs args)
@@ -1555,6 +1623,7 @@ internal sealed class SettingsWindow : AppWindow
         _windowToggleHotkey,
         _diameterIncreaseHotkey,
         _diameterDecreaseHotkey,
+        _backgroundInteractionHotkey,
         _restoreHotkey,
         _restoreAllHotkey,
         _settingsHotkey,

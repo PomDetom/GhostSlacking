@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GhostSlacking 焦点诊断</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { margin: 24px auto; padding: 0 20px; max-width: 1000px; line-height: 1.6; }
+  h1 { font-size: 24px; } button, input, textarea { font: inherit; padding: 8px; }
+  button { margin: 4px; cursor: pointer; } .card { border: 1px solid #8886; border-radius: 10px; padding: 16px; margin: 16px 0; }
+  #status { font-weight: bold; } .bad { color: #d44; } .good { color: #29854b; }
+  pre { white-space: pre-wrap; max-height: 360px; overflow: auto; font-size: 12px; }
+  textarea { width: 90%; height: 80px; } .scroll { height: 100px; overflow: auto; border: 1px solid #8886; padding: 8px; }
+</style>
+<h1>GhostSlacking 焦点诊断</h1>
+<p>把此页作为前台网页 A，另选窗口 B 进入 Reveal。开始前点击“重置并开始记录”，再通过快捷键打开 Reveal 和后台交互。
+  结束后检查整个期间是否出现失焦或隐藏。此页只验证这些浏览器信号，不能代表所有网站的检测逻辑。</p>
+<section class="card">
+  <div id="status" role="status"></div><div id="counts"></div>
+  <button id="reset">重置并开始记录</button><button id="export">导出诊断 JSON</button>
+  <p>导出文件仅包含事件时间、焦点与可见性、计数和浏览器版本；不包含输入文字、剪贴板、URL 或页面内容。
+    点击导出或主动切换窗口也可能产生事件，请在测试结束后进行，并按时间区分。</p>
+  <pre id="events" aria-label="焦点事件日志"></pre>
+</section>
+<section class="card">
+  <p>需要把此页作为 B 时，可使用以下控件测试。文本仅留在当前页面内存中，不写入诊断导出。</p>
+  <button id="counter">点击计数：0</button><button id="dialog">测试网页弹窗</button>
+  <p>拖动选择这段文字，测试双击、拖动选字、复制和右键菜单。请勿输入真实敏感内容。</p>
+  <textarea aria-label="后台输入测试" placeholder="测试英文、中文输入法、换行、复制粘贴和快捷键"></textarea>
+  <div class="scroll" tabindex="0" aria-label="滚动测试区域"></div>
+  <input type="file" aria-label="测试文件选择弹窗（不上传）">
+</section>
+<script>
+(() => {
+  'use strict';
+  const output = document.getElementById('events'), status = document.getElementById('status'), counts = document.getElementById('counts');
+  let events = [], startedAt, startedTick, lastFocus, lastVisibility, totals, truncated = false;
+  function snapshot(type) {
+    const hasFocus = document.hasFocus(), visibility = document.visibilityState;
+    if (type === 'blur') totals.blur++;
+    if (type === 'focus') totals.focus++;
+    if (type === 'visibilitychange' && visibility === 'hidden') totals.hidden++;
+    if (type === 'sample' && !hasFocus) totals.unfocusedSamples++;
+    const event = { type, at: new Date().toISOString(), elapsedMs: Math.round(performance.now() - startedTick), hasFocus, visibility };
+    if (events.length === 10000) { events.shift(); truncated = true; }
+    events.push(event); lastFocus = hasFocus; lastVisibility = visibility;
+    const failed = totals.blur || totals.hidden || totals.unfocusedSamples;
+    status.textContent = `当前焦点：${hasFocus}；可见性：${visibility}；记录期间${failed ? '曾失焦或隐藏' : '尚未记录到失焦或隐藏'}`;
+    status.className = failed ? 'bad' : 'good';
+    counts.textContent = `blur=${totals.blur}，focus=${totals.focus}，hidden=${totals.hidden}，失焦采样=${totals.unfocusedSamples}${truncated ? '（日志已截断，不能判为通过）' : ''}`;
+    output.textContent = events.slice(-100).map(e => `${e.elapsedMs}ms ${e.type}: hasFocus=${e.hasFocus}, visibility=${e.visibility}`).join('\n');
+    output.scrollTop = output.scrollHeight;
+  }
+  function reset() {
+    events = []; truncated = false; totals = { blur: 0, focus: 0, hidden: 0, unfocusedSamples: 0 };
+    startedAt = new Date().toISOString(); startedTick = performance.now(); snapshot('baseline');
+    if (!document.hasFocus()) snapshot('sample');
+  }
+  window.addEventListener('blur', e => { if (e.target === window) snapshot('blur'); });
+  window.addEventListener('focus', e => { if (e.target === window) snapshot('focus'); });
+  document.addEventListener('visibilitychange', () => snapshot('visibilitychange'));
+  setInterval(() => { if (document.hasFocus() !== lastFocus || document.visibilityState !== lastVisibility) snapshot('sample'); }, 50);
+  document.getElementById('reset').addEventListener('click', reset);
+  document.getElementById('export').addEventListener('click', () => {
+    snapshot('export');
+    const data = { schemaVersion: 1, startedAt, exportedAt: new Date().toISOString(), browser: navigator.userAgent, totals, truncated, events };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'GhostSlacking-focus-probe.json'; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  let clicked = 0;
+  document.getElementById('counter').addEventListener('click', e => { e.target.textContent = `点击计数：${++clicked}`; });
+  document.getElementById('dialog').addEventListener('click', () => alert('测试弹窗：检查是否导致 A 失焦。'));
+  document.querySelector('.scroll').textContent = Array.from({length: 30}, (_, i) => `第 ${i + 1} 行：滚动测试`).join('\n');
+  document.querySelector('.scroll').style.whiteSpace = 'pre-line'; reset();
+})();
+</script>
+</html>

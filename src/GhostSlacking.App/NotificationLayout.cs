@@ -10,12 +10,18 @@ internal static class NotificationLayout
     internal const double ShadowPadding = 10;
     internal const double MotionDistance = 8;
 
-    public static NotificationGeometry Calculate(PixelRect workingArea, double scaling, NotificationHudSettings settings)
+    internal static double ConstrainWidth(double maximumWidth, double height, double desiredWidth) =>
+        Math.Min(maximumWidth, Math.Max(Math.Max(64, height),
+            double.IsFinite(desiredWidth) ? Math.Ceiling(desiredWidth) : maximumWidth));
+
+    public static NotificationGeometry Calculate(PixelRect workingArea, double scaling, NotificationHudSettings settings,
+        double? desiredWidth = null)
     {
         var normalized = settings.Normalize();
         scaling = double.IsFinite(scaling) && scaling > 0 ? scaling : 1;
-        var width = Math.Min(normalized.Width, Math.Max(1, workingArea.Width / scaling - 32));
+        var maximumWidth = Math.Min(normalized.Width, Math.Max(1, workingArea.Width / scaling - 32));
         var height = Math.Min(normalized.Height, Math.Max(1, workingArea.Height / scaling - 36));
+        var width = ConstrainWidth(maximumWidth, height, desiredWidth ?? normalized.Width);
         var windowSize = new Size(width + 2 * ShadowPadding, height + 2 * ShadowPadding + MotionDistance);
         var surfaceWidth = (int)Math.Ceiling(width * scaling);
         var surfaceHeight = (int)Math.Ceiling(height * scaling);
