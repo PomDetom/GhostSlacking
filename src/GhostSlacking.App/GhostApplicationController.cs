@@ -17,9 +17,9 @@ internal sealed class GhostApplicationController : IDisposable
     private const int SettingsHotkey = 4;
     private const int QuitHotkey = 5;
     private const int PickHotkey = 6;
-    private const int DiameterIncreaseHotkey = 7;
-    private const int DiameterDecreaseHotkey = 8;
-    private const int BackgroundInteractionHotkey = 9;
+    internal const int DiameterIncreaseHotkey = 7;
+    internal const int DiameterDecreaseHotkey = 8;
+    internal const int BackgroundInteractionHotkey = 9;
     private readonly Win32BackgroundInteraction _backgroundInteraction;
     private readonly AvaloniaNotificationService _backgroundHud;
     private bool _lastPeekKeyDown;
@@ -164,7 +164,7 @@ internal sealed class GhostApplicationController : IDisposable
         };
         _backgroundInteraction.ShortcutPressed += id =>
         {
-            // The hook already stopped the session. Its own toggle must not arm it again.
+            // The hook stops the session for its own toggle, which must not arm it again.
             if (id != BackgroundInteractionHotkey) OnHotkeyPressed(id);
         };
         _updates.Changed += OnUpdateStateChanged;
@@ -486,7 +486,17 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void OnHotkeyPressed(int id)
     {
-        if (id != BackgroundInteractionHotkey) CancelBackgroundInteraction();
+        DispatchHotkey(id, CancelBackgroundInteraction, ExecuteHotkey);
+    }
+
+    internal static void DispatchHotkey(int id, Action cancel, Action<int> execute)
+    {
+        if (id != BackgroundInteractionHotkey && !PreservesReveal(id)) cancel();
+        execute(id);
+    }
+
+    private void ExecuteHotkey(int id)
+    {
         switch (id)
         {
             case PickHotkey:
@@ -518,6 +528,8 @@ internal sealed class GhostApplicationController : IDisposable
                 break;
         }
     }
+
+    internal static bool PreservesReveal(int id) => id is DiameterIncreaseHotkey or DiameterDecreaseHotkey;
 
     private void ToggleBackgroundInteraction()
     {
@@ -562,7 +574,8 @@ internal sealed class GhostApplicationController : IDisposable
         var shortcuts = GetShortcuts().Where(item => !item.Binding.IsDisabled)
             .GroupBy(item => item.Binding).Where(group => group.Count() == 1).SelectMany(group => group)
             .ToDictionary(item => item.Id, item => item.Binding);
-        return _backgroundInteraction.Arm(shortcuts, prepareHidden, _settings.PeekVirtualKey);
+        var preservingShortcuts = shortcuts.Keys.Where(PreservesReveal).ToHashSet();
+        return _backgroundInteraction.Arm(shortcuts, preservingShortcuts, prepareHidden, _settings.PeekVirtualKey);
     }
 
     private void SetBackgroundStartWait(BackgroundArmStatus status)
@@ -953,20 +966,27 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void AdjustRevealDiameter(int direction)
     {
-        var updated = _settings.AdjustRevealDiameter(direction);
-        if (updated.RevealDiameterPx == _settings.RevealDiameterPx)
-        {
-            return;
-        }
-
-        if (!_settingsStore.Save(updated))
+        var result = TryAdjustRevealDiameter(_settings, direction, _settingsStore.Save, out var updated);
+        if (result == DiameterAdjustmentResult.SaveFailed)
         {
             ShowError(UiText.Text(_settings.Language, "settingsSaveFailed"));
             return;
         }
+        if (result == DiameterAdjustmentResult.Unchanged) return;
 
         _settings = updated;
         UpdateCurrentRevealSettings();
+    }
+
+    internal static DiameterAdjustmentResult TryAdjustRevealDiameter(
+        AppSettings current, int direction, Func<AppSettings, bool> save, out AppSettings updated)
+    {
+        var candidate = current.AdjustRevealDiameter(direction);
+        updated = current;
+        if (candidate.RevealDiameterPx == current.RevealDiameterPx) return DiameterAdjustmentResult.Unchanged;
+        if (!save(candidate)) return DiameterAdjustmentResult.SaveFailed;
+        updated = candidate;
+        return DiameterAdjustmentResult.Updated;
     }
 
     private void UpdateCurrentRevealSettings()

@@ -4,6 +4,39 @@ namespace GhostSlacking.Core.Tests;
 public sealed class BackgroundInputOwnershipTests
 {
     private static BackgroundKeyInput Key(int key, bool down) => new(key, 0, down, false, false);
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Shortcut_key_and_release_are_consumed_while_modifier_ownership_is_preserved(bool active)
+    {
+        var input = new BackgroundInputOwnership(); input.Begin([], []);
+        if (active) Assert.True(input.Activate());
+        var modifierRoute = active ? BackgroundInputRoute.Deliver : BackgroundInputRoute.Consume;
+        foreach (var modifier in new[] { 0xA2, 0xA4, 0xA0 })
+            Assert.Equal(modifierRoute, input.Key(Key(modifier, true)));
+
+        input.ConsumeKey(0x26);
+        Assert.Equal(BackgroundInputRoute.Consume, input.Key(Key(0x26, true)));
+        Assert.Equal(BackgroundInputRoute.Consume, input.Key(Key(0x26, false)));
+        foreach (var modifier in new[] { 0xA0, 0xA4, 0xA2 })
+            Assert.Equal(modifierRoute, input.Key(Key(modifier, false)));
+
+        Assert.Equal(0, input.PendingCount);
+        if (!active) Assert.True(input.Activate());
+        Assert.Equal(BackgroundInputRoute.Deliver, input.Key(Key(0x41, true)));
+        Assert.Equal(BackgroundInputRoute.Deliver, input.Key(Key(0x41, false)));
+    }
+
+    [Fact]
+    public void Suppressed_shortcut_release_is_consumed_during_drain()
+    {
+        var input = new BackgroundInputOwnership(); input.Begin([], []); input.Activate();
+        input.ConsumeKey(0x28);
+        input.BeginDrain(DateTimeOffset.UnixEpoch);
+        Assert.Equal(BackgroundInputRoute.Consume, input.Key(Key(0x28, false)));
+        Assert.True(input.DrainFinished(DateTimeOffset.UnixEpoch, out var expired));
+        Assert.False(expired);
+    }
     [Fact]
     public void Foreground_owned_releases_pass_through_even_when_other_input_is_gated()
     {

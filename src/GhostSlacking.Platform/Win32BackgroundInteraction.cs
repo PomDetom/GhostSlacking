@@ -24,6 +24,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
     private readonly Win32BackgroundInputNative.WinEventProc _foregroundCallback;
     private readonly HashSet<int> _physicalKeys = [];
     private IReadOnlyDictionary<int, HotkeyBinding> _shortcuts = new Dictionary<int, HotkeyBinding>();
+    private IReadOnlySet<int> _sessionPreservingShortcuts = new HashSet<int>();
     private GhostWindowProfile? _pending;
     private GhostWindowProfile? _armedProfile;
     private (BackgroundMouseButton Button, nint Recipient, Point Cursor, uint Time)? _lastClick;
@@ -114,7 +115,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
     public event Action<bool>? InputPending;
     public bool HasSeparateForeground => _profile() is { } profile && ForegroundStatus(_backend.ForegroundWindow, profile.Hwnd) == BackgroundArmStatus.Preparing;
 
-    public BackgroundArmResult Arm(IReadOnlyDictionary<int, HotkeyBinding> shortcuts, bool prepareHidden = false, int peekVirtualKey = 0)
+    public BackgroundArmResult Arm(IReadOnlyDictionary<int, HotkeyBinding> shortcuts, IReadOnlySet<int> sessionPreservingShortcuts, bool prepareHidden = false, int peekVirtualKey = 0)
     {
         _armAttemptStarted = Stopwatch.GetTimestamp();
         var foreground = _backend.ForegroundWindow;
@@ -133,6 +134,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
 
         _generation++;
         _shortcuts = shortcuts;
+        _sessionPreservingShortcuts = sessionPreservingShortcuts;
         _prepareHidden = prepareHidden;
         _sessionEstablished = false;
         _peekVirtualKey = peekVirtualKey;
@@ -417,7 +419,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
                 if (down && FindShortcut(key) is { } id)
                 {
                     _ownership.ConsumeKey(key);
-                    RequestStop(BackgroundInteractionStopReason.User);
+                    if (!_sessionPreservingShortcuts.Contains(id)) RequestStop(BackgroundInteractionStopReason.User);
                     _dispatch(() => ShortcutPressed?.Invoke(id));
                     return 1;
                 }

@@ -142,6 +142,7 @@ public sealed class CoordinatorTests
         Assert.Equal(320, backend.LastReveal?.DiameterPx);
         Assert.Equal(320, coordinator.CurrentProfile?.Reveal.DiameterPx);
         Assert.Equal(RevealBlurLevel.High, coordinator.CurrentProfile?.Reveal.BlurLevel);
+        Assert.Equal(GhostState.Reveal, coordinator.State);
     }
 
     [Fact]
