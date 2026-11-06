@@ -204,6 +204,8 @@ RevealDiameterIncreaseRequested / RevealDiameterDecreaseRequested
 
 持续模式在 Ghost 安装输入 Hook、记录受保护前台并校验身份，所有初始按下释放后建立临时样式租约；就绪后才由 App 显示 Reveal 并交付输入。准备期间新输入被消费且不重放，初始已按住输入的抬起继续交给前台，退出后的拦截只保护已有按下及必要组合尾部，最长两秒，不因新按键延长。会话代次防止旧异步通知覆盖新状态。准备超时按失败收起处理。Peek 在会话 Hook 内也能结束当前显示，避免依赖已消费按键的普通轮询。
 
+Reveal 直径的增大和缩小快捷键保留当前 Peek 意图及后台交互会话，保存成功后在下一次更新应用尺寸。后台 Hook 消费快捷键主键及其释放事件，修饰键按原有输入所有权处理；其他全局快捷键仍按原有规则停止会话。
+
 `ContinuousBackgroundInteraction` 在配置 schema 10 中默认关闭，只在后台交互总开关开启时有效。持续模式仅支持 Toggle；保存与运行时都有守卫，不回退普通 Reveal。关闭总开关保留持续选项。设置、选窗、恢复、退出取消准备与显示意图；完整快照与 Watchdog 协议未修改。
 
 第二轮在 Platform 增加 `IBackgroundControlAdapter`，按控件类选择 Scintilla 的标量命令适配，替代其会主动调用 `SetFocus` 的鼠标按下路径。Scintilla 标量查询/命令通过有超时且重复身份/前台检查的访问器发送，不跨进程传递裸指针或读取文档内容。基本英文优先使用已加载的标准 US 布局只读翻译，没有时使用固定映射表，不加载或激活系统布局；字符仅发送 `WM_CHAR`，Scintilla 导航及常用快捷键使用控件命令。

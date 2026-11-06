@@ -13,6 +13,7 @@ public sealed class BackgroundInputOwnership
     private readonly HashSet<int> _foregroundKeys = [];
     private readonly HashSet<BackgroundMouseButton> _foregroundButtons = [];
     private readonly HashSet<int> _consumedKeys = [];
+    private readonly HashSet<int> _suppressedKeys = [];
     private readonly HashSet<int> _chordTail = [];
     private readonly HashSet<BackgroundMouseButton> _consumedButtons = [];
     private bool _preparing;
@@ -48,7 +49,7 @@ public sealed class BackgroundInputOwnership
         }
     }
     public void ConsumeMouse(BackgroundMouseButton button) { lock (_gate) _consumedButtons.Add(button); }
-    public void ConsumeKey(int key) { lock (_gate) _consumedKeys.Add(key); }
+    public void ConsumeKey(int key) { lock (_gate) { _consumedKeys.Add(key); _suppressedKeys.Add(key); } }
     public void BeginDrain(DateTimeOffset now)
     {
         lock (_gate) { _active = _preparing = false; _drainStarted ??= now; }
@@ -64,6 +65,11 @@ public sealed class BackgroundInputOwnership
                 if (input.IsDown) return BackgroundInputRoute.Consume;
                 _foregroundKeys.Remove(key);
                 return BackgroundInputRoute.Foreground;
+            }
+            if (_suppressedKeys.Contains(key))
+            {
+                if (!input.IsDown) { _suppressedKeys.Remove(key); _consumedKeys.Remove(key); }
+                return BackgroundInputRoute.Consume;
             }
             if (_active || _preparing)
             {
@@ -130,7 +136,7 @@ public sealed class BackgroundInputOwnership
     private static bool IsModifier(int key) => key is 0x10 or 0x11 or 0x12 or >= 0xA0 and <= 0xA5 or 0x5B or 0x5C;
     private void Clear()
     {
-        _foregroundKeys.Clear(); _foregroundButtons.Clear(); _consumedKeys.Clear(); _chordTail.Clear(); _consumedButtons.Clear();
+        _foregroundKeys.Clear(); _foregroundButtons.Clear(); _consumedKeys.Clear(); _suppressedKeys.Clear(); _chordTail.Clear(); _consumedButtons.Clear();
         _active = _preparing = false;
         _drainStarted = null;
     }
