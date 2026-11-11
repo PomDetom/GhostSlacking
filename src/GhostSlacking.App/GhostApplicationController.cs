@@ -828,7 +828,6 @@ internal sealed class GhostApplicationController : IDisposable
                 exportSettings: (settings, stream) => _dataExport.ExportSettingsAsync(stream, settings),
                 updates: _updates,
                 openUpdateWindow: OpenUpdateWindow,
-                getCursorPosition: _windows.GetCursorPosition,
                 initialPage: initialPage);
             _settingsWindow = window;
             window.Closed += OnSettingsClosed;

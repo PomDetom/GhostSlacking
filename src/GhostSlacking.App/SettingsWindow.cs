@@ -45,7 +45,6 @@ internal sealed class SettingsWindow : AppWindow
     private readonly Func<Stream, Task<DataExportResult>> _exportLogs;
     private readonly Func<AppSettings, Stream, Task<DataExportResult>> _exportSettings;
     private readonly Action<UiThemeMode> _applyTheme;
-    private readonly Func<System.Drawing.Point> _getCursorPosition;
     private readonly IApplicationUpdateManager? _updates;
     private readonly Action? _openUpdateWindow;
     private readonly List<(TextBlock Text, string Key)> _localizedText = [];
@@ -80,7 +79,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly NumberBox _notificationHorizontalPosition;
     private readonly NumberBox _notificationVerticalPosition;
     private readonly Button _notificationPreviewButton;
-    private readonly Button _notificationPreviewCloseButton;
+    private readonly Button _revealPreviewButton;
     private readonly ComboBox _logLevel;
     private readonly ComboBox _updateChannel;
     private readonly Button _exportLogsButton;
@@ -115,10 +114,6 @@ internal sealed class SettingsWindow : AppWindow
     private bool _initializing = true;
     private string _selectedPage = RevealPage;
     private string? _exportStatusKey;
-    private NotificationWindow? _notificationPreview;
-    private readonly DispatcherTimer _notificationPreviewTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
-    private PixelPoint _notificationPreviewScreenPoint;
-    private readonly GhostSlacking.Platform.Win32WindowApi _previewWindowApi = new();
 
     public SettingsWindow(
         AppSettings settings,
@@ -128,13 +123,11 @@ internal sealed class SettingsWindow : AppWindow
         Func<AppSettings, Stream, Task<DataExportResult>>? exportSettings = null,
         IApplicationUpdateManager? updates = null,
         Action? openUpdateWindow = null,
-        Func<System.Drawing.Point>? getCursorPosition = null,
         string? initialPage = null)
     {
         _editState = new SettingsEditState(settings);
         _save = save;
         _applyTheme = applyTheme ?? AppTheme.Apply;
-        _getCursorPosition = getCursorPosition ?? (() => System.Drawing.Point.Empty);
         _exportLogs = exportLogs ?? (_ => Task.FromResult(DataExportResult.Failure()));
         _exportSettings = exportSettings ?? ((_, _) => Task.FromResult(DataExportResult.Failure()));
         _updates = updates;
@@ -168,12 +161,10 @@ internal sealed class SettingsWindow : AppWindow
         _notificationHeight = CreateNumberBox(hud.Height, 32, 96, 1);
         _notificationHorizontalPosition = CreateNumberBox(hud.HorizontalPosition, 0, 100, 1);
         _notificationVerticalPosition = CreateNumberBox(hud.VerticalPosition, 0, 100, 1);
-        _notificationPreviewButton = CreateTextButton(settings.Language, "previewNotification");
-        _notificationPreviewCloseButton = CreateTextButton(settings.Language, "closeNotificationPreview");
-        _notificationPreviewCloseButton.IsVisible = false;
-        _notificationPreviewButton.Click += (_, _) => BeginNotificationPreview();
-        _notificationPreviewCloseButton.Click += (_, _) => CancelNotificationPreview();
-        _notificationPreviewTimer.Tick += OnNotificationPreviewTimerTick;
+        _notificationPreviewButton = CreateTextButton(settings.Language, "adjustPreview");
+        _revealPreviewButton = CreateTextButton(settings.Language, "adjustPreview");
+        _notificationPreviewButton.Click += async (_, _) => await OpenAdjustmentAsync(notification: true);
+        _revealPreviewButton.Click += async (_, _) => await OpenAdjustmentAsync(notification: false);
         _logLevel = CreateComboBox();
         _updateChannel = CreateComboBox();
         _exportLogsButton = CreateTextButton(settings.Language, "exportLogs");
@@ -369,7 +360,8 @@ internal sealed class SettingsWindow : AppWindow
                 CreateSettingRow(language, "diameterStep", "diameterStepDescription", CreateResettable(_diameterStep, () => _diameterStep.Value = DefaultSettings.RevealDiameterStepPx)),
                 CreateSettingRow(language, "softEdgeWidth", "softEdgeWidthDescription", CreateResettable(_softEdgeWidth, () => _softEdgeWidth.Value = DefaultSettings.RevealSoftEdgeWidthPx)),
                 CreateSettingRow(language, "blurLevel", "blurLevelDescription", CreateResettable(_blurLevel, () => SelectChoice(_blurLevel, DefaultSettings.RevealBlurLevel))),
-                CreateSettingRow(language, "shape", "shapeDescription", CreateResettable(_shape, () => SelectChoice(_shape, DefaultSettings.RevealShape)))
+                CreateSettingRow(language, "shape", "shapeDescription", CreateResettable(_shape, () => SelectChoice(_shape, DefaultSettings.RevealShape))),
+                CreateSettingRow(language, "adjustRevealTitle", "adjustPreviewDescription", _revealPreviewButton)
             ]),
             CreateSection(language, "peekBehavior",
             [
@@ -426,7 +418,7 @@ internal sealed class SettingsWindow : AppWindow
                 CreateSettingRow(language, "notificationHeight", "notificationHeightDescription", _notificationHeight),
                 CreateSettingRow(language, "notificationHorizontalPosition", "notificationHorizontalPositionDescription", _notificationHorizontalPosition),
                 CreateSettingRow(language, "notificationVerticalPosition", "notificationVerticalPositionDescription", _notificationVerticalPosition),
-                CreateSettingRow(language, "notificationPreview", "notificationPreviewDescription", CreateNotificationPreviewEditor())
+                CreateSettingRow(language, "notificationPreview", "adjustPreviewDescription", _notificationPreviewButton)
             ]),
             CreateSection(language, "languageAndDiagnostics",
             [
@@ -658,13 +650,6 @@ internal sealed class SettingsWindow : AppWindow
         return grid;
     }
 
-    private Control CreateNotificationPreviewEditor() => new StackPanel
-    {
-        Orientation = Orientation.Horizontal,
-        Spacing = 6,
-        Children = { _notificationPreviewButton, _notificationPreviewCloseButton }
-    };
-
     private NotificationHudSettings GetNotificationHudSettings() => new NotificationHudSettings
     {
         CornerRadius = _notificationRadius.Value,
@@ -674,54 +659,43 @@ internal sealed class SettingsWindow : AppWindow
         VerticalPosition = _notificationVerticalPosition.Value
     }.Normalize();
 
-    private void BeginNotificationPreview()
+    private async Task OpenAdjustmentAsync(bool notification)
     {
-        if (_notificationPreview is not null) return;
-        var cursor = _getCursorPosition();
-        _notificationPreviewScreenPoint = new PixelPoint(cursor.X, cursor.Y);
-        _notificationPreview = new NotificationWindow(preview: true);
-        _notificationPreview.ContentMetricsChanged += (_, _) => UpdateNotificationPreview(updateContent: false);
-        UpdateNotificationPreview();
-        _notificationPreview.Show();
-        UpdateNotificationPreview();
-        var result = _previewWindowApi.SetNotificationClickThrough(_notificationPreview.TryGetPlatformHandle()?.Handle ?? 0, true);
-        if (!result.Success)
-        {
-            CancelNotificationPreview();
-            ShowStatus(SettingsStatus.Error, UiText.Text(CurrentLanguage, "notificationPreviewFailed"), string.Empty, InfoBarSeverity.Error);
-            return;
-        }
-        _notificationPreviewButton.IsVisible = false;
-        _notificationPreviewCloseButton.IsVisible = true;
-        _notificationPreviewTimer.Start();
+        CancelKeyCapture();
+        SettingsAdjustmentWindow dialog = notification
+            ? new NotificationAdjustmentWindow(GetSettings())
+            : new RevealAdjustmentWindow(GetSettings());
+        var result = await dialog.ShowDialog<AppSettings?>(this);
+        if (result is not null) ApplyAdjustmentResult(result, notification);
     }
 
-    private void OnNotificationPreviewTimerTick(object? sender, EventArgs args) => UpdateNotificationPreview(updateContent: false);
-
-    private void UpdateNotificationPreview(bool updateContent = true)
+    internal void ApplyAdjustmentResult(AppSettings result, bool notification)
     {
-        if (_notificationPreview is null) return;
-        // Content must be current before measuring and positioning the capsule.
-        if (updateContent) _notificationPreview.Update(UiText.Text(CurrentLanguage, "notificationPreviewMessage"), UserNotificationSeverity.Info, false);
-        var hud = GetNotificationHudSettings();
-        var screen = _notificationPreview.Screens.ScreenFromPoint(_notificationPreviewScreenPoint) ?? _notificationPreview.Screens.Primary;
-        if (screen is not null)
+        var normalized = result.Normalize();
+        _initializing = true;
+        try
         {
-            var preferredWidth = _notificationPreview.MeasurePreferredWidth(hud, screen.Scaling);
-            var geometry = NotificationLayout.Calculate(screen.WorkingArea, screen.Scaling, hud, preferredWidth);
-            _notificationPreview.Configure(hud, geometry);
-            if (_notificationPreview.Position != geometry.Position) _notificationPreview.Position = geometry.Position;
+            if (notification)
+            {
+                var hud = normalized.NotificationHud;
+                _notificationRadius.Value = hud.CornerRadius;
+                _notificationWidth.Value = hud.Width;
+                _notificationHeight.Value = hud.Height;
+                _notificationHorizontalPosition.Value = hud.HorizontalPosition;
+                _notificationVerticalPosition.Value = hud.VerticalPosition;
+            }
+            else
+            {
+                _diameter.Value = normalized.RevealDiameterPx;
+                _diameterStep.Value = normalized.RevealDiameterStepPx;
+                _softEdgeWidth.Value = normalized.RevealSoftEdgeWidthPx;
+                SelectChoice(_shape, normalized.RevealShape);
+                SelectChoice(_blurLevel, normalized.RevealBlurLevel);
+                SelectChoice(_peekFrameRateLimit, normalized.PeekFrameRateLimit);
+            }
         }
-    }
-
-    private void CancelNotificationPreview()
-    {
-        _notificationPreviewTimer.Stop();
-        var preview = _notificationPreview;
-        _notificationPreview = null;
-        preview?.Close();
-        _notificationPreviewButton.IsVisible = true;
-        _notificationPreviewCloseButton.IsVisible = false;
+        finally { _initializing = false; }
+        OnSettingsEdited();
     }
 
     private HotkeyEditor CreateHotkeyEditor(HotkeyBinding binding, HotkeyBinding defaultBinding)
@@ -988,7 +962,6 @@ internal sealed class SettingsWindow : AppWindow
             PopulateLocalizedChoices(language, blur, shape, trigger, frameRateLimit);
             PopulateUpdateChannels(language, updateChannel);
             PopulateThemeChoices(language, themeMode);
-            UpdateNotificationPreview();
             foreach (var button in this.GetLogicalDescendants().OfType<Button>())
             {
                 if (button.Tag is string tooltipKey)
@@ -1052,7 +1025,6 @@ internal sealed class SettingsWindow : AppWindow
             return;
         }
 
-        CancelNotificationPreview();
         var updated = GetSettings().Normalize();
         if (!_save(updated))
         {
@@ -1071,7 +1043,6 @@ internal sealed class SettingsWindow : AppWindow
     private void CancelSettingsEdits()
     {
         CancelKeyCapture();
-        CancelNotificationPreview();
         var saved = _editState.SavedSettings;
         _initializing = true;
         try
@@ -1348,7 +1319,6 @@ internal sealed class SettingsWindow : AppWindow
             return;
         }
 
-        UpdateNotificationPreview();
         _savedStatusTimer.Stop();
         if (_editState.Refresh(GetSettings()) == SettingsStatus.None)
         {
@@ -1474,8 +1444,6 @@ internal sealed class SettingsWindow : AppWindow
 
     private void OnClosed(object? sender, EventArgs args)
     {
-        CancelNotificationPreview();
-        _notificationPreviewTimer.Tick -= OnNotificationPreviewTimerTick;
         if (_updates is not null)
         {
             _updates.Changed -= OnUpdateStateChanged;

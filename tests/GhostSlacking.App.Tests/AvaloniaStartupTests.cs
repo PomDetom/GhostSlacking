@@ -70,6 +70,8 @@ public sealed class AvaloniaStartupTests
                 AssertNotificationFadeAndPreview();
                 AssertNotificationFadeInterruption();
                 AssertNotificationHudSettingSavesAndCancels();
+                stage = "slider adjustment windows";
+                SettingsAdjustmentTests.VerifyUi();
                 AssertNotificationHitTesting();
                 AssertPersistentBackgroundHud();
                 Assert.Equal(2, raisedNotificationHandles.Count);
@@ -341,6 +343,7 @@ public sealed class AvaloniaStartupTests
         GetPrivateField<NumberBox>(window, "_notificationRadius").Value = 16;
         GetPrivateField<NumberBox>(window, "_notificationHorizontalPosition").Value = 20;
         GetPrivateField<NumberBox>(window, "_notificationVerticalPosition").Value = 30;
+        GetPrivateField<NumberBox>(window, "_notificationWidth").Value = 200;
         typeof(SettingsWindow).GetField("_peekVirtualKey", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, 0x7B);
         var editors = (Array)typeof(SettingsWindow).GetMethod("GetHotkeyEditors", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null)!;
         for (var index = 0; index < editors.Length; index++)
@@ -630,7 +633,7 @@ public sealed class AvaloniaStartupTests
     private static void AssertNotificationWindowComposition(AvaloniaNotificationService notifications)
     {
         var window = GetPrivateField<NotificationWindow>(notifications, "_window");
-        var surface = GetPrivateField<Border>(window, "_surface");
+        var surface = window.Hud.Surface;
         Assert.False(window.ShowActivated);
         Assert.False(window.ShowInTaskbar);
         Assert.Contains(WindowTransparencyLevel.Transparent, window.TransparencyLevelHint);
@@ -647,10 +650,10 @@ public sealed class AvaloniaStartupTests
     private static void AssertNotificationWindowsAdaptToContent()
     {
         var window = new NotificationWindow();
-        var surface = GetPrivateField<Border>(window, "_surface");
-        var text = GetPrivateField<TextBlock>(window, "_message");
-        var icon = GetPrivateField<Avalonia.Controls.Shapes.Path>(window, "_icon");
-        var content = GetPrivateField<Grid>(window, "_content");
+        var surface = window.Hud.Surface;
+        var text = window.Hud.Message;
+        var icon = window.Hud.Icon;
+        var content = window.Hud.MessageGroup;
         Assert.Equal(Avalonia.Layout.HorizontalAlignment.Center, content.HorizontalAlignment);
         Assert.Equal(9, content.ColumnDefinitions[1].Width.Value);
         Assert.Equal(GridUnitType.Auto, content.ColumnDefinitions[2].Width.GridUnitType);
@@ -723,7 +726,7 @@ public sealed class AvaloniaStartupTests
     {
         var settings = new NotificationHudSettings();
         var window = new NotificationWindow(preview: true);
-        var surface = GetPrivateField<Border>(window, "_surface");
+        var surface = window.Hud.Surface;
         foreach (var theme in new[] { Avalonia.Styling.ThemeVariant.Light, Avalonia.Styling.ThemeVariant.Dark })
         foreach (var scaling in new[] { 1, 1.25, 1.5, 2 })
         {
@@ -734,7 +737,7 @@ public sealed class AvaloniaStartupTests
             var geometry = NotificationLayout.Calculate(new Avalonia.PixelRect(-1920, 0, 1920, 1080), scaling, settings, shortWidth);
             window.Configure(settings, geometry);
             Assert.InRange(surface.Width, 64, 99);
-            Assert.Equal(13, GetPrivateField<TextBlock>(window, "_message").FontSize);
+            Assert.Equal(13, window.Hud.Message.FontSize);
             window.Update(new string('长', 100), UserNotificationSeverity.Info, false);
             var longWidth = window.MeasurePreferredWidth(settings, scaling);
             Assert.True(longWidth > shortWidth);
@@ -777,22 +780,9 @@ public sealed class AvaloniaStartupTests
         GetPrivateField<NumberBox>(window, "_notificationHeight").Value = 52;
         GetPrivateField<NumberBox>(window, "_notificationHorizontalPosition").Value = 20;
         GetPrivateField<NumberBox>(window, "_notificationVerticalPosition").Value = 30;
-        typeof(SettingsWindow).GetMethod("BeginNotificationPreview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
-        var preview = GetPrivateField<NotificationWindow>(window, "_notificationPreview");
-        Assert.True(GetPrivateField<Avalonia.Threading.DispatcherTimer>(window, "_notificationPreviewTimer").IsEnabled);
-        Assert.InRange(GetPrivateField<Border>(preview, "_surface").Width, 64, 180);
         GetPrivateField<NumberBox>(window, "_notificationWidth").Value = 200;
-        Assert.InRange(GetPrivateField<Border>(preview, "_surface").Width, 64, 200);
-        using (var runtime = new AvaloniaNotificationService(() => Point.Empty, NullLogger.Instance,
-            settings: new AppSettings { NotificationHud = new NotificationHudSettings { Width = 200, Height = 52, CornerRadius = 16 } }))
-        {
-            runtime.Show(UiText.Text(UiLanguage.Chinese, "notificationPreviewMessage"), UserNotificationSeverity.Info);
-            var runtimeWindow = GetPrivateField<NotificationWindow>(runtime, "_window");
-            Assert.Equal(GetPrivateField<Border>(preview, "_surface").Width, GetPrivateField<Border>(runtimeWindow, "_surface").Width);
-        }
         InvokeSave(window);
         Assert.Null(saved);
-        Assert.False(GetPrivateField<Avalonia.Threading.DispatcherTimer>(window, "_notificationPreviewTimer").IsEnabled);
         Assert.Equal(200, GetPrivateField<NumberBox>(window, "_notificationWidth").Value);
         failSave = false;
         InvokeSave(window);
@@ -803,7 +793,6 @@ public sealed class AvaloniaStartupTests
         var bar = GetPrivateField<SettingsSaveBar>(window, "_saveBar");
         GetPrivateField<Button>(bar, "_cancel").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(200, GetPrivateField<NumberBox>(window, "_notificationWidth").Value);
-        Assert.Null(typeof(SettingsWindow).GetField("_notificationPreview", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
         window.Close();
     }
 
@@ -830,7 +819,7 @@ public sealed class AvaloniaStartupTests
         notifications.PauseForHover();
         Assert.True(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);
         notifications.Configure(new AppSettings { NotificationHud = new NotificationHudSettings { Width = 200 } });
-        Assert.InRange(GetPrivateField<Border>(window, "_surface").Width, 64, 200);
+        Assert.InRange(window.Hud.Surface.Width, 64, 200);
         Assert.True(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);
         notifications.ResumeAfterHover();
         Assert.False(GetPrivateField<TransientNotificationState>(notifications, "_state").IsPaused);
