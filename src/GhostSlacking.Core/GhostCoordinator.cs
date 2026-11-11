@@ -2,7 +2,7 @@ using System.Drawing;
 
 namespace GhostSlacking.Core;
 
-public sealed class GhostCoordinator
+public sealed partial class GhostCoordinator
 {
     private const int RevealValidationFailureNotificationThreshold = 3;
     private readonly IWindowApi _windows;
@@ -26,13 +26,15 @@ public sealed class GhostCoordinator
         RecoveryManager recovery,
         VisibilityEngine visibility,
         ILogger? logger = null,
-        IRevealVisualHost? revealVisualHost = null)
+        IRevealVisualHost? revealVisualHost = null,
+        TimeProvider? timeProvider = null)
     {
         _windows = windows;
         _recovery = recovery;
         _visibility = visibility;
         _logger = logger ?? NullLogger.Instance;
         _revealVisualHost = revealVisualHost;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public GhostState State => _state;
@@ -90,6 +92,19 @@ public sealed class GhostCoordinator
         }
 
         var profile = registered.Value;
+        ResetEnvironmentTracking();
+        if (_windows is IWindowEnvironmentApi environmentApi)
+        {
+            var environment = environmentApi.ReadEnvironment(profile.Original);
+            if (!environment.Success || environment.Value is null)
+            {
+                _recovery.Forget(profile.Hwnd);
+                Fail(UserErrorKind.SelectionStateCaptureFailed, environment.Error ?? "Could not read display geometry.");
+                SetState(GhostState.Idle);
+                return false;
+            }
+            _displayContext = environment.Value.Display;
+        }
         var ghosted = _visibility.ApplyGhost(profile);
         if (!ghosted.Success)
         {
@@ -119,7 +134,7 @@ public sealed class GhostCoordinator
             return;
         }
 
-        if (_current is null || _state is GhostState.Idle or GhostState.Picking or GhostState.Preparing or GhostState.Visible or GhostState.RecoveryError)
+        if (_current is null || _state is GhostState.Idle or GhostState.Picking or GhostState.Preparing or GhostState.RecoveryError)
         {
             return;
         }
@@ -131,21 +146,27 @@ public sealed class GhostCoordinator
             _recovery.Forget(_current.Hwnd);
             _current = null;
             _lastReveal = null;
+            ResetEnvironmentTracking();
             HideRevealVisual();
             SetState(GhostState.Idle);
             TargetClosed?.Invoke(this, EventArgs.Empty);
             return;
         }
 
+        if (!RefreshWindowEnvironment() || _state == GhostState.Visible) return;
+
         if (!WindowPlacementRestoration.PlacementMatches(_current.Original, observation))
         {
+            if (++_placementCorrections > RestoreStabilityTracker.MaximumCorrections)
+            {
+                SuspendWindowControl("Window placement did not stabilize after 10 corrections.");
+                return;
+            }
+            _logger.Log(LogLevel.Debug, $"PlacementCorrection hwnd={_current.Hwnd} attempt={_placementCorrections} observed={observation.ScreenBounds} expected={_current.Original.ScreenBounds} maximized={observation.IsMaximized}");
             var corrected = _visibility.EnsureWindowPlacement(_current);
             if (!corrected.Success)
             {
-                _lastReveal = null;
-                HideRevealVisual();
-                Fail(UserErrorKind.WindowPlacementCorrectionFailed, corrected.ErrorMessage ?? "Could not preserve the target window placement.");
-                StartRestore(_current, "window placement correction failed", forgetOnSuccess: true, GhostState.Idle);
+                SuspendWindowControl(corrected.ErrorMessage ?? "Could not preserve the target window placement.");
                 return;
             }
 
@@ -160,6 +181,7 @@ public sealed class GhostCoordinator
                 return;
             }
         }
+        else _placementCorrections = 0;
         var geometryChanged = _lastBounds != observation.ScreenBounds;
         var cursorChanged = _lastCursor != cursorScreen;
         _lastBounds = observation.ScreenBounds;
@@ -302,6 +324,7 @@ public sealed class GhostCoordinator
 
     public RestoreReport RestoreAll(string reason)
     {
+        _pendingEnvironment = null;
         SetState(GhostState.Restoring);
         HideRevealVisual();
         _restoreSession = null;
@@ -340,6 +363,7 @@ public sealed class GhostCoordinator
 
         if (_state == GhostState.Visible)
         {
+            if (!RefreshWindowEnvironment()) return false;
             var ghosted = _visibility.ApplyGhost(_current);
             if (ghosted.Success)
             {
@@ -372,6 +396,7 @@ public sealed class GhostCoordinator
             return false;
         }
 
+        _pendingEnvironment = null;
         SetState(GhostState.Restoring);
         HideRevealVisual();
         var restored = _recovery.RestoreWindow(profile.Hwnd, reason, forgetOnSuccess: false);

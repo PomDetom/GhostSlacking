@@ -136,6 +136,18 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
 
     void IRevealVisualHost.Hide() => HideVisual();
 
+    public void InvalidateGeometry()
+    {
+        HideVisual();
+        _lastRequestedVisual = null;
+        _recoveryRegistration?.Dispose();
+        _recoveryRegistration = null;
+        Volatile.Write(ref _recovering, 0);
+        ReleaseCompositionResources();
+        _window?.Dispose();
+        _window = null;
+    }
+
     public void HideVisual()
     {
         _window?.Hide();

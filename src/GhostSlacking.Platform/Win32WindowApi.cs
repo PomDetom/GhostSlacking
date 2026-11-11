@@ -5,7 +5,7 @@ using GhostSlacking.Core;
 
 namespace GhostSlacking.Platform;
 
-public sealed class Win32WindowApi : IWindowApi
+public sealed partial class Win32WindowApi : IWindowApi, IWindowEnvironmentApi
 {
     public bool IsWindow(nint hwnd) => hwnd != 0 && Win32NativeMethods.IsWindow(hwnd);
 

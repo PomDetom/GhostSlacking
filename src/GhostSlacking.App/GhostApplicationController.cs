@@ -157,6 +157,11 @@ internal sealed class GhostApplicationController : IDisposable
             if (!_isExiting) _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, pending ? "backgroundStarting" : "backgroundActive"));
         };
         _backgroundInteraction.Stopped += OnBackgroundInteractionStopped;
+        _coordinator.EnvironmentChanging += (_, _) =>
+        {
+            _backgroundInteraction.Stop(BackgroundInteractionStopReason.TargetChanged);
+            if (_settings.ExperimentalBackgroundInteraction) ResetPeekIntent();
+        };
         _backgroundInteraction.InputRejected += OnBackgroundInputRejected;
         _backgroundInteraction.InputResumed += () =>
         {
@@ -254,6 +259,7 @@ internal sealed class GhostApplicationController : IDisposable
 
     private void OnPeekTimerTick(object? sender, EventArgs args)
     {
+        var environmentReady = _coordinator.RefreshWindowEnvironment();
         var peekKeyDown = _windows.IsKeyDown(_settings.PeekVirtualKey);
         var peekPressed = peekKeyDown && !_lastPeekKeyDown;
         _lastPeekKeyDown = peekKeyDown;
@@ -289,7 +295,7 @@ internal sealed class GhostApplicationController : IDisposable
                 ResetPeekIntent();
                 show = false;
             }
-            else if (_isExiting || _pickerActive || _settingsWindow is not null || _updateWindow is not null)
+            else if (!environmentReady || _isExiting || _pickerActive || _settingsWindow is not null || _updateWindow is not null)
             {
                 _backgroundInteraction.Stop(BackgroundInteractionStopReason.RevealEnded);
                 ResetPeekIntent();

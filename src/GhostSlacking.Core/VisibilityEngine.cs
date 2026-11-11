@@ -18,6 +18,8 @@ public sealed class VisibilityEngine
         return result;
     }
 
+    public NativeResult HideOnly(GhostWindowProfile profile) => _backend.HideOnly(profile.Hwnd);
+
     public NativeResult ApplyReveal(GhostWindowProfile profile, CircleRegion region)
     {
         var result = _backend.ApplyReveal(profile.Hwnd, region, profile.Original);

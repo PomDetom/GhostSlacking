@@ -47,6 +47,16 @@ public sealed class Win32VisibilityBackend : IVisibilityBackend
         return preserved;
     }
 
+    public NativeResult HideOnly(nint hwnd)
+    {
+        if (!Win32NativeMethods.IsWindow(hwnd))
+            return Failure("ShowWindow(SW_HIDE)", "The target window no longer exists.");
+        Win32NativeMethods.ShowWindow(hwnd, Win32NativeMethods.SW_HIDE);
+        return !Win32NativeMethods.IsWindowVisible(hwnd)
+            ? NativeResult.Ok("HideOnly")
+            : Failure("ShowWindow(SW_HIDE)", "The target did not remain hidden.");
+    }
+
     public NativeResult ApplyReveal(nint hwnd, CircleRegion region, WindowSnapshot snapshot)
     {
         var applied = ApplyRevealRegion(hwnd, region);
@@ -147,7 +157,14 @@ public sealed class Win32VisibilityBackend : IVisibilityBackend
         }
 
         var wasVisible = Win32NativeMethods.IsWindowVisible(hwnd);
-        var placement = ToNativePlacement(snapshot.Placement);
+        var environment = new Win32WindowApi().ReadEnvironment(snapshot);
+        if (!environment.Success || environment.Value is null)
+            return Failure("ReadEnvironment(Preserve)", environment.Error ?? "Could not read the placement coordinate space.");
+        var currentToolWindow = (Win32NativeMethods.GetWindowLongPtr(hwnd, Win32NativeMethods.GWL_EXSTYLE) & Win32NativeMethods.WS_EX_TOOLWINDOW) != 0;
+        var preservedPlacement = WindowPlacementCoordinates.Convert(snapshot.Placement,
+            (snapshot.Styles.ExtendedStyle & Win32NativeMethods.WS_EX_TOOLWINDOW) != 0,
+            currentToolWindow, environment.Value.Display);
+        var placement = ToNativePlacement(preservedPlacement);
         if (!Win32NativeMethods.SetWindowPlacement(hwnd, ref placement))
         {
             return Failure("SetWindowPlacement(Preserve)", "Could not preserve the target window state.");
