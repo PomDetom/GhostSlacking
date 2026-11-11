@@ -78,8 +78,9 @@ internal sealed class SettingsWindow : AppWindow
     private readonly NumberBox _notificationHeight;
     private readonly NumberBox _notificationHorizontalPosition;
     private readonly NumberBox _notificationVerticalPosition;
-    private readonly Button _notificationPreviewButton;
-    private readonly Button _revealPreviewButton;
+    private readonly Dictionary<AdjustmentKind, (TextBlock Value, Button Row)> _adjustmentValues = [];
+    private SettingsAdjustmentFlyout? _activeAdjustment;
+    internal SettingsAdjustmentFlyout? ActiveAdjustment => _activeAdjustment;
     private readonly ComboBox _logLevel;
     private readonly ComboBox _updateChannel;
     private readonly Button _exportLogsButton;
@@ -161,10 +162,6 @@ internal sealed class SettingsWindow : AppWindow
         _notificationHeight = CreateNumberBox(hud.Height, 32, 96, 1);
         _notificationHorizontalPosition = CreateNumberBox(hud.HorizontalPosition, 0, 100, 1);
         _notificationVerticalPosition = CreateNumberBox(hud.VerticalPosition, 0, 100, 1);
-        _notificationPreviewButton = CreateTextButton(settings.Language, "adjustPreview");
-        _revealPreviewButton = CreateTextButton(settings.Language, "adjustPreview");
-        _notificationPreviewButton.Click += async (_, _) => await OpenAdjustmentAsync(notification: true);
-        _revealPreviewButton.Click += async (_, _) => await OpenAdjustmentAsync(notification: false);
         _logLevel = CreateComboBox();
         _updateChannel = CreateComboBox();
         _exportLogsButton = CreateTextButton(settings.Language, "exportLogs");
@@ -278,6 +275,7 @@ internal sealed class SettingsWindow : AppWindow
         Content = _navigation;
 
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(PointerWheelChangedEvent, (_, _) => CloseAdjustment(), RoutingStrategies.Tunnel);
         ActualThemeVariantChanged += OnActualThemeVariantChanged;
         Closed += OnClosed;
         if (_updates is not null)
@@ -356,16 +354,15 @@ internal sealed class SettingsWindow : AppWindow
         [
             CreateSection(language, "revealAppearance",
             [
-                CreateSettingRow(language, "diameter", "diameterDescription", CreateResettable(_diameter, () => _diameter.Value = DefaultSettings.RevealDiameterPx)),
-                CreateSettingRow(language, "diameterStep", "diameterStepDescription", CreateResettable(_diameterStep, () => _diameterStep.Value = DefaultSettings.RevealDiameterStepPx)),
-                CreateSettingRow(language, "softEdgeWidth", "softEdgeWidthDescription", CreateResettable(_softEdgeWidth, () => _softEdgeWidth.Value = DefaultSettings.RevealSoftEdgeWidthPx)),
-                CreateSettingRow(language, "blurLevel", "blurLevelDescription", CreateResettable(_blurLevel, () => SelectChoice(_blurLevel, DefaultSettings.RevealBlurLevel))),
-                CreateSettingRow(language, "shape", "shapeDescription", CreateResettable(_shape, () => SelectChoice(_shape, DefaultSettings.RevealShape))),
-                CreateSettingRow(language, "adjustRevealTitle", "adjustPreviewDescription", _revealPreviewButton)
+                CreateAdjustmentRow(language, AdjustmentKind.Diameter, "diameterDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.DiameterStep, "diameterStepDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.SoftEdgeWidth, "softEdgeWidthDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.BlurLevel, "blurLevelDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.Shape, "shapeDescription")
             ]),
             CreateSection(language, "peekBehavior",
             [
-                CreateSettingRow(language, "peekFrameRateLimit", "peekFrameRateLimitDescription", CreateResettable(_peekFrameRateLimit, () => SelectChoice(_peekFrameRateLimit, DefaultSettings.PeekFrameRateLimit))),
+                CreateAdjustmentRow(language, AdjustmentKind.FrameRate, "peekFrameRateLimitDescription"),
                 CreateSettingRow(language, "peekMode", "peekModeDescription", CreateResettable(_peekMode, () => SelectChoice(_peekMode, DefaultSettings.PeekTrigger))),
                 CreateSettingRow(language, "peekKey", "peekKeyDescription", CreatePeekKeyEditor())
             ])
@@ -413,12 +410,11 @@ internal sealed class SettingsWindow : AppWindow
             ]),
             CreateSection(language, "notificationSettings",
             [
-                CreateSettingRow(language, "notificationRadius", "notificationRadiusDescription", _notificationRadius),
-                CreateSettingRow(language, "notificationWidth", "notificationWidthDescription", _notificationWidth),
-                CreateSettingRow(language, "notificationHeight", "notificationHeightDescription", _notificationHeight),
-                CreateSettingRow(language, "notificationHorizontalPosition", "notificationHorizontalPositionDescription", _notificationHorizontalPosition),
-                CreateSettingRow(language, "notificationVerticalPosition", "notificationVerticalPositionDescription", _notificationVerticalPosition),
-                CreateSettingRow(language, "notificationPreview", "adjustPreviewDescription", _notificationPreviewButton)
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationRadius, "notificationRadiusDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationWidth, "notificationWidthDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationHeight, "notificationHeightDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationHorizontal, "notificationHorizontalPositionDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationVertical, "notificationVerticalPositionDescription")
             ]),
             CreateSection(language, "languageAndDiagnostics",
             [
@@ -659,43 +655,89 @@ internal sealed class SettingsWindow : AppWindow
         VerticalPosition = _notificationVerticalPosition.Value
     }.Normalize();
 
-    private async Task OpenAdjustmentAsync(bool notification)
+    private Control CreateAdjustmentRow(UiLanguage language, AdjustmentKind kind, string descriptionKey)
     {
-        CancelKeyCapture();
-        SettingsAdjustmentWindow dialog = notification
-            ? new NotificationAdjustmentWindow(GetSettings())
-            : new RevealAdjustmentWindow(GetSettings());
-        var result = await dialog.ShowDialog<AppSettings?>(this);
-        if (result is not null) ApplyAdjustmentResult(result, notification);
+        var spec = SettingAdjustment.For(kind);
+        var title = LocalizedText(language, spec.Label);
+        title.FontWeight = FontWeight.Medium;
+        title.Foreground = _primaryBrush;
+        var description = LocalizedText(language, descriptionKey);
+        description.FontSize = 12;
+        description.Foreground = _secondaryBrush;
+        description.TextWrapping = TextWrapping.Wrap;
+        var copy = new StackPanel { Spacing = 4, Children = { title, description } };
+        var value = new TextBlock { Foreground = _primaryBrush, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 240 };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        grid.Children.Add(copy);
+        value.Margin = new Thickness(16, 0, 0, 0);
+        Grid.SetColumn(value, 1);
+        grid.Children.Add(value);
+        var button = new Button
+        {
+            Content = grid, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            HorizontalAlignment = HorizontalAlignment.Stretch, Background = _cardBrush,
+            BorderBrush = _fieldBorderBrush, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 14)
+        };
+        _adjustmentValues[kind] = (value, button);
+        button.Click += (_, _) => OpenAdjustment(kind, button);
+        return button;
     }
 
-    internal void ApplyAdjustmentResult(AppSettings result, bool notification)
+    internal void OpenAdjustment(AdjustmentKind kind, Control anchor)
+    {
+        CancelKeyCapture();
+        var same = _activeAdjustment?.Kind == kind;
+        CloseAdjustment();
+        if (same) return;
+        var flyout = new SettingsAdjustmentFlyout(GetSettings(), kind, result => ApplyAdjustmentResult(result, kind));
+        _activeAdjustment = flyout;
+        flyout.Closed += (_, _) => { if (ReferenceEquals(_activeAdjustment, flyout)) _activeAdjustment = null; };
+        flyout.OpenAt(anchor);
+    }
+
+    private void CloseAdjustment()
+    {
+        _activeAdjustment?.Hide();
+        _activeAdjustment?.Dispose();
+        _activeAdjustment = null;
+    }
+
+    internal void ApplyAdjustmentResult(AppSettings result, AdjustmentKind kind)
     {
         var normalized = result.Normalize();
         _initializing = true;
         try
         {
-            if (notification)
+            switch (kind)
             {
-                var hud = normalized.NotificationHud;
-                _notificationRadius.Value = hud.CornerRadius;
-                _notificationWidth.Value = hud.Width;
-                _notificationHeight.Value = hud.Height;
-                _notificationHorizontalPosition.Value = hud.HorizontalPosition;
-                _notificationVerticalPosition.Value = hud.VerticalPosition;
-            }
-            else
-            {
-                _diameter.Value = normalized.RevealDiameterPx;
-                _diameterStep.Value = normalized.RevealDiameterStepPx;
-                _softEdgeWidth.Value = normalized.RevealSoftEdgeWidthPx;
-                SelectChoice(_shape, normalized.RevealShape);
-                SelectChoice(_blurLevel, normalized.RevealBlurLevel);
-                SelectChoice(_peekFrameRateLimit, normalized.PeekFrameRateLimit);
+                case AdjustmentKind.Diameter: _diameter.Value = normalized.RevealDiameterPx; break;
+                case AdjustmentKind.DiameterStep: _diameterStep.Value = normalized.RevealDiameterStepPx; break;
+                case AdjustmentKind.SoftEdgeWidth: _softEdgeWidth.Value = normalized.RevealSoftEdgeWidthPx; break;
+                case AdjustmentKind.BlurLevel: SelectChoice(_blurLevel, normalized.RevealBlurLevel); break;
+                case AdjustmentKind.Shape: SelectChoice(_shape, normalized.RevealShape); break;
+                case AdjustmentKind.FrameRate: SelectChoice(_peekFrameRateLimit, normalized.PeekFrameRateLimit); break;
+                case AdjustmentKind.NotificationRadius: _notificationRadius.Value = normalized.NotificationHud.CornerRadius; break;
+                case AdjustmentKind.NotificationWidth: _notificationWidth.Value = normalized.NotificationHud.Width; break;
+                case AdjustmentKind.NotificationHeight: _notificationHeight.Value = normalized.NotificationHud.Height; break;
+                case AdjustmentKind.NotificationHorizontal: _notificationHorizontalPosition.Value = normalized.NotificationHud.HorizontalPosition; break;
+                case AdjustmentKind.NotificationVertical: _notificationVerticalPosition.Value = normalized.NotificationHud.VerticalPosition; break;
             }
         }
         finally { _initializing = false; }
         OnSettingsEdited();
+    }
+
+    private void RefreshAdjustmentValues()
+    {
+        var settings = GetSettings();
+        foreach (var (kind, row) in _adjustmentValues)
+        {
+            var formatted = SettingAdjustment.Format(settings, kind, CurrentLanguage);
+            row.Value.Text = formatted + "  ⌄";
+            Avalonia.Automation.AutomationProperties.SetName(row.Row,
+                UiText.Text(CurrentLanguage, SettingAdjustment.For(kind).Label) + ": " + formatted);
+        }
     }
 
     private HotkeyEditor CreateHotkeyEditor(HotkeyBinding binding, HotkeyBinding defaultBinding)
@@ -900,6 +942,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private void OnNavigationSelectionChanged(object? sender, NavigationViewSelectionChangedEventArgs args)
     {
+        CloseAdjustment();
         if (args.SelectedItem is not NavigationViewItem item || item.Tag is not string page || !_pages.ContainsKey(page))
         {
             return;
@@ -927,6 +970,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private void ApplyLanguage(UiLanguage language)
     {
+        CloseAdjustment();
         _updatingLanguage = true;
         try
         {
@@ -970,6 +1014,7 @@ internal sealed class SettingsWindow : AppWindow
                 }
             }
 
+            RefreshAdjustmentValues();
             UpdatePageHeader(language);
             RefreshKeyDisplays();
             RefreshStatusText();
@@ -983,6 +1028,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private async void OnSaveClicked(object? sender, RoutedEventArgs args)
     {
+        CloseAdjustment();
         CancelKeyCapture();
         var candidate = GetSettings().Normalize();
         if (candidate.ExperimentalBackgroundInteraction && candidate.ContinuousBackgroundInteraction && candidate.PeekTrigger != PeekTrigger.Toggle)
@@ -1042,6 +1088,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private void CancelSettingsEdits()
     {
+        CloseAdjustment();
         CancelKeyCapture();
         var saved = _editState.SavedSettings;
         _initializing = true;
@@ -1319,6 +1366,7 @@ internal sealed class SettingsWindow : AppWindow
             return;
         }
 
+        RefreshAdjustmentValues();
         _savedStatusTimer.Stop();
         if (_editState.Refresh(GetSettings()) == SettingsStatus.None)
         {
@@ -1444,6 +1492,7 @@ internal sealed class SettingsWindow : AppWindow
 
     private void OnClosed(object? sender, EventArgs args)
     {
+        CloseAdjustment();
         if (_updates is not null)
         {
             _updates.Changed -= OnUpdateStateChanged;

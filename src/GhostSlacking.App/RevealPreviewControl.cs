@@ -6,29 +6,43 @@ using GhostSlacking.Core;
 
 namespace GhostSlacking.App;
 
-// A fixed 1100px world keeps diameter and feather comparisons at the same scale.
-// This simulates the appearance on sample content; it does not capture a window.
+internal readonly record struct RevealPreviewComparison(int BeforeDiameter, int AfterDiameter, int FeatherWidth, bool IsStep, bool IsFeather)
+{
+    internal int ReferenceExtent => Math.Max(BeforeDiameter, AfterDiameter) + 2 * FeatherWidth + 48;
+    internal static RevealPreviewComparison Create(AppSettings initial, AppSettings current, AdjustmentKind kind, int direction = 1)
+    {
+        var before = kind == AdjustmentKind.DiameterStep ? initial.RevealDiameterPx : current.RevealDiameterPx;
+        var after = kind == AdjustmentKind.DiameterStep
+            ? Math.Clamp(before + Math.Sign(direction) * current.RevealDiameterStepPx, 64, 800)
+            : current.RevealDiameterPx;
+        return new(before, after, current.RevealSoftEdgeWidthPx,
+            kind == AdjustmentKind.DiameterStep, kind == AdjustmentKind.SoftEdgeWidth);
+    }
+}
+
+// Sample pixels only: both comparison layers share one coordinate system and scale.
 internal sealed class RevealPreviewControl : Control, IDisposable
 {
-    internal const int WorldSize = 1100;
     private WriteableBitmap? _mask;
     private string? _maskKey;
     private AppSettings _settings = new();
-    private int _diameter = 144;
+    private AdjustmentKind _kind;
+    internal RevealPreviewComparison Comparison { get; private set; } = RevealPreviewComparison.Create(new(), new(), AdjustmentKind.Diameter);
     internal double AnimationSeconds { get; set; }
-    internal double PreviewScale => Math.Min(Bounds.Width, Bounds.Height) / WorldSize;
+    internal double PreviewScale => Math.Min(Bounds.Width, Bounds.Height) / Comparison.ReferenceExtent;
 
     public RevealPreviewControl()
     {
-        Height = 280;
+        Height = 190;
         ClipToBounds = true;
         ActualThemeVariantChanged += (_, _) => { _maskKey = null; InvalidateVisual(); };
     }
 
-    internal void Update(AppSettings settings, int diameter)
+    internal void Configure(AppSettings initial, AppSettings current, AdjustmentKind kind, int direction = 1)
     {
-        _settings = settings;
-        _diameter = diameter;
+        _settings = current;
+        _kind = kind;
+        Comparison = RevealPreviewComparison.Create(initial, current, kind, direction);
         InvalidateVisual();
     }
 
@@ -36,7 +50,7 @@ internal sealed class RevealPreviewControl : Control, IDisposable
     {
         base.Render(context);
         var size = Math.Max(1, (int)Math.Min(Bounds.Width, Bounds.Height));
-        var key = $"{size}:{_diameter}:{_settings.RevealSoftEdgeWidthPx}:{_settings.RevealShape}:{_settings.RevealBlurLevel}:{ActualThemeVariant}";
+        var key = $"{size}:{Comparison}:{_settings.RevealShape}:{_settings.RevealBlurLevel}:{ActualThemeVariant}";
         if (_maskKey != key)
         {
             _mask?.Dispose();
@@ -45,38 +59,66 @@ internal sealed class RevealPreviewControl : Control, IDisposable
         }
         var origin = new Point((Bounds.Width - size) / 2, (Bounds.Height - size) / 2);
         context.DrawImage(_mask!, new Rect(origin, new Size(size, size)));
-        // The marker travels at a fixed speed; only sampling cadence changes with FPS.
-        var x = origin.X + size * (0.5 + 0.38 * Math.Sin(AnimationSeconds * 1.5));
-        var y = origin.Y + size * 0.5;
-        context.DrawEllipse(new SolidColorBrush(AppTheme.AccentColor), null, new Point(x, y), 5, 5);
+        if (Comparison.IsStep || Comparison.IsFeather)
+        {
+            DrawOutline(context, origin, size, Comparison.BeforeDiameter,
+                new Pen(new SolidColorBrush(AppTheme.Palette(ActualThemeVariant).Primary), 1.3));
+            if (Comparison.IsStep)
+                DrawOutline(context, origin, size, Comparison.AfterDiameter,
+                    new Pen(new SolidColorBrush(AppTheme.AccentColor, 0.75), 1.5, new DashStyle([4d, 3d], 0)));
+        }
+        if (_kind == AdjustmentKind.FrameRate)
+        {
+            var x = origin.X + size * (0.5 + 0.38 * Math.Sin(AnimationSeconds * 1.5));
+            context.DrawEllipse(new SolidColorBrush(AppTheme.AccentColor), null, new Point(x, origin.Y + size / 2d), 5, 5);
+        }
+    }
+
+    private void DrawOutline(DrawingContext context, Point origin, int size, int diameter, Pen pen)
+    {
+        var scale = (double)size / Comparison.ReferenceExtent;
+        var width = diameter * scale;
+        var rect = new Rect(origin.X + (size - width) / 2, origin.Y + (size - width) / 2, width, width);
+        if (_settings.RevealShape == RevealShape.Circle) context.DrawEllipse(null, pen, rect);
+        else
+        {
+            var radius = _settings.RevealShape == RevealShape.RoundedRectangle ? Math.Clamp(diameter / 5, 12, 48) * scale : 0;
+            context.DrawRectangle(null, pen, new RoundedRect(rect, radius));
+        }
     }
 
     private WriteableBitmap CreateSample(int size)
     {
+        var extent = Comparison.ReferenceExtent;
+        var bounds = new System.Drawing.Rectangle(0, 0, extent, extent);
+        var center = new System.Drawing.Point(extent / 2, extent / 2);
+        var settings = new RevealSettings { DiameterPx = Comparison.AfterDiameter, Shape = _settings.RevealShape };
+        var after = RevealGeometry.CreateReveal(bounds, center, settings);
+        var before = RevealGeometry.CreateReveal(bounds, center, settings with { DiameterPx = Comparison.BeforeDiameter });
+        var visual = RevealGeometry.CreateVisualState(0, bounds, after, Comparison.FeatherWidth, _settings.RevealBlurLevel);
         var bitmap = new WriteableBitmap(new PixelSize(size, size), new Vector(96, 96),
             Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Opaque);
-        var region = RevealGeometry.CreateReveal(new System.Drawing.Rectangle(0, 0, WorldSize, WorldSize),
-            new System.Drawing.Point(WorldSize / 2, WorldSize / 2),
-            new RevealSettings { DiameterPx = _diameter, Shape = _settings.RevealShape, SoftEdgeWidthPx = _settings.RevealSoftEdgeWidthPx, BlurLevel = _settings.RevealBlurLevel });
-        var visual = RevealGeometry.CreateVisualState(0, new System.Drawing.Rectangle(0, 0, WorldSize, WorldSize),
-            region, _settings.RevealSoftEdgeWidthPx, _settings.RevealBlurLevel);
         var dark = AppTheme.IsDark(ActualThemeVariant);
         using var frame = bitmap.Lock();
         var pixels = new byte[frame.RowBytes * size];
         for (var y = 0; y < size; y++)
         for (var x = 0; x < size; x++)
         {
-            var wx = (x + 0.5f) * WorldSize / size;
-            var wy = (y + 0.5f) * WorldSize / size;
-            var distance = RevealGeometry.SignedDistanceFromBoundary(region, wx, wy);
+            var wx = (x + 0.5f) * extent / size;
+            var wy = (y + 0.5f) * extent / size;
+            var distance = RevealGeometry.SignedDistanceFromBoundary(after, wx, wy);
             var opacity = distance <= 0 ? 1 : RevealGeometry.GetFeatherOpacity(distance, visual.FeatherWidthPx);
             var blur = distance <= 0 ? 0 : visual.BlurAmountPx;
+            var background = dark ? 30 : 242;
+            var baseColor = Color.FromRgb((byte)background, (byte)background, (byte)background);
+            if (Comparison.IsStep && RevealGeometry.SignedDistanceFromBoundary(before, wx, wy) <= 0)
+                baseColor = Sample(wx, wy, 0, dark);
+            if (Comparison.IsStep) { opacity *= 0.42f; blur = Math.Max(3.2f, blur); }
             var color = Sample(wx, wy, blur, dark);
-            var background = dark ? 30 : 234;
             var pixel = y * frame.RowBytes + x * 4;
-            pixels[pixel] = (byte)(background + (color.B - background) * opacity);
-            pixels[pixel + 1] = (byte)(background + (color.G - background) * opacity);
-            pixels[pixel + 2] = (byte)(background + (color.R - background) * opacity);
+            pixels[pixel] = (byte)(baseColor.B + (color.B - baseColor.B) * opacity);
+            pixels[pixel + 1] = (byte)(baseColor.G + (color.G - baseColor.G) * opacity);
+            pixels[pixel + 2] = (byte)(baseColor.R + (color.R - baseColor.R) * opacity);
             pixels[pixel + 3] = 255;
         }
         System.Runtime.InteropServices.Marshal.Copy(pixels, 0, frame.Address, pixels.Length);
@@ -87,8 +129,8 @@ internal sealed class RevealPreviewControl : Control, IDisposable
     {
         static Color At(float x, float y, bool dark)
         {
-            if ((int)(x / 90) % 2 == 0 && (int)(y / 90) % 2 == 0) return dark ? Color.FromRgb(18, 107, 102) : Color.FromRgb(107, 212, 200);
-            if ((int)y % 80 is >= 28 and < 42) return dark ? Color.FromRgb(213, 229, 227) : Color.FromRgb(41, 79, 82);
+            if ((int)(x / 35) % 2 == 0 && (int)(y / 35) % 2 == 0) return dark ? Color.FromRgb(18, 107, 102) : Color.FromRgb(107, 212, 200);
+            if ((int)y % 40 is >= 12 and < 19) return dark ? Color.FromRgb(213, 229, 227) : Color.FromRgb(41, 79, 82);
             return dark ? Color.FromRgb(60, 85, 89) : Color.FromRgb(229, 246, 243);
         }
         if (blur == 0) return At(x, y, dark);

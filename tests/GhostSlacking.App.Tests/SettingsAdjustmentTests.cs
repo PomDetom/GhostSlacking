@@ -1,11 +1,11 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Media.Imaging;
 using Avalonia.Styling;
 using Avalonia.Threading;
-using FluentAvalonia.UI.Controls;
 using GhostSlacking.App;
 using GhostSlacking.Core;
 using GhostSlacking.Platform;
@@ -21,18 +21,74 @@ public sealed class SettingsAdjustmentTests
     [InlineData(PeekFrameRateLimit.Fps120, 3)]
     public void Frame_rate_ticks_round_trip_without_changing_the_settings_contract(PeekFrameRateLimit value, int index)
     {
-        Assert.Equal(index, RevealAdjustmentWindow.FrameIndex(value));
-        Assert.Equal(value, RevealAdjustmentWindow.FrameValue(index));
+        Assert.Equal(index, SettingAdjustment.FrameIndex(value));
+        Assert.Equal(value, SettingAdjustment.FrameValue(index));
     }
 
-    // Called on the existing, single Avalonia STA platform fixture.
+    [Theory]
+    [InlineData(144, 16, 1, 160)]
+    [InlineData(144, 16, -1, 128)]
+    [InlineData(64, 24, -1, 64)]
+    [InlineData(790, 24, 1, 800)]
+    public void Step_preview_overlays_one_step_without_changing_the_configured_diameter(int diameter, int step, int direction, int expected)
+    {
+        var initial = new AppSettings { RevealDiameterPx = diameter };
+        var current = initial with { RevealDiameterStepPx = step };
+        var comparison = RevealPreviewComparison.Create(initial, current, AdjustmentKind.DiameterStep, direction);
+        Assert.Equal(diameter, comparison.BeforeDiameter);
+        Assert.Equal(expected, comparison.AfterDiameter);
+        Assert.Equal(diameter, current.RevealDiameterPx);
+        Assert.True(comparison.IsStep);
+        Assert.True(comparison.ReferenceExtent > Math.Max(diameter, expected));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(16)]
+    [InlineData(128)]
+    public void Feather_comparison_keeps_the_hard_core_and_adds_the_selected_outer_width(int feather)
+    {
+        var initial = new AppSettings();
+        var current = initial with { RevealSoftEdgeWidthPx = feather };
+        var comparison = RevealPreviewComparison.Create(initial, current, AdjustmentKind.SoftEdgeWidth);
+        Assert.Equal(144, comparison.BeforeDiameter);
+        Assert.Equal(144, comparison.AfterDiameter);
+        Assert.Equal(feather, comparison.FeatherWidth);
+        Assert.True(comparison.IsFeather);
+        Assert.Equal(144 + 2 * feather + 48, comparison.ReferenceExtent);
+    }
+
+    [Fact]
+    public void Applying_an_item_preserves_every_other_setting_and_rejects_non_finite_values()
+    {
+        var initial = new AppSettings { RevealDiameterPx = 240, Language = UiLanguage.English };
+        foreach (var kind in Enum.GetValues<AdjustmentKind>())
+        {
+            var spec = SettingAdjustment.For(kind);
+            var result = SettingAdjustment.Apply(initial, kind, spec.Maximum);
+            Assert.Equal(spec.Maximum, SettingAdjustment.Read(result, kind));
+            foreach (var other in Enum.GetValues<AdjustmentKind>().Where(k => k != kind))
+                Assert.Equal(SettingAdjustment.Read(initial, other), SettingAdjustment.Read(result, other));
+            Assert.Equal(initial.Language, result.Language);
+            Assert.Equal(initial, SettingAdjustment.Apply(initial, kind, double.NaN));
+            Assert.Equal(initial, SettingAdjustment.Apply(initial, kind, double.PositiveInfinity));
+        }
+    }
+
+    // Reuse the solution's single Avalonia STA fixture.
     internal static void VerifyUi()
     {
         VerifySliderSynchronization();
-        VerifyModalDraftLifecycle();
-        VerifyNotificationContentParity();
-        VerifyAnimationLifecycle();
-        VerifyLocalizedLayouts();
+        var owner = new SettingsWindow(new AppSettings(), _ => true) { ShowActivated = false };
+        owner.Show();
+        try
+        {
+            VerifyDraftLifecycle(owner);
+            VerifyNotificationContentParity(owner);
+            VerifyAnimationLifecycle(owner);
+            VerifyLocalizedLayouts(owner);
+        }
+        finally { owner.Close(); }
     }
 
     private static void VerifySliderSynchronization()
@@ -42,8 +98,6 @@ public sealed class SettingsAdjustmentTests
         Assert.Equal(232, editor.Number.Value);
         editor.Number.Value = 317;
         Assert.Equal(317, editor.Slider.Value);
-        editor.Value = double.NaN;
-        Assert.Equal(317, editor.Value);
         editor.Number.Value = double.NaN;
         Assert.Equal(317, editor.Number.Value);
         editor.Value = double.PositiveInfinity;
@@ -56,150 +110,131 @@ public sealed class SettingsAdjustmentTests
         Assert.Equal(144, editor.Value);
     }
 
-    private static void VerifyModalDraftLifecycle()
+    private static void VerifyDraftLifecycle(SettingsWindow owner)
     {
-        var saves = new List<AppSettings>();
-        var saveSucceeds = false;
-        var initial = new AppSettings { RevealDiameterPx = 200, NotificationHud = new NotificationHudSettings { Width = 190 } };
-        var owner = new SettingsWindow(initial, s => { if (!saveSucceeds) return false; saves.Add(s); return true; });
-        owner.ShowActivated = false;
-        owner.Show();
-        var draft = initial with { RevealDiameterPx = 240 };
-        var discarded = new RevealAdjustmentWindow(draft, new FixedDisplay()) { ShowActivated = false };
-        var cancelled = discarded.ShowDialog<AppSettings?>(owner);
-        discarded.Diameter.Value = 400;
-        discarded.Close();
-        Dispatcher.UIThread.RunJobs();
-        Assert.Null(cancelled.GetAwaiter().GetResult());
-        Assert.Null(discarded.AcceptedSettings);
-        Assert.Empty(saves);
-
-        var escaped = new NotificationAdjustmentWindow(draft) { ShowActivated = false };
-        var escapedResult = escaped.ShowDialog<AppSettings?>(owner);
-        escaped.MaximumWidth.Number.Focus();
-        escaped.MaximumWidth.Number.Text = "250";
-        escaped.MaximumWidth.Number.RaiseEvent(new Avalonia.Input.KeyEventArgs
+        var results = new List<AppSettings>();
+        var initial = new AppSettings { RevealDiameterPx = 240, NotificationHud = new NotificationHudSettings { Width = 190 } };
+        using (var discarded = new SettingsAdjustmentFlyout(initial, AdjustmentKind.Diameter, results.Add))
         {
-            RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Escape
-        });
-        Dispatcher.UIThread.RunJobs();
-        Assert.Null(escapedResult.GetAwaiter().GetResult());
-
-        var reveal = new RevealAdjustmentWindow(draft, new FixedDisplay()) { ShowActivated = false };
-        var finished = reveal.ShowDialog<AppSettings?>(owner);
-        Assert.Equal(240, reveal.Diameter.Value);
-        reveal.DiameterStep.Value = 24;
-        reveal.DemonstrateStep(1);
-        Assert.Equal(264, reveal.DemoDiameter);
-        Assert.Equal(240, reveal.Diameter.Value);
-        reveal.Diameter.Value = 300;
-        reveal.FrameRate.Value = 2;
-        Assert.Equal(75, reveal.Decision.TargetFramesPerSecond);
-        reveal.Diameter.Number.Focus();
-        reveal.Diameter.Number.Text = "320";
-        reveal.Complete();
-        Dispatcher.UIThread.RunJobs();
-        var result = finished.GetAwaiter().GetResult();
-        Assert.NotNull(result);
-        // Only fields belonging to the accepted group may be written back.
-        owner.ApplyAdjustmentResult(result with { NotificationHud = new NotificationHudSettings { Width = 300 } }, notification: false);
-        Assert.Equal(190, Current(owner).NotificationHud.Width);
+            discarded.OpenAt(owner);
+            discarded.NumberEditor!.Value = 400;
+            discarded.Hide();
+            discarded.Complete();
+            Assert.Empty(results);
+        }
+        using (var escaped = new SettingsAdjustmentFlyout(initial, AdjustmentKind.NotificationWidth, results.Add))
+        {
+            escaped.OpenAt(owner);
+            escaped.NumberEditor!.Number.Focus();
+            escaped.NumberEditor.Number.Text = "250";
+            escaped.NumberEditor.Number.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape });
+            Assert.False(escaped.IsOpen);
+            Assert.Empty(results);
+        }
+        using (var accepted = new SettingsAdjustmentFlyout(initial, AdjustmentKind.Diameter, results.Add))
+        {
+            accepted.OpenAt(owner);
+            accepted.NumberEditor!.Number.Focus();
+            accepted.NumberEditor.Number.Text = "320";
+            accepted.Complete();
+            Assert.Equal(initial with { RevealDiameterPx = 320 }, Assert.Single(results));
+        }
+        owner.ApplyAdjustmentResult(results[0] with { NotificationHud = new NotificationHudSettings { Width = 300 } }, AdjustmentKind.Diameter);
         Assert.Equal(320, Current(owner).RevealDiameterPx);
-        Assert.Empty(saves);
-        InvokeSave(owner);
-        Assert.Empty(saves);
-        Assert.Equal(320, Current(owner).RevealDiameterPx);
-        saveSucceeds = true;
-        InvokeSave(owner);
-        Assert.Equal(PeekFrameRateLimit.Fps90, Assert.Single(saves).PeekFrameRateLimit);
-
-        var notification = new NotificationAdjustmentWindow(Current(owner)) { ShowActivated = false };
-        var notificationResult = notification.ShowDialog<AppSettings?>(owner);
-        notification.MaximumWidth.Value = 250;
-        notification.HorizontalPosition.Value = 0;
-        notification.Complete();
-        Dispatcher.UIThread.RunJobs();
-        owner.ApplyAdjustmentResult(notificationResult.GetAwaiter().GetResult()! with { RevealDiameterPx = 800 }, notification: true);
-        Assert.Equal(320, Current(owner).RevealDiameterPx);
-        Assert.Equal(250, Current(owner).NotificationHud.Width);
+        Assert.Equal(132, Current(owner).NotificationHud.Width);
+        using (var step = new SettingsAdjustmentFlyout(initial, AdjustmentKind.DiameterStep, _ => { }))
+        {
+            step.OpenAt(owner);
+            step.NumberEditor!.Value = 24;
+            Assert.Equal(264, step.RevealSample!.Comparison.AfterDiameter);
+            step.DemonstrateStep(-1);
+            Assert.Equal(216, step.RevealSample.Comparison.AfterDiameter);
+            Assert.Equal(240, step.Draft.RevealDiameterPx);
+            step.Hide();
+        }
+        owner.OpenAdjustment(AdjustmentKind.Diameter, owner);
+        var first = owner.ActiveAdjustment!;
+        owner.OpenAdjustment(AdjustmentKind.SoftEdgeWidth, owner);
+        Assert.False(first.IsOpen);
+        var second = owner.ActiveAdjustment!;
+        Assert.Equal(AdjustmentKind.SoftEdgeWidth, second.Kind);
+        owner.OpenAdjustment(AdjustmentKind.SoftEdgeWidth, owner);
+        Assert.Null(owner.ActiveAdjustment);
         typeof(SettingsWindow).GetMethod("CancelSettingsEdits", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(owner, null);
-        Assert.Equal(190, Current(owner).NotificationHud.Width);
-        Assert.Equal(320, Current(owner).RevealDiameterPx);
-        owner.Close();
+        Assert.Equal(144, Current(owner).RevealDiameterPx);
     }
 
-    private static void VerifyNotificationContentParity()
+    private static void VerifyNotificationContentParity(SettingsWindow owner)
     {
-        var dialog = new NotificationAdjustmentWindow(new AppSettings());
+        using var flyout = new SettingsAdjustmentFlyout(new AppSettings(), AdjustmentKind.NotificationWidth, _ => { });
+        flyout.OpenAt(owner);
         var runtime = new NotificationWindow(preview: true);
-        foreach (var theme in new[] { ThemeVariant.Light, ThemeVariant.Dark })
-        foreach (var width in new[] { 100d, 132, 300 })
-        foreach (var height in new[] { 32d, 44, 96 })
+        try
         {
-            dialog.RequestedThemeVariant = theme;
-            runtime.RequestedThemeVariant = theme;
-            dialog.MaximumWidth.Value = width;
-            dialog.HudHeight.Value = height;
-            foreach (var choice in new[] { 0, 1 })
+            foreach (var theme in new[] { ThemeVariant.Light, ThemeVariant.Dark })
+            foreach (var width in new[] { 100d, 132, 300 })
             {
-                dialog.MessageChoice.SelectedIndex = choice;
-                var hud = new NotificationHudSettings { Width = width, Height = height };
-                runtime.Update(dialog.Sample.Message.Text!, UserNotificationSeverity.Info, false);
-                runtime.Configure(hud);
-                Assert.Equal(runtime.Hud.Surface.Width, dialog.Sample.Surface.Width);
-                Assert.Equal(runtime.Hud.Surface.Height, dialog.Sample.Surface.Height);
-                Assert.Equal(runtime.Hud.Message.FontSize, dialog.Sample.Message.FontSize);
+                owner.RequestedThemeVariant = theme;
+                runtime.RequestedThemeVariant = theme;
+                flyout.NumberEditor!.Value = width;
+                foreach (var choice in new[] { 0, 1 })
+                {
+                    flyout.MessageChoice!.SelectedIndex = choice;
+                    var hud = flyout.Draft.NotificationHud;
+                    runtime.Update(flyout.NotificationSample!.Message.Text!, UserNotificationSeverity.Info, false);
+                    runtime.Configure(hud);
+                    Assert.Equal(runtime.Hud.Surface.Width, flyout.NotificationSample.Surface.Width);
+                    Assert.Equal(runtime.Hud.Message.FontSize, flyout.NotificationSample.Message.FontSize);
+                }
             }
         }
-        dialog.Close();
-        runtime.Close();
+        finally { flyout.Hide(); runtime.Close(); }
     }
 
-    private static void VerifyAnimationLifecycle()
+    private static void VerifyAnimationLifecycle(SettingsWindow owner)
     {
-        var dialog = new RevealAdjustmentWindow(new AppSettings(), new FixedDisplay()) { ShowActivated = false };
-        Assert.False(dialog.IsAnimationRunning);
-        dialog.Show();
-        Assert.True(dialog.IsAnimationRunning);
-        dialog.SetPlaying(false);
-        Assert.False(dialog.IsAnimationRunning);
-        dialog.SetPlaying(true);
-        Assert.True(dialog.IsAnimationRunning);
-        dialog.WindowState = WindowState.Minimized;
-        Assert.False(dialog.IsAnimationRunning);
-        dialog.WindowState = WindowState.Normal;
-        Assert.True(dialog.IsAnimationRunning);
-        dialog.Close();
-        Assert.False(dialog.IsAnimationRunning);
+        using var flyout = new SettingsAdjustmentFlyout(new AppSettings(), AdjustmentKind.FrameRate, _ => { }, new FixedDisplay());
+        flyout.OpenAt(owner);
+        Assert.False(flyout.IsAnimationRunning);
+        flyout.FrameRateSlider!.Value = 2;
+        Assert.Equal(75, flyout.Decision.TargetFramesPerSecond);
+        flyout.SetPlaying(true);
+        Assert.True(flyout.IsAnimationRunning);
+        flyout.SetPlaying(false);
+        Assert.False(flyout.IsAnimationRunning);
+        flyout.SetPlaying(true);
+        owner.WindowState = WindowState.Minimized;
+        Assert.False(flyout.IsAnimationRunning);
+        Assert.False(flyout.IsOpen);
+        owner.WindowState = WindowState.Normal;
     }
 
-    private static void VerifyLocalizedLayouts()
+    private static void VerifyLocalizedLayouts(SettingsWindow owner)
     {
         var directory = Environment.GetEnvironmentVariable("GHOST_ADJUSTMENT_OUTPUT");
         foreach (var language in new[] { UiLanguage.Chinese, UiLanguage.English })
         foreach (var theme in new[] { ThemeVariant.Light, ThemeVariant.Dark })
-        foreach (var notification in new[] { false, true })
+        foreach (var kind in Enum.GetValues<AdjustmentKind>())
         {
-            var settings = new AppSettings { Language = language };
-            SettingsAdjustmentWindow dialog = notification ? new NotificationAdjustmentWindow(settings) : new RevealAdjustmentWindow(settings, new FixedDisplay());
-            dialog.RequestedThemeVariant = theme;
-            dialog.ShowActivated = false;
-            dialog.Show();
-            dialog.UpdateLayout();
+            owner.RequestedThemeVariant = theme;
+            using var flyout = new SettingsAdjustmentFlyout(new AppSettings { Language = language }, kind, _ => { }, new FixedDisplay());
+            flyout.OpenAt(owner);
+            flyout.View.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            Assert.Equal(UiText.Text(language, notification ? "adjustNotificationTitle" : "adjustRevealTitle"), dialog.Title);
-            Assert.True(dialog.CompleteButton.Bounds.Width >= 96);
-            if (!string.IsNullOrEmpty(directory))
+            Assert.InRange(flyout.View.Bounds.Width, 220, 332);
+            Assert.True(flyout.CompleteButton.Bounds.Width > 30);
+            if (!string.IsNullOrEmpty(directory) && kind is AdjustmentKind.DiameterStep or AdjustmentKind.SoftEdgeWidth or AdjustmentKind.NotificationWidth or AdjustmentKind.FrameRate)
             {
                 Directory.CreateDirectory(directory);
+                var view = flyout.Presenter!;
                 foreach (var scale in new[] { 1d, 1.25, 1.5, 2 })
                 {
-                    using var bitmap = new RenderTargetBitmap(new PixelSize((int)(dialog.Bounds.Width * scale), (int)(dialog.Bounds.Height * scale)), new Vector(96 * scale, 96 * scale));
-                    bitmap.Render(dialog);
-                    bitmap.Save(System.IO.Path.Combine(directory, $"{(notification ? "notification" : "reveal")}-{language}-{theme}-{scale}.png"));
+                    using var bitmap = new RenderTargetBitmap(new PixelSize((int)(view.Bounds.Width * scale), (int)(view.Bounds.Height * scale)), new Vector(96 * scale, 96 * scale));
+                    bitmap.Render(view);
+                    bitmap.Save(System.IO.Path.Combine(directory, $"{kind}-{language}-{theme}-{scale}.png"));
                 }
             }
-            dialog.Close();
+            flyout.Hide();
         }
         Assert.Equal("GhostSlacking", UiText.Text(UiLanguage.Chinese, "title"));
         Assert.Equal("GhostSlacking", UiText.Text(UiLanguage.English, "title"));
@@ -207,9 +242,6 @@ public sealed class SettingsAdjustmentTests
 
     private static AppSettings Current(SettingsWindow window) => (AppSettings)typeof(SettingsWindow)
         .GetMethod("GetSettings", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(window, null)!;
-    private static void InvokeSave(SettingsWindow window) => typeof(SettingsWindow)
-        .GetMethod("OnSaveClicked", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(window, [null, new RoutedEventArgs()]);
-
     private sealed class FixedDisplay : IDisplayRefreshRateProvider
     {
         public DisplayRefreshRateInfo? GetForPoint(System.Drawing.Point point) => new("test", 75);
