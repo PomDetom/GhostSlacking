@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using FluentAvalonia.UI.Windowing;
@@ -58,10 +59,10 @@ internal abstract class SettingsAdjustmentWindow : AppWindow
         Grid.SetRow(footer, 2);
         layout.Children.Add(footer);
         Content = layout;
-        KeyDown += (_, args) =>
+        AddHandler(KeyDownEvent, (_, args) =>
         {
             if (args.Key == Key.Escape) { args.Handled = true; Close(); }
-        };
+        }, RoutingStrategies.Tunnel);
         ActualThemeVariantChanged += (_, _) => ApplyPalette();
         Opened += (_, _) =>
         {

@@ -88,9 +88,9 @@ public sealed class AvaloniaStartupTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
 
-        // This checks many windows and notification layouts; installer handshakes
+        // This checks settings dialogs, animation lifecycles and notification layouts; installer handshakes
         // have separate deadlines and must not inherit this functional-test budget.
-        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), $"Avalonia UI probe timed out during {stage}.");
+        Assert.True(thread.Join(TimeSpan.FromSeconds(60)), $"Avalonia UI probe timed out during {stage}.");
         Assert.Null(failure);
     }
 

@@ -74,6 +74,17 @@ public sealed class SettingsAdjustmentTests
         Assert.Null(discarded.AcceptedSettings);
         Assert.Empty(saves);
 
+        var escaped = new NotificationAdjustmentWindow(draft) { ShowActivated = false };
+        var escapedResult = escaped.ShowDialog<AppSettings?>(owner);
+        escaped.MaximumWidth.Number.Focus();
+        escaped.MaximumWidth.Number.Text = "250";
+        escaped.MaximumWidth.Number.RaiseEvent(new Avalonia.Input.KeyEventArgs
+        {
+            RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Escape
+        });
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(escapedResult.GetAwaiter().GetResult());
+
         var reveal = new RevealAdjustmentWindow(draft, new FixedDisplay()) { ShowActivated = false };
         var finished = reveal.ShowDialog<AppSettings?>(owner);
         Assert.Equal(240, reveal.Diameter.Value);
@@ -81,9 +92,11 @@ public sealed class SettingsAdjustmentTests
         reveal.DemonstrateStep(1);
         Assert.Equal(264, reveal.DemoDiameter);
         Assert.Equal(240, reveal.Diameter.Value);
-        reveal.Diameter.Value = 320;
+        reveal.Diameter.Value = 300;
         reveal.FrameRate.Value = 2;
         Assert.Equal(75, reveal.Decision.TargetFramesPerSecond);
+        reveal.Diameter.Number.Focus();
+        reveal.Diameter.Number.Text = "320";
         reveal.Complete();
         Dispatcher.UIThread.RunJobs();
         var result = finished.GetAwaiter().GetResult();
