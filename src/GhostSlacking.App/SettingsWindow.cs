@@ -26,6 +26,7 @@ internal sealed class SettingsWindow : AppWindow
     private const string RevealPage = "reveal";
     private const string HotkeysPage = "hotkeys";
     private const string GeneralPage = "general";
+    private const string NotificationsPage = "notifications";
     private const string ExperimentsPage = "experiments";
     private const string AboutPage = "about";
     private static readonly TimeSpan SavedStatusDuration = TimeSpan.FromMilliseconds(2500);
@@ -56,6 +57,7 @@ internal sealed class SettingsWindow : AppWindow
     private readonly NavigationViewItem _revealItem;
     private readonly NavigationViewItem _hotkeysItem;
     private readonly NavigationViewItem _generalItem;
+    private readonly NavigationViewItem _notificationsItem;
     private readonly NavigationViewItem _experimentsItem;
     private readonly NavigationViewItem _aboutItem;
     private readonly TextBlock _pageTitle;
@@ -226,6 +228,7 @@ internal sealed class SettingsWindow : AppWindow
         _revealItem = CreateNavigationItem(RevealPage, Symbol.View);
         _hotkeysItem = CreateNavigationItem(HotkeysPage, Symbol.Keyboard);
         _generalItem = CreateNavigationItem(GeneralPage, Symbol.Settings);
+        _notificationsItem = CreateNavigationItem(NotificationsPage, Symbol.Message);
         _experimentsItem = CreateNavigationItem(ExperimentsPage, Symbol.Settings);
         _experimentsItem.IconSource = new PathIconSource
         {
@@ -263,6 +266,7 @@ internal sealed class SettingsWindow : AppWindow
         _navigation.MenuItems.Add(_revealItem);
         _navigation.MenuItems.Add(_hotkeysItem);
         _navigation.MenuItems.Add(_generalItem);
+        _navigation.MenuItems.Add(_notificationsItem);
         _navigation.MenuItems.Add(_experimentsItem);
         _navigation.FooterMenuItems.Add(_aboutItem);
         _navigation.SelectionChanged += OnNavigationSelectionChanged;
@@ -408,14 +412,6 @@ internal sealed class SettingsWindow : AppWindow
                 CreateSettingRow(language, "restoreOnExit", "restoreOnExitDescription", _restoreOnExit),
                 CreateSettingRow(language, "startWindows", "startWindowsDescription", _startWithWindows)
             ]),
-            CreateSection(language, "notificationSettings",
-            [
-                CreateAdjustmentRow(language, AdjustmentKind.NotificationRadius, "notificationRadiusDescription"),
-                CreateAdjustmentRow(language, AdjustmentKind.NotificationWidth, "notificationWidthDescription"),
-                CreateAdjustmentRow(language, AdjustmentKind.NotificationHeight, "notificationHeightDescription"),
-                CreateAdjustmentRow(language, AdjustmentKind.NotificationHorizontal, "notificationHorizontalPositionDescription"),
-                CreateAdjustmentRow(language, AdjustmentKind.NotificationVertical, "notificationVerticalPositionDescription")
-            ]),
             CreateSection(language, "languageAndDiagnostics",
             [
                 CreateSettingRow(language, "theme", "themeDescription", _themeMode),
@@ -426,6 +422,18 @@ internal sealed class SettingsWindow : AppWindow
             [
                 CreateSettingRow(language, "exportLogs", "exportLogsDescription", _exportLogsButton),
                 CreateSettingRow(language, "exportSettings", "exportSettingsDescription", _exportSettingsButton)
+            ])
+        ]);
+
+        _pages[NotificationsPage] = CreatePage(
+        [
+            CreateSection(language, "notificationSettings",
+            [
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationRadius, "notificationRadiusDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationWidth, "notificationWidthDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationHeight, "notificationHeightDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationHorizontal, "notificationHorizontalPositionDescription"),
+                CreateAdjustmentRow(language, AdjustmentKind.NotificationVertical, "notificationVerticalPositionDescription")
             ])
         ]);
 
@@ -960,6 +968,7 @@ internal sealed class SettingsWindow : AppWindow
         {
             HotkeysPage => ("hotkeySettings", "hotkeySettingsDescription"),
             GeneralPage => ("generalSettings", "generalSettingsDescription"),
+            NotificationsPage => ("notificationsPage", "notificationsPageDescription"),
             ExperimentsPage => ("experimentalSettings", "experimentalSettingsDescription"),
             AboutPage => ("about", "aboutDescription"),
             _ => ("revealSettings", "revealSettingsDescription")
@@ -978,6 +987,7 @@ internal sealed class SettingsWindow : AppWindow
             _revealItem.Content = UiText.Text(language, "revealSettings");
             _hotkeysItem.Content = UiText.Text(language, "hotkeySettings");
             _generalItem.Content = UiText.Text(language, "generalSettings");
+            _notificationsItem.Content = UiText.Text(language, "notificationsPage");
             _experimentsItem.Content = UiText.Text(language, "experimentalSettings");
             _aboutItem.Content = UiText.Text(language, "about");
             _navigation.PaneTitle = UiText.Text(language, "settingsMenu");

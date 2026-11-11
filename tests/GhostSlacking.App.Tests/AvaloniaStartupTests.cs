@@ -39,6 +39,7 @@ public sealed class AvaloniaStartupTests
                 AssertExperimentIconRendering();
                 AssertSaveBarFitsSingleLineMessages();
                 AssertSettingsCancelAndSaveLifecycle();
+                SettingsNotificationNavigationTests.VerifyUi();
                 AssertPeekFrameRateSetting(settingsWindow);
                 AssertBackgroundInteractionSetting();
                 AssertAboutPage();
@@ -208,8 +209,8 @@ public sealed class AvaloniaStartupTests
         var window = new SettingsWindow(new AppSettings(), _ => true) { ShowActivated = false };
         var navigation = GetPrivateField<NavigationView>(window, "_navigation");
         var items = navigation.MenuItems.Cast<NavigationViewItem>().ToArray();
-        var experiment = items[3];
-        var reference = items[2];
+        var experiment = items.Single(item => Equals(item.Tag, "experiments"));
+        var reference = items.Single(item => Equals(item.Tag, "general"));
         var directory = Environment.GetEnvironmentVariable("GHOST_ICON_OUTPUT");
         window.Show();
         try
@@ -418,9 +419,8 @@ public sealed class AvaloniaStartupTests
         Assert.False(continuous.IsEnabled);
         var navigation = GetPrivateField<NavigationView>(window, "_navigation");
         var items = navigation.MenuItems.Cast<NavigationViewItem>().ToArray();
-        Assert.Equal("general", items[2].Tag);
-        Assert.Equal("experiments", items[3].Tag);
-        var flask = Assert.IsType<PathIconSource>(items[3].IconSource);
+        var experiment = items.Single(item => Equals(item.Tag, "experiments"));
+        var flask = Assert.IsType<PathIconSource>(experiment.IconSource);
         Assert.False(flask.IsSet(IconSource.ForegroundProperty));
         var editor = typeof(SettingsWindow).GetField("_backgroundInteractionHotkey", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
         var binding = editor.GetType().GetProperty("Binding")!;
