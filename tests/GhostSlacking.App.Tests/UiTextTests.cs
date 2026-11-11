@@ -6,6 +6,15 @@ namespace GhostSlacking.App.Tests;
 public sealed class UiTextTests
 {
     [Theory]
+    [InlineData(UiLanguage.Chinese, "通知", "调整通知外观与显示位置")]
+    [InlineData(UiLanguage.English, "Notifications", "Customize notification appearance and position")]
+    public void Notifications_page_has_localized_navigation_and_description(UiLanguage language, string title, string description)
+    {
+        Assert.Equal(title, UiText.Text(language, "notificationsPage"));
+        Assert.Equal(description, UiText.Text(language, "notificationsPageDescription"));
+    }
+
+    [Theory]
     [InlineData(UiLanguage.Chinese, "程序已启动")]
     [InlineData(UiLanguage.English, "Ready")]
     public void Startup_notification_matches_the_selected_language(UiLanguage language, string expected)
