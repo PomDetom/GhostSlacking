@@ -19,7 +19,6 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
     private int _inputEpoch;
     private long _inputGeneration;
     private bool _shiftTap;
-    private readonly IBackgroundTextInputEngine _inputEngine = new BackgroundEnglishInputEngine();
     private WindowSnapshot? _diagnosticSnapshot;
     private readonly BackgroundAutomationText _automation = new(logger);
     private (nint Recipient, BackgroundInputCategory Category, BackgroundInputRejectionReason? Rejection)? _lastTrace;
@@ -207,7 +206,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
             if (key is 0xA0 or 0xA1 && _shiftTap)
             {
                 _shiftTap = false;
-                return _inputEngine.RequestLanguageSwitch();
+                return BackgroundInputDispatchResult.Rejected(BackgroundInputRejectionReason.ImeComposition);
             }
             if (!_rawKeys.TryGetValue(key, out var held)) return BackgroundInputDispatchResult.Accepted(BackgroundInputCategory.Ignored);
             if (held.Recipient != recipient)
@@ -226,7 +225,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
             return BackgroundInputDispatchResult.Rejected(BackgroundInputRejectionReason.ImeComposition);
         var modifiers = Modifiers;
         if (key == 0x20 && (modifiers.HasFlag(ShortcutModifiers.Control) || (_keyboard[0x5B] & 0x80) != 0 || (_keyboard[0x5C] & 0x80) != 0))
-            return _inputEngine.RequestLanguageSwitch();
+            return BackgroundInputDispatchResult.Rejected(BackgroundInputRejectionReason.ImeComposition);
         if (key is 0x5B or 0x5C || (_keyboard[0x5B] & 0x80) != 0 || (_keyboard[0x5C] & 0x80) != 0 ||
             modifiers.HasFlag(ShortcutModifiers.Alt))
             return BackgroundInputDispatchResult.Rejected(BackgroundInputRejectionReason.SystemShortcut);
@@ -477,7 +476,6 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
     public void ResetInputState()
     {
         Interlocked.Increment(ref _inputEpoch);
-        _inputEngine.CancelComposition();
         if (_diagnosticSnapshot is { } snapshot) TraceInputState(snapshot, "reset");
         _diagnosticSnapshot = null;
         Array.Clear(_keyboard);
@@ -500,7 +498,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
         var known = ime != 0 && Win32BackgroundInputNative.SendMessageTimeout(ime, 0x0283, 5, 0, 3, 30, out open) != 0;
         if (!known) open = -1;
         logger.Log(LogLevel.Info, $"BackgroundInputState phase={phase} hwnd={snapshot.Hwnd} foreground={ForegroundWindow} " +
-            $"targetFocus={(observed ? info.Focus : 0)} layout={Win32BackgroundInputNative.GetKeyboardLayout(thread)} imeWindow={ime} imeQueryAvailable={known} imeOpen={open} engine={_inputEngine.Name}");
+            $"targetFocus={(observed ? info.Focus : 0)} layout={Win32BackgroundInputNative.GetKeyboardLayout(thread)} imeWindow={ime} imeQueryAvailable={known} imeOpen={open} engine=US-English");
     }
 
     public void Dispose() => _automation.Dispose();
