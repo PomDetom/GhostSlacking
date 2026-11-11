@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$scriptPath = Join-Path $repositoryRoot 'scripts\release-metadata.ps1'
+$scriptPath = Join-Path $repositoryRoot 'scripts\release\release-metadata.ps1'
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) "GhostSlacking-release-tests-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 

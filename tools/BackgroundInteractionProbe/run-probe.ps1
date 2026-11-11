@@ -3,7 +3,7 @@ param(
     [long]$WindowHandle = 0,
     [ValidateRange(1,60)][int]$TimeoutSeconds = 20,
     [string]$BrowserPath = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-    [string]$OutputDirectory = $(if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'BackgroundInteractionProbe.exe')) { $PSScriptRoot } else { Join-Path $PSScriptRoot '../../artifacts/background-interaction-round7/probe' })
+    [string]$OutputDirectory = $(if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'BackgroundInteractionProbe.exe')) { $PSScriptRoot } else { Join-Path $PSScriptRoot '../../artifacts/tools/BackgroundInteractionProbe' })
 )
 $ErrorActionPreference = 'Stop'
 $probeExecutable = Join-Path $OutputDirectory 'BackgroundInteractionProbe.exe'

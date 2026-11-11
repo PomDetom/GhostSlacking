@@ -22,4 +22,4 @@ Ctrl+Alt+F8 导出 EXE 同目录 probe-metadata.txt，仅包含引擎模式、HR
 
 分别对比：结束后立即激活 B 切换输入法；退出原型后再激活 B 切换。再测按住 Shift/Ctrl 结束、目标关闭和 A 短暂失焦。超时可能已经部分投递，停止后检查 B，不盲目重发。
 
-编译：`powershell -NoProfile -File tools/BackgroundImeProbe/build.ps1`。系统 TSF、第三方输入法及候选体验的验收状态统一见[实施状态](../../docs/IMPLEMENTATION_STATUS.md#自动化与隔离证据)，源码和可编译不代表实际可用。
+编译：`powershell -NoProfile -File tools/BackgroundImeProbe/build.ps1`。系统 TSF、第三方输入法及候选体验的验收状态统一见[质量边界](../../docs/quality/KNOWN_LIMITATIONS.md#实验交互实际兼容性)，源码和可编译不代表实际可用。

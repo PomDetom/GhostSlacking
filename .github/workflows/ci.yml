@@ -45,13 +45,13 @@ jobs:
               throw "Could not determine pull request commits."
           }
           foreach ($subject in $subjects) {
-              .\scripts\release-metadata.ps1 -Mode ValidateCommit -Subject $subject
+              .\scripts\release\release-metadata.ps1 -Mode ValidateCommit -Subject $subject
           }
 
           if ($env:PR_BASE_REF -eq 'master' -and $env:PR_HEAD_REF -eq 'dev') {
               $bodyPath = Join-Path $env:RUNNER_TEMP 'release-pr-body.md'
               [System.IO.File]::WriteAllText($bodyPath, $env:PR_BODY, [System.Text.UTF8Encoding]::new($false))
-              .\scripts\release-metadata.ps1 -Mode ValidateReleasePr -BodyPath $bodyPath
+              .\scripts\release\release-metadata.ps1 -Mode ValidateReleasePr -BodyPath $bodyPath
           } elseif ($env:PR_BASE_REF -eq 'dev') {
               $bodyPath = Join-Path $env:RUNNER_TEMP 'feature-pr-body.md'
               [System.IO.File]::WriteAllText($bodyPath, $env:PR_BODY, [System.Text.UTF8Encoding]::new($false))
@@ -74,7 +74,7 @@ jobs:
               } else {
                   'other'
               }
-              .\scripts\release-metadata.ps1 -Mode ValidateFeature -BodyPath $bodyPath -Category $category
+              .\scripts\release\release-metadata.ps1 -Mode ValidateFeature -BodyPath $bodyPath -Category $category
           } else {
               throw "Pull requests must target dev, except for the dev -> master release PR."
           }

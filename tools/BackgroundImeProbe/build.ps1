@@ -1,4 +1,4 @@
-﻿param([string]$OutputDirectory = (Join-Path $PSScriptRoot '../../artifacts/background-interaction-round4/ime-research'))
+param([string]$OutputDirectory = (Join-Path $PSScriptRoot '../../artifacts/tools/BackgroundImeProbe'))
 $ErrorActionPreference = 'Stop'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
