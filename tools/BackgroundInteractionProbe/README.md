@@ -1,11 +1,11 @@
 # 后台交互独立探测工具
 
-本工具用于后台交互的分层验证，不是已验证的 ChatGPT 编辑插件。UIA/原生/MSAA 的试验在独立、可终止的进程中运行，修改仅发生在工具自己创建的窗口；CDP 仅连接新建的隔离 headless Chromium。不会改变真实应用的启动参数或连接真实聊天，不发送消息。当前验收结果统一见[实施状态](../../docs/IMPLEMENTATION_STATUS.md#自动化与隔离证据)；下方输出路径保留脚本默认值，不表示当前仍按轮次维护报告。
+本工具用于后台交互的分层验证，不是已验证的 ChatGPT 编辑插件。UIA/原生/MSAA 的试验在独立、可终止的进程中运行，修改仅发生在工具自己创建的窗口；CDP 仅连接新建的隔离 headless Chromium。不会改变真实应用的启动参数或连接真实聊天，不发送消息。当前证据边界见[质量边界](../../docs/quality/KNOWN_LIMITATIONS.md#实验交互实际兼容性)。
 
 从仓库根目录构建与执行：
 
 ```powershell
-dotnet build tools/BackgroundInteractionProbe/BackgroundInteractionProbe.csproj -c Release --output artifacts/background-interaction-round7/probe
+dotnet build tools/BackgroundInteractionProbe/BackgroundInteractionProbe.csproj -c Release --output artifacts/tools/BackgroundInteractionProbe
 ./tools/BackgroundInteractionProbe/run-probe.ps1 -Mode SelfTest
 ./tools/BackgroundInteractionProbe/run-probe.ps1 -Mode ResearchSelfTest
 ./tools/BackgroundInteractionProbe/run-probe.ps1 -Mode CdpSelfTest

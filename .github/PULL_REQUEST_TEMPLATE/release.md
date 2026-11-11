@@ -18,9 +18,12 @@
 ## 验证 / Validation
 
 - `dotnet test GhostSlacking.sln --configuration Release`
-- Windows 手工验证：
+- Windows 手工验证（按 [验收矩阵](../../docs/quality/WINDOWS_MANUAL_MATRIX.md)，未测环境说明原因）：
 
 ## 风险 / Risks
 
 - Win32、恢复行为或兼容性风险：
 - 安装、升级、卸载验证：
+
+
+工程约定与知识归属见[开发导航](../../docs/README.md)。验证结果保存在本 PR，只有长期能力或限制变化才更新权威知识。

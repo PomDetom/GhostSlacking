@@ -1,6 +1,6 @@
 # GhostSlacking
 
-GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部查看工具。它可以隐藏指定窗口，并在鼠标附近临时显示一块可交互区域，方便查看、点击或滚动内容，而不必完整恢复窗口。
+GhostSlacking 是适用于 Windows 10/11 的轻量级窗口隐藏与局部查看工具。隐藏指定窗口后，可在鼠标附近临时显示一块区域进行查看、点击或滚动。
 
 ```text
 选择窗口 → 隐藏窗口 → 局部查看（Peek）→ 恢复窗口
@@ -8,98 +8,25 @@ GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部
 
 ## 主要功能
 
-- 通过全局快捷键或系统托盘选择、隐藏和恢复窗口。
-- 在鼠标附近显示圆形、矩形或圆角矩形 Reveal 区域。
-- Reveal 区域支持羽化、模糊、点击和滚动操作。
-- 支持按住显示和按键切换两种 Peek 模式。
-- 支持自定义快捷键、Reveal 外观、界面语言和主题。
-- 提供默认关闭的[实验性后台交互](docs/EXPERIMENTAL_BACKGROUND_INTERACTION.md)，尝试在 Reveal 操作目标时保留前台焦点；当前兼容性有限，中文组合输入未接入正式路径，具体实测及后续方向见[实施状态](docs/IMPLEMENTATION_STATUS.md#实验功能实际兼容性)。
-- 使用与设置页一致的极简 HUD 通知，宽度随内容自适应，支持自定义圆角、最大宽度、高度及水平／垂直位置。
-- 启动时检查稳定版更新，并在独立窗口中显示更新内容。
-- 内置 Watchdog，在程序异常终止后尝试安全恢复受控窗口。
-- 不截取窗口内容，也不向目标进程注入代码。
+- 全局快捷键与系统托盘操作。
+- 圆形、矩形和圆角矩形 Reveal，支持羽化、模糊与 Hold/Toggle Peek。
+- 可调整快捷键、外观、HUD 通知、语言和主题。
+- 签名更新校验，以及异常退出后的独立 Watchdog 恢复。
+- 默认关闭的[实验性后台交互](docs/product/EXPERIMENTAL_BACKGROUND_INTERACTION.md)，当前兼容性有限。
+- 不截取窗口内容，不向目标进程注入代码。
 
-当前用户反馈：实验模式下 Notepad++ 相对可用，ChatGPT 只能查看，Chrome 操作会中断 Reveal。通用交互机制列为后续研究，现有原型不代表所有程序均可交互。普通模式切换系统缩放已增加隐藏过渡、稳定后更新恢复位置及纠正次数上限；125% → 100% 后恢复误报和托盘恢复状态残留的反馈场景，经维护者复测确认无异常。其他 Windows、目标类型及多屏兼容性边界见[实施状态](docs/IMPLEMENTATION_STATUS.md#已知缺陷与待核查反馈)。
+## 系统要求与安装
 
-## 系统要求
-
-- Windows 10 或 Windows 11，x64。
-- [.NET 8 Runtime](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。
-- 控制以管理员身份运行的窗口时，GhostSlacking 通常也需要以相同权限运行。
-
-## 安装
-
-从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<完整版本>-win-x64-setup.exe`，然后按照安装向导完成安装。安装默认仅属于当前用户，程序位于 `%LOCALAPPDATA%\Programs\GhostSlacking\app`，无需为 GhostSlacking 安装或更新授予管理员权限。
-
-旧 MSI 用户须先安全退出程序，在 Windows“已安装的应用”中卸载所有旧版本，再运行新 EXE；用户设置和日志保留。旧 MSI 卸载仍可能出现原有等待，新安装器不会自动调用它。首次安装仍需系统 .NET 8 Runtime x64，安装器不捆绑或自动下载运行时。
-
-GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。
-
-通知默认最大宽度 132 DIP、高度 44 DIP、圆角 10 DIP，实际宽度随内容收缩；显示在鼠标屏幕底部居中，距工作区底部 18 DIP。普通提示鼠标穿透，更新提示可点击并在悬停时暂停。设置侧栏的独立“通知 / Notifications”页面支持圆角、最大宽度、高度及水平／垂直位置调节。
+Windows 10/11 x64，需安装 [.NET 8 Runtime x64](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载 `GhostSlacking-<版本>-win-x64-setup.exe`。默认安装到当前用户，无需管理员权限。旧 MSI 用户须先安全退出并手动卸载旧版，设置与日志保留。
 
 ## 快速开始
 
-1. 按 `Ctrl+Alt+P`，或单击托盘图标进入窗口选择状态。
-2. 单击需要控制的窗口；按 `Esc` 可取消选择。
-3. 按 `Ctrl+Alt+G` 隐藏或显示当前窗口。
-4. 按 `Alt` 在鼠标附近显示或隐藏 Reveal 区域。
-5. 按 `Ctrl+Alt+R` 恢复当前窗口。
-6. 按 `Ctrl+Alt+S` 打开设置并调整快捷键或显示效果。
+启动后程序常驻系统托盘：
 
-点击“显示”或“通知”中的单个外观设置项，会在该项旁边展开小浮层，滑条、数值输入和实时预览在同一浮层内。步长预览叠加原始实线轮廓与虚化的增大／减小一次效果，显示前后直径；羽化预览保留原始硬边参考线，并显示选定宽度的柔化外沿。两层使用同一比例。模糊等级使用同一内容的清晰／所选强度并列预览，细线帮助区分轻、中、重三档；示例不抓取真实窗口。
+1. 按 `Ctrl+Alt+P` 选择窗口，`Esc` 取消。
+2. 按 `Ctrl+Alt+G` 隐藏或显示窗口。
+3. 按 `Alt` 切换鼠标附近的 Reveal 区域。
+4. 按 `Ctrl+Alt+R` 恢复当前窗口；紧急恢复全部使用 `Ctrl+Shift+Alt+R`。
+5. 按 `Ctrl+Alt+S` 打开设置。
 
-帧率滑条有自动／60／90／120 FPS 四档，动画显示当前屏幕限制后的目标帧率；通知支持实际尺寸样例、短／长提示和位置缩略图。浮层“完成”只回写当前单项草稿，点击外部、“取消”、关闭或 Esc 放弃本次调节，最终点击设置页“保存”才应用。内置示例不代表实际 Composition 效果或实测帧率。
-
-设置有修改时，底部会浮出“取消”“保存”横条。“取消”撤销本次全部未保存修改并保持窗口打开；“保存”成功后横条短暂显示结果再收起。
-
-### 默认快捷键
-
-| 功能 | 默认快捷键 |
-| --- | --- |
-| 选择窗口 | `Ctrl+Alt+P` |
-| 隐藏/显示窗口 | `Ctrl+Alt+G` |
-| Peek / Reveal | `Alt` |
-| 恢复当前窗口 | `Ctrl+Alt+R` |
-| 紧急恢复全部窗口 | `Ctrl+Shift+Alt+R` |
-| 打开设置 | `Ctrl+Alt+S` |
-| 退出应用 | `Ctrl+Alt+Q` |
-
-所有快捷键均可在设置中修改。建议通过托盘菜单或退出快捷键正常关闭程序，以便恢复受控窗口。
-
-## 软件更新
-
-应用默认只检查稳定版 GitHub Releases。可以在“关于”页开启测试通道以接收 beta/RC 版本；发现新版本时，可点击通知、托盘入口或“关于”页查看中英双语更新说明。点击“下载并安装”后，应用会自动完成下载、校验、安装和重新启动；更新先验证发布签名和安装包 SHA256，再恢复受控窗口、等待 App 与 Watchdog 安全退出，以被动进度安装并确认新版本启动。正在以管理员身份运行时，请退出后以普通用户运行安装器。
-
-## Git 与发布
-
-日常开发通过独立功能 PR 合入 `dev`，稳定发布通过 `dev` → `master` 发布 PR。测试版只在需要时从 `dev` 创建 `v0.2.0-beta.1` 标签，稳定版在 `master` 上创建 `v0.2.0` 标签；标签工作流才会构建并发布签名 EXE。
-
-完整流程见 [Git 与发布流程](docs/DEVELOPMENT_WORKFLOW.md)。
-
-## 从源码运行
-
-需要 Windows 10/11 x64、Git 和 [.NET 8 或更新版本的 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。CI 使用 .NET 8 验证最低支持版本。
-
-```powershell
-git clone https://github.com/PomDetom/GhostSlacking.git
-cd GhostSlacking
-dotnet restore GhostSlacking.sln
-dotnet build GhostSlacking.sln --configuration Debug
-dotnet run --project src/GhostSlacking.App --configuration Debug
-```
-
-运行测试：
-
-```powershell
-dotnet test GhostSlacking.sln --configuration Debug
-```
-
-## 开发导航
-
-- [AGENTS.md](AGENTS.md)：仓库规则、项目职责和改动面对应的检查。
-- [技术架构](docs/ARCHITECTURE.md)：当前运行结构、模块边界和恢复不变量。
-- [实施状态](docs/IMPLEMENTATION_STATUS.md)：已实现能力与尚未验证的事项。
-- [实施计划](docs/IMPLEMENTATION_PLAN.md)：阶段目标、验收条件和 Windows 手工矩阵。
-- [Git 与发布流程](docs/DEVELOPMENT_WORKFLOW.md)：分支、PR、仓库设置与版本发布规则。
-
-配置和日志位于 `%LOCALAPPDATA%\GhostSlacking`。遇到异常时，请先按 `Ctrl+Shift+Alt+R` 尝试恢复全部窗口。
+建议通过托盘正常退出，以恢复受控窗口。完整操作、设置和软件更新见[使用指南](docs/product/USAGE.md)，兼容性与限制见[质量边界](docs/quality/KNOWN_LIMITATIONS.md)。

@@ -81,9 +81,9 @@ jobs:
           $previousTag = if ($candidateTags.Count -gt 0) { $candidateTags[-1].Tag } else { '' }
 
           if ($previousTag) {
-              .\scripts\release-metadata.ps1 -Mode ValidateVersion -Tag $tag -PreviousTag $previousTag
+              .\scripts\release\release-metadata.ps1 -Mode ValidateVersion -Tag $tag -PreviousTag $previousTag
           } else {
-              .\scripts\release-metadata.ps1 -Mode ValidateVersion -Tag $tag
+              .\scripts\release\release-metadata.ps1 -Mode ValidateVersion -Tag $tag
           }
 
           $publishedTagJson = gh release list --limit 1000 --json tagName
@@ -148,7 +148,7 @@ jobs:
           })
           ConvertTo-Json -InputObject $selected -Depth 10 | Set-Content -LiteralPath $selectedPath -Encoding utf8
 
-          .\scripts\release-metadata.ps1 `
+          .\scripts\release\release-metadata.ps1 `
               -Mode ComposePullRequests `
               -PullRequestsPath $selectedPath `
               -OutputPath $releaseNotesPath `
@@ -161,7 +161,7 @@ jobs:
         shell: pwsh
         env:
           GHOSTSLACKING_RELEASE_SIGNING_KEY: ${{ secrets.GHOSTSLACKING_RELEASE_SIGNING_KEY }}
-        run: .\build-release.ps1 -Version '${{ steps.version.outputs.value }}'
+        run: .\scripts\release\build-release.ps1 -Version '${{ steps.version.outputs.value }}'
 
       - name: Upload build records
         if: always()
