@@ -317,9 +317,9 @@ $changelogUrl
         $seenNumbers = [System.Collections.Generic.HashSet[string]]::new()
 
         foreach ($pullRequest in $pullRequests | Sort-Object { [int]$_.number }) {
-            $category = Get-PullRequestCategory $pullRequest
-            if ($null -eq $category) { continue }
-            $key = if ($category -eq 'docs') { 'other' } else { $category }
+            $pullRequestCategory = Get-PullRequestCategory $pullRequest
+            if ($null -eq $pullRequestCategory) { continue }
+            $key = if ($pullRequestCategory -eq 'docs') { 'other' } else { $pullRequestCategory }
             $number = [string]$pullRequest.number
             if ($number -and -not $seenNumbers.Add($number)) { continue }
 

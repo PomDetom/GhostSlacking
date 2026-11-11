@@ -151,6 +151,47 @@ Handle releases without structured notes.
         throw 'Pull request release notes were not composed correctly.'
     }
 
+    $skippedPr = @{
+        number = 43
+        title = 'refactor: internal maintenance'
+        body = 'Internal change without release-note markers.'
+        author = @{ login = 'internal-maintainer' }
+        labels = @(@{ name = 'skip-changelog' })
+    }
+    $typedSkippedPr = $skippedPr.Clone()
+    $typedSkippedPr.number = 44
+    $typedSkippedPr.labels = @(@{ name = 'type: skip-changelog' })
+    [System.IO.File]::WriteAllText($prListPath, (ConvertTo-Json -InputObject @($featurePr, $skippedPr, $typedSkippedPr) -Depth 8))
+    Invoke-Metadata @(
+        '-Mode', 'ComposePullRequests',
+        '-PullRequestsPath', $prListPath,
+        '-OutputPath', $composedPrPath,
+        '-Tag', 'v0.2.0-beta.1',
+        '-PreviousTag', 'v0.1.2',
+        '-RepositoryUrl', 'https://github.com/PomDetom/GhostSlacking')
+    $composed = Get-Content -LiteralPath $composedPrPath -Raw
+    if ($composed -notmatch '#42' -or $composed -notmatch '@alice' -or
+        $composed -match '#43|#44|internal-maintainer') {
+        throw 'Skipped pull requests must not contribute notes or authors to a mixed release.'
+    }
+    Invoke-Metadata @('-Mode', 'ValidateNotes', '-BodyPath', $composedPrPath)
+
+    [System.IO.File]::WriteAllText($prListPath, (ConvertTo-Json -InputObject @($skippedPr, $typedSkippedPr) -Depth 8))
+    Invoke-Metadata @(
+        '-Mode', 'ComposePullRequests',
+        '-PullRequestsPath', $prListPath,
+        '-OutputPath', $composedPrPath,
+        '-Tag', 'v0.2.0-beta.1',
+        '-PreviousTag', 'v0.1.2',
+        '-RepositoryUrl', 'https://github.com/PomDetom/GhostSlacking')
+    $composed = Get-Content -LiteralPath $composedPrPath -Raw
+    if ($composed -notmatch '本次版本没有可公开汇总的功能变更' -or
+        $composed -notmatch 'No user-facing changes were selected for this release' -or
+        $composed -match '#43|#44|internal-maintainer') {
+        throw 'A release with only skipped pull requests must use bilingual fallback notes.'
+    }
+    Invoke-Metadata @('-Mode', 'ValidateNotes', '-BodyPath', $composedPrPath)
+
     Write-Output 'Release metadata tests passed.'
 }
 finally {
