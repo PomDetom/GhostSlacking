@@ -51,7 +51,7 @@ App 引用 Core/Platform，Watchdog 和 Updater 同样引用 Core/Platform。App
 
 主程序每 tick 观察目标身份和位置；失效后清理活动状态。Platform 另外读取窗口 DPI、显示器缩放、屏幕/工作区及 placement，Core 比较显示上下文。真实变化先暂停旧矩形纠正，Ghost/Reveal 目标仅隐藏，Visible 目标保持显示；几何连续稳定 250ms 后接受系统调整的位置与尺寸，再按当前 Peek 意图重新建立 region/overlay。过渡最长两秒；查询失败、状态不符或超时进入 RecoveryError，保留恢复资料并提示手动恢复，不自动反复显示。普通漂移最多连续纠正十次，成功观测匹配后清零。
 
-几何更新再次验证 HWND/PID/进程启动身份，只替换恢复快照的屏幕矩形与 placement 位置字段，保留最初捕获的显示状态、flags、可见性、样式、region、DWM 属性及捕获身份；不把 Ghost 状态重捕获为原始状态。RecoveryManager 发布 ProfilesChanged，使主恢复路径与 Watchdog 使用相同的新几何；现有 schema 不变。过渡期间尚未稳定时保留上一份完整恢复资料。缩放过渡会结束实验输入并清理按下账本，实验模式须重新触发 Peek。
+几何更新再次验证 HWND/PID/进程启动身份，只替换恢复快照的屏幕矩形与 placement 位置字段，保留最初捕获的显示状态、flags、可见性、样式、region、DWM 属性及捕获身份；不把 Ghost 状态重捕获为原始状态。首次稳定后，原两秒预算内后到的尺寸调整重新等待 250ms 静止，不立即纠正回刚接受的矩形，也不重置总超时。RecoveryManager 发布 ProfilesChanged，使主恢复路径与 Watchdog 使用相同的新几何；现有 schema 不变。过渡期间尚未稳定时保留上一份完整恢复资料。缩放过渡会结束实验输入并清理按下账本，实验模式须重新触发 Peek。
 
 临时工具窗口样式会改变 placement 坐标约定；Platform 将运行期读取的位置换算回原始样式约定，保留无位置的 (-1,-1) 哨兵。保持最大化/最小化 placement 时则反向转换到当前样式约定，避免顶部/左侧任务栏导致坐标偏移。依据 Windows 的 [WINDOWPLACEMENT 坐标约定](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-windowplacement)。实际单屏缩放和混合 DPI 验收边界见状态文档。
 
