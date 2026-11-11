@@ -1,11 +1,13 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Media.Imaging;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using GhostSlacking.App;
 using GhostSlacking.Core;
 using GhostSlacking.Platform;
@@ -86,6 +88,7 @@ public sealed class SettingsAdjustmentTests
             VerifyDraftLifecycle(owner);
             VerifyNotificationContentParity(owner);
             VerifyAnimationLifecycle(owner);
+            VerifyBlurContrast(owner);
             VerifyLocalizedLayouts(owner);
         }
         finally { owner.Close(); }
@@ -106,7 +109,7 @@ public sealed class SettingsAdjustmentTests
         Assert.Equal(800, editor.Number.Value);
         editor.Value = -1;
         Assert.Equal(64, editor.Slider.Value);
-        editor.GetLogicalDescendants().OfType<Button>().Single().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        editor.ResetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.Equal(144, editor.Value);
     }
 
@@ -134,6 +137,20 @@ public sealed class SettingsAdjustmentTests
         using (var accepted = new SettingsAdjustmentFlyout(initial, AdjustmentKind.Diameter, results.Add))
         {
             accepted.OpenAt(owner);
+            accepted.View.UpdateLayout();
+            var slider = accepted.NumberEditor!.Slider;
+            slider.GetVisualDescendants().OfType<Track>().Single().Value = 280;
+            Assert.Equal(280, accepted.NumberEditor.Value);
+            slider.Value = 240;
+            accepted.View.UpdateLayout();
+            var track = slider.GetVisualDescendants().OfType<Track>().Single();
+            var thumb = track.Thumb!;
+            var center = thumb.TranslatePoint(new Point(thumb.Bounds.Width / 2, thumb.Bounds.Height / 2), slider)!.Value;
+            var expectedX = thumb.Bounds.Width / 2 + (slider.Bounds.Width - thumb.Bounds.Width) * (240 - slider.Minimum) / (slider.Maximum - slider.Minimum);
+            Assert.InRange(center.X, expectedX - 2, expectedX + 2);
+            slider.Focus();
+            slider.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Right });
+            Assert.Equal(248, accepted.NumberEditor.Value);
             accepted.NumberEditor!.Number.Focus();
             accepted.NumberEditor.Number.Text = "320";
             accepted.Complete();
@@ -221,9 +238,9 @@ public sealed class SettingsAdjustmentTests
             flyout.OpenAt(owner);
             flyout.View.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            Assert.InRange(flyout.View.Bounds.Width, 220, 332);
+            Assert.InRange(flyout.View.Bounds.Width, 220, 340);
             Assert.True(flyout.CompleteButton.Bounds.Width > 30);
-            if (!string.IsNullOrEmpty(directory) && kind is AdjustmentKind.DiameterStep or AdjustmentKind.SoftEdgeWidth or AdjustmentKind.NotificationWidth or AdjustmentKind.FrameRate)
+            if (!string.IsNullOrEmpty(directory) && kind is AdjustmentKind.DiameterStep or AdjustmentKind.SoftEdgeWidth or AdjustmentKind.NotificationWidth or AdjustmentKind.FrameRate or AdjustmentKind.BlurLevel)
             {
                 Directory.CreateDirectory(directory);
                 var view = flyout.Presenter!;
@@ -238,6 +255,65 @@ public sealed class SettingsAdjustmentTests
         }
         Assert.Equal("GhostSlacking", UiText.Text(UiLanguage.Chinese, "title"));
         Assert.Equal("GhostSlacking", UiText.Text(UiLanguage.English, "title"));
+    }
+
+    private static void VerifyBlurContrast(SettingsWindow owner)
+    {
+        owner.RequestedThemeVariant = ThemeVariant.Light;
+        using var flyout = new SettingsAdjustmentFlyout(new AppSettings(), AdjustmentKind.BlurLevel, _ => { });
+        flyout.OpenAt(owner);
+        var contrasts = new List<long>();
+        var references = new List<long>();
+        var directory = Environment.GetEnvironmentVariable("GHOST_ADJUSTMENT_OUTPUT");
+        for (var level = 0; level < 3; level++)
+        {
+            flyout.SelectChoice(level);
+            flyout.View.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var sample = flyout.RevealSample!;
+            Assert.True(sample.IsBlurComparison);
+            using var image = new RenderTargetBitmap(new PixelSize((int)sample.Bounds.Width, (int)sample.Bounds.Height), new Vector(96, 96));
+            image.Render(sample);
+            using var stream = new MemoryStream();
+            image.Save(stream);
+            stream.Position = 0;
+            using var pixels = SkiaSharp.SKBitmap.Decode(stream);
+            long Contrast(int start)
+            {
+                long total = 0;
+                for (var x = start; x < start + 70; x++)
+                for (var y = 85; y < 158; y++)
+                {
+                    var current = pixels.GetPixel(x, y);
+                    var next = pixels.GetPixel(x, y + 1);
+                    total += Math.Abs(current.Red - next.Red) + Math.Abs(current.Green - next.Green) + Math.Abs(current.Blue - next.Blue);
+                }
+                return total;
+            }
+            references.Add(Contrast(47));
+            contrasts.Add(Contrast(216));
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+                var view = flyout.Presenter!;
+                using var screenshot = new RenderTargetBitmap(new PixelSize((int)view.Bounds.Width, (int)view.Bounds.Height), new Vector(96, 96));
+                screenshot.Render(view);
+                screenshot.Save(System.IO.Path.Combine(directory, $"BlurLevel-contrast-{level}.png"));
+            }
+        }
+        Assert.Equal(references[0], references[1]);
+        Assert.Equal(references[0], references[2]);
+        Assert.True(contrasts[0] > contrasts[1] * 1.15 && contrasts[1] > contrasts[2] * 1.15,
+            $"Blurred edge contrast must fall visibly with each level: {string.Join(", ", contrasts)}");
+        flyout.Hide();
+        using var inactive = new SettingsAdjustmentFlyout(new AppSettings { RevealSoftEdgeWidthPx = 0 }, AdjustmentKind.BlurLevel, _ => { });
+        inactive.OpenAt(owner);
+        inactive.SelectChoice(2);
+        Assert.Equal(RevealBlurLevel.High, inactive.Draft.RevealBlurLevel);
+        Assert.Equal(0, inactive.Draft.RevealSoftEdgeWidthPx);
+        Assert.Contains(inactive.View.GetLogicalDescendants().OfType<TextBlock>(),
+            text => text.Text?.Contains(UiText.Text(UiLanguage.Chinese, "adjustBlurInactive"), StringComparison.Ordinal) == true);
+        inactive.Hide();
     }
 
     private static AppSettings Current(SettingsWindow window) => (AppSettings)typeof(SettingsWindow)

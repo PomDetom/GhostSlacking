@@ -20,23 +20,31 @@ internal readonly record struct RevealPreviewComparison(int BeforeDiameter, int 
     }
 }
 
-// Sample pixels only: both comparison layers share one coordinate system and scale.
+// A stylized sample, using the same coordinates for the solid and ghosted layers.
+// Skia is already supplied by Avalonia; no target-window pixels are read.
 internal sealed class RevealPreviewControl : Control, IDisposable
 {
-    private WriteableBitmap? _mask;
-    private string? _maskKey;
+    private WriteableBitmap? _image;
+    private string? _imageKey;
     private AppSettings _settings = new();
     private AdjustmentKind _kind;
     internal RevealPreviewComparison Comparison { get; private set; } = RevealPreviewComparison.Create(new(), new(), AdjustmentKind.Diameter);
     internal double AnimationSeconds { get; set; }
-    internal double PreviewScale => Math.Min(Bounds.Width, Bounds.Height) / Comparison.ReferenceExtent;
+    internal double PreviewScale => Math.Max(1, Math.Min(Bounds.Width, Bounds.Height) - 12) / Comparison.ReferenceExtent;
+    internal bool IsBlurComparison => _kind == AdjustmentKind.BlurLevel;
+    internal float BlurComparisonSigma => ComparisonSigma(_settings.RevealBlurLevel);
 
     public RevealPreviewControl()
     {
-        Height = 190;
+        Height = 200;
         ClipToBounds = true;
-        ActualThemeVariantChanged += (_, _) => { _maskKey = null; InvalidateVisual(); };
+        ActualThemeVariantChanged += (_, _) => { _imageKey = null; InvalidateVisual(); };
     }
+
+    internal static float ComparisonSigma(RevealBlurLevel level) => RevealGeometry.CreateVisualState(0,
+        new System.Drawing.Rectangle(0, 0, 300, 300),
+        RevealGeometry.CreateReveal(new System.Drawing.Rectangle(0, 0, 300, 300), new System.Drawing.Point(150, 150), new RevealSettings()),
+        24, level).BlurAmountPx;
 
     internal void Configure(AppSettings initial, AppSettings current, AdjustmentKind kind, int direction = 1)
     {
@@ -49,100 +57,143 @@ internal sealed class RevealPreviewControl : Control, IDisposable
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-        var size = Math.Max(1, (int)Math.Min(Bounds.Width, Bounds.Height));
-        var key = $"{size}:{Comparison}:{_settings.RevealShape}:{_settings.RevealBlurLevel}:{ActualThemeVariant}";
-        if (_maskKey != key)
+        var scaling = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
+        var size = new PixelSize(Math.Max(1, (int)Math.Ceiling(Bounds.Width * scaling)), Math.Max(1, (int)Math.Ceiling(Bounds.Height * scaling)));
+        var key = $"{size}:{scaling}:{_kind}:{Comparison}:{_settings.RevealShape}:{_settings.RevealBlurLevel}:{ActualThemeVariant}";
+        if (_imageKey != key)
         {
-            _mask?.Dispose();
-            _mask = CreateSample(size);
-            _maskKey = key;
+            _image?.Dispose();
+            _image = CreateSample(size, scaling);
+            _imageKey = key;
         }
-        var origin = new Point((Bounds.Width - size) / 2, (Bounds.Height - size) / 2);
-        context.DrawImage(_mask!, new Rect(origin, new Size(size, size)));
-        if (Comparison.IsStep || Comparison.IsFeather)
-        {
-            DrawOutline(context, origin, size, Comparison.BeforeDiameter,
-                new Pen(new SolidColorBrush(AppTheme.Palette(ActualThemeVariant).Primary), 1.3));
-            if (Comparison.IsStep)
-                DrawOutline(context, origin, size, Comparison.AfterDiameter,
-                    new Pen(new SolidColorBrush(AppTheme.AccentColor, 0.75), 1.5, new DashStyle([4d, 3d], 0)));
-        }
+        // Source rectangles are pixels; keep high-DPI backing pixels independent of layout DIPs.
+        context.DrawImage(_image!, new Rect(_image!.PixelSize.ToSize(1)), new Rect(Bounds.Size));
         if (_kind == AdjustmentKind.FrameRate)
         {
-            var x = origin.X + size * (0.5 + 0.38 * Math.Sin(AnimationSeconds * 1.5));
-            context.DrawEllipse(new SolidColorBrush(AppTheme.AccentColor), null, new Point(x, origin.Y + size / 2d), 5, 5);
+            var x = Bounds.Width * (0.5 + 0.34 * Math.Sin(AnimationSeconds * 1.5));
+            context.DrawEllipse(AdjustmentPalette.Brush(AdjustmentPalette.For(ActualThemeVariant).Accent), null,
+                new Point(x, Bounds.Height / 2 + 8), 4, 4);
         }
     }
 
-    private void DrawOutline(DrawingContext context, Point origin, int size, int diameter, Pen pen)
+    private WriteableBitmap CreateSample(PixelSize size, double scaling)
     {
-        var scale = (double)size / Comparison.ReferenceExtent;
-        var width = diameter * scale;
-        var rect = new Rect(origin.X + (size - width) / 2, origin.Y + (size - width) / 2, width, width);
-        if (_settings.RevealShape == RevealShape.Circle) context.DrawEllipse(null, pen, rect);
+        var bitmap = new WriteableBitmap(size, new Vector(96, 96),
+            Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Premul);
+        using var frame = bitmap.Lock();
+        using var surface = SkiaSharp.SKSurface.Create(new SkiaSharp.SKImageInfo(size.Width, size.Height,
+            SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Premul), frame.Address, frame.RowBytes);
+        var canvas = surface.Canvas;
+        canvas.Clear(SkiaSharp.SKColors.Transparent);
+        canvas.Scale((float)scaling);
+        if (IsBlurComparison)
+        {
+            var side = (float)Math.Min(112, Math.Min(Bounds.Width / 2 - 22, Bounds.Height - 72));
+            var y = 58f;
+            var left = SkiaSharp.SKRect.Create((float)Bounds.Width / 4 - side / 2, y, side, side);
+            var right = SkiaSharp.SKRect.Create((float)Bounds.Width * 3 / 4 - side / 2, y, side, side);
+            DrawSample(canvas, left, 14, 1, true);
+            using var filter = SkiaSharp.SKImageFilter.CreateBlur(BlurComparisonSigma, BlurComparisonSigma);
+            using var layer = new SkiaSharp.SKPaint { ImageFilter = filter };
+            canvas.SaveLayer(layer);
+            DrawSample(canvas, right, 14, 1, true);
+            canvas.Restore();
+        }
         else
         {
-            var radius = _settings.RevealShape == RevealShape.RoundedRectangle ? Math.Clamp(diameter / 5, 12, 48) * scale : 0;
-            context.DrawRectangle(null, pen, new RoundedRect(rect, radius));
+            var scale = (float)PreviewScale;
+            var extent = Comparison.ReferenceExtent;
+            canvas.Translate((float)Bounds.Width / 2, (float)Bounds.Height / 2 + 7);
+            canvas.Scale(scale);
+            canvas.Translate(-extent / 2f, -extent / 2f);
+            var before = CenteredRect(Comparison.BeforeDiameter, extent);
+            var after = CenteredRect(Comparison.AfterDiameter, extent);
+            if (Comparison.IsStep)
+            {
+                DrawSample(canvas, before, Radius(Comparison.BeforeDiameter), scale);
+                DrawGhost(canvas, after, Radius(Comparison.AfterDiameter), 1.5f / scale, 0.45f, scale);
+                DrawGhostOutline(canvas, after, Radius(Comparison.AfterDiameter), scale);
+            }
+            else if (Comparison.IsFeather)
+            {
+                if (Comparison.FeatherWidth > 0)
+                {
+                    var outer = before;
+                    outer.Inflate(Comparison.FeatherWidth * 0.55f, Comparison.FeatherWidth * 0.55f);
+                    DrawGhost(canvas, outer, Radius(Comparison.BeforeDiameter) + Comparison.FeatherWidth * 0.55f,
+                        Math.Max(0.5f, Comparison.FeatherWidth / 4f), 0.44f, scale);
+                }
+                DrawSample(canvas, before, Radius(Comparison.BeforeDiameter), scale);
+            }
+            else
+            {
+                DrawGhost(canvas, after, Radius(Comparison.AfterDiameter), 2 / scale, 0.18f, scale);
+                DrawSample(canvas, after, Radius(Comparison.AfterDiameter), scale);
+            }
         }
-    }
-
-    private WriteableBitmap CreateSample(int size)
-    {
-        var extent = Comparison.ReferenceExtent;
-        var bounds = new System.Drawing.Rectangle(0, 0, extent, extent);
-        var center = new System.Drawing.Point(extent / 2, extent / 2);
-        var settings = new RevealSettings { DiameterPx = Comparison.AfterDiameter, Shape = _settings.RevealShape };
-        var after = RevealGeometry.CreateReveal(bounds, center, settings);
-        var before = RevealGeometry.CreateReveal(bounds, center, settings with { DiameterPx = Comparison.BeforeDiameter });
-        var visual = RevealGeometry.CreateVisualState(0, bounds, after, Comparison.FeatherWidth, _settings.RevealBlurLevel);
-        var bitmap = new WriteableBitmap(new PixelSize(size, size), new Vector(96, 96),
-            Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Opaque);
-        var dark = AppTheme.IsDark(ActualThemeVariant);
-        using var frame = bitmap.Lock();
-        var pixels = new byte[frame.RowBytes * size];
-        for (var y = 0; y < size; y++)
-        for (var x = 0; x < size; x++)
-        {
-            var wx = (x + 0.5f) * extent / size;
-            var wy = (y + 0.5f) * extent / size;
-            var distance = RevealGeometry.SignedDistanceFromBoundary(after, wx, wy);
-            var opacity = distance <= 0 ? 1 : RevealGeometry.GetFeatherOpacity(distance, visual.FeatherWidthPx);
-            var blur = distance <= 0 ? 0 : visual.BlurAmountPx;
-            var background = dark ? 30 : 242;
-            var baseColor = Color.FromRgb((byte)background, (byte)background, (byte)background);
-            if (Comparison.IsStep && RevealGeometry.SignedDistanceFromBoundary(before, wx, wy) <= 0)
-                baseColor = Sample(wx, wy, 0, dark);
-            if (Comparison.IsStep) { opacity *= 0.42f; blur = Math.Max(3.2f, blur); }
-            var color = Sample(wx, wy, blur, dark);
-            var pixel = y * frame.RowBytes + x * 4;
-            pixels[pixel] = (byte)(baseColor.B + (color.B - baseColor.B) * opacity);
-            pixels[pixel + 1] = (byte)(baseColor.G + (color.G - baseColor.G) * opacity);
-            pixels[pixel + 2] = (byte)(baseColor.R + (color.R - baseColor.R) * opacity);
-            pixels[pixel + 3] = 255;
-        }
-        System.Runtime.InteropServices.Marshal.Copy(pixels, 0, frame.Address, pixels.Length);
+        surface.Flush();
         return bitmap;
     }
 
-    private static Color Sample(float x, float y, float blur, bool dark)
+    private static SkiaSharp.SKRect CenteredRect(int diameter, int extent) =>
+        SkiaSharp.SKRect.Create((extent - diameter) / 2f, (extent - diameter) / 2f, diameter, diameter);
+    private float Radius(int diameter) => _settings.RevealShape == RevealShape.Circle ? diameter / 2f :
+        _settings.RevealShape == RevealShape.Rectangle ? 0 : Math.Clamp(diameter / 5, 12, 48);
+    private static SkiaSharp.SKColor ColorFor(Color color, float opacity = 1) => new(color.R, color.G, color.B, (byte)(255 * opacity));
+
+    private void DrawSample(SkiaSharp.SKCanvas canvas, SkiaSharp.SKRect rect, float radius, float scale, bool detail = false)
     {
-        static Color At(float x, float y, bool dark)
+        var palette = AdjustmentPalette.For(ActualThemeVariant);
+        using var fill = new SkiaSharp.SKPaint { IsAntialias = true, Color = ColorFor(palette.Soft) };
+        using var path = new SkiaSharp.SKPath();
+        path.AddRoundRect(rect, radius, radius);
+        canvas.DrawPath(path, fill);
+        canvas.Save();
+        canvas.ClipPath(path, antialias: true);
+        var lengths = new[] { 0.74f, 0.46f, 0.64f, 0.35f };
+        for (var i = 0; i < lengths.Length; i++)
         {
-            if ((int)(x / 35) % 2 == 0 && (int)(y / 35) % 2 == 0) return dark ? Color.FromRgb(18, 107, 102) : Color.FromRgb(107, 212, 200);
-            if ((int)y % 40 is >= 12 and < 19) return dark ? Color.FromRgb(213, 229, 227) : Color.FromRgb(41, 79, 82);
-            return dark ? Color.FromRgb(60, 85, 89) : Color.FromRgb(229, 246, 243);
+            fill.Color = ColorFor(palette.Accent, i % 2 == 0 ? 0.52f : 0.28f);
+            var bar = SkiaSharp.SKRect.Create(rect.Left + rect.Width * 0.13f,
+                rect.Top + rect.Height * (0.26f + i * 0.16f), rect.Width * lengths[i], Math.Max(3, rect.Height * 0.045f));
+            canvas.DrawRoundRect(bar, 2 / scale, 2 / scale, fill);
         }
-        if (blur == 0) return At(x, y, dark);
-        var r = 0; var g = 0; var b = 0;
-        for (var iy = -2; iy <= 2; iy++)
-        for (var ix = -2; ix <= 2; ix++)
+        if (detail)
         {
-            var c = At(x + ix * blur, y + iy * blur, dark);
-            r += c.R; g += c.G; b += c.B;
+            fill.Color = ColorFor(palette.Accent, 0.65f);
+            fill.StrokeWidth = 0.9f;
+            for (var i = 0; i < 5; i++)
+                canvas.DrawLine(rect.Left + rect.Width * 0.13f, rect.Bottom - 14 + i * 2.2f,
+                    rect.Right - rect.Width * 0.13f, rect.Bottom - 14 + i * 2.2f, fill);
         }
-        return Color.FromRgb((byte)(r / 25), (byte)(g / 25), (byte)(b / 25));
+        canvas.Restore();
+        fill.Style = SkiaSharp.SKPaintStyle.Stroke;
+        fill.StrokeWidth = 0.65f / scale;
+        fill.Color = ColorFor(palette.Accent, 0.45f);
+        canvas.DrawPath(path, fill);
     }
 
-    public void Dispose() { _mask?.Dispose(); _mask = null; _maskKey = null; }
+    private void DrawGhost(SkiaSharp.SKCanvas canvas, SkiaSharp.SKRect rect, float radius, float sigma, float opacity, float scale)
+    {
+        using var filter = SkiaSharp.SKImageFilter.CreateBlur(sigma, sigma);
+        using var layer = new SkiaSharp.SKPaint { ImageFilter = filter, Color = SkiaSharp.SKColors.White.WithAlpha((byte)(opacity * 255)) };
+        canvas.SaveLayer(layer);
+        DrawSample(canvas, rect, radius, scale);
+        canvas.Restore();
+    }
+
+    private void DrawGhostOutline(SkiaSharp.SKCanvas canvas, SkiaSharp.SKRect rect, float radius, float scale)
+    {
+        using var filter = SkiaSharp.SKImageFilter.CreateBlur(0.65f / scale, 0.65f / scale);
+        using var dash = SkiaSharp.SKPathEffect.CreateDash([2 / scale, 3 / scale], 0);
+        using var pen = new SkiaSharp.SKPaint
+        {
+            IsAntialias = true, Style = SkiaSharp.SKPaintStyle.Stroke, StrokeWidth = 0.9f / scale,
+            StrokeCap = SkiaSharp.SKStrokeCap.Round, Color = ColorFor(AdjustmentPalette.For(ActualThemeVariant).Accent, 0.5f),
+            ImageFilter = filter, PathEffect = dash
+        };
+        canvas.DrawRoundRect(rect, radius, radius, pen);
+    }
+
+    public void Dispose() { _image?.Dispose(); _image = null; _imageKey = null; }
 }

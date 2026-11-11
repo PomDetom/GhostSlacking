@@ -26,7 +26,14 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
     private readonly Stopwatch _clock = new();
     private readonly IDisplayRefreshRateProvider _displays;
     private readonly Button? _play;
-    private readonly ComboBox? _choice;
+    private readonly List<Button> _choiceButtons = [];
+    private readonly List<Button> _secondaryButtons = [];
+    private readonly Border _separator = new() { Height = 1, Margin = new Thickness(0, 12, 0, 12) };
+    private readonly Border? _previewPanel;
+    private readonly TextBlock? _selectedBlurLabel;
+    private readonly TextBlock _stepText = new() { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+    private readonly Button _close;
+    private readonly Button? _resetLink;
     private readonly NotificationContent? _miniature;
     private readonly Canvas? _screen;
     private Window? _owner;
@@ -62,7 +69,7 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         Placement = PlacementMode.BottomEdgeAlignedRight;
         VerticalOffset = 6;
         OverlayDismissEventPassThrough = true;
-        var close = new Button { Content = "×", Padding = new Thickness(8, 2), VerticalAlignment = VerticalAlignment.Top };
+        var close = _close = new Button { Content = "×", FontSize = 20, Width = 28, Height = 28, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Top };
         AutomationProperties.SetName(close, T("adjustClose"));
         close.Click += (_, _) => Hide();
         var heading = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
@@ -76,7 +83,6 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         });
         Grid.SetColumn(close, 1);
         heading.Children.Add(close);
-        _body.Children.Add(heading);
         if (SettingAdjustment.IsNotification(kind))
         {
             NotificationSample = new NotificationContent { HorizontalAlignment = HorizontalAlignment.Center };
@@ -111,27 +117,58 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         else
         {
             RevealSample = new RevealPreviewControl();
-            _body.Children.Add(RevealSample);
-            _body.Children.Add(_scaleText);
-            RevealSample.SizeChanged += (_, _) => UpdateScale();
-            if (kind == AdjustmentKind.DiameterStep)
+            var stage = new Grid { Children = { RevealSample } };
+            _scaleText.Margin = new Thickness(12, 9, 0, 0);
+            _scaleText.VerticalAlignment = VerticalAlignment.Top;
+            _scaleText.HorizontalAlignment = HorizontalAlignment.Left;
+            _scaleText.FontSize = 11;
+            stage.Children.Add(_scaleText);
+            if (kind == AdjustmentKind.BlurLevel)
             {
-                var decrease = new Button { Content = T("adjustDecrease") };
-                var increase = new Button { Content = T("adjustIncrease") };
-                decrease.Click += (_, _) => DemonstrateStep(-1);
-                increase.Click += (_, _) => DemonstrateStep(1);
-                _body.Children.Add(new WrapPanel { Children = { decrease, increase } });
+                var labels = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*"), Margin = new Thickness(0, 33, 0, 0), VerticalAlignment = VerticalAlignment.Top };
+                var clearLabel = Note(T("adjustClearReference"));
+                clearLabel.HorizontalAlignment = HorizontalAlignment.Center;
+                labels.Children.Add(clearLabel);
+                _selectedBlurLabel = Note(SettingAdjustment.Format(Draft, kind, _initial.Language));
+                _selectedBlurLabel.HorizontalAlignment = HorizontalAlignment.Center;
+                Grid.SetColumn(_selectedBlurLabel, 1);
+                labels.Children.Add(_selectedBlurLabel);
+                stage.Children.Add(labels);
             }
+            _previewPanel = new Border { Child = stage, Height = 200, CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), ClipToBounds = true };
+            _body.Children.Add(_previewPanel);
+            RevealSample.SizeChanged += (_, _) => UpdateScale();
         }
         _body.Children.Add(_caption);
 
+        if (kind == AdjustmentKind.DiameterStep)
+        {
+            var decrease = new Button { Content = "−", Width = 36 };
+            var increase = new Button { Content = "+", Width = 36 };
+            AutomationProperties.SetName(decrease, T("adjustDecrease"));
+            AutomationProperties.SetName(increase, T("adjustIncrease"));
+            decrease.Click += (_, _) => DemonstrateStep(-1);
+            increase.Click += (_, _) => DemonstrateStep(1);
+            _secondaryButtons.AddRange([decrease, increase]);
+            _body.Children.Add(new StackPanel
+            {
+                Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 9,
+                Children = { decrease, _stepText, increase }
+            });
+        }
         if (kind is AdjustmentKind.BlurLevel or AdjustmentKind.Shape)
         {
             var labels = kind == AdjustmentKind.Shape ? new[] { "circle", "rectangle", "roundedRectangle" } : ["blurLow", "blurMedium", "blurHigh"];
-            _choice = new ComboBox { ItemsSource = labels.Select(T).ToArray(), SelectedIndex = (int)_selection, HorizontalAlignment = HorizontalAlignment.Stretch };
-            AutomationProperties.SetName(_choice, T(spec.Label));
-            _choice.SelectionChanged += (_, _) => { _selection = _choice.SelectedIndex; RefreshPreview(); };
-            _body.Children.Add(_choice);
+            var choices = new WrapPanel();
+            for (var index = 0; index < labels.Length; index++)
+            {
+                var value = index;
+                var choice = new Button { Content = T(labels[index]), Margin = new Thickness(0, 0, 7, 0) };
+                choice.Click += (_, _) => SelectChoice(value);
+                _choiceButtons.Add(choice);
+                choices.Children.Add(choice);
+            }
+            _body.Children.Add(choices);
         }
         else if (kind == AdjustmentKind.FrameRate)
         {
@@ -141,11 +178,13 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
             {
                 if (args.Property == RangeBase.ValueProperty) { _selection = Math.Round(FrameRateSlider.Value); RefreshPreview(); }
             };
+            AdjustmentStyles.Slider(FrameRateSlider);
             _body.Children.Add(FrameRateSlider);
             _body.Children.Add(Note($"{T("peekFrameRateAuto")} · 60 · 90 · 120 FPS"));
             _body.Children.Add(_fpsText);
             _play = new Button { Content = T("adjustPlay") };
             _play.Click += (_, _) => SetPlaying(!_playing);
+            _secondaryButtons.Add(_play);
             _body.Children.Add(_play);
         }
         else
@@ -157,11 +196,10 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         }
         if (NumberEditor is null)
         {
-            var reset = new Button { Content = T("resetSetting") };
+            var reset = _resetLink = new Button { Content = T("resetSetting"), HorizontalAlignment = HorizontalAlignment.Left };
             reset.Click += (_, _) =>
             {
                 _selection = SettingAdjustment.Read(new AppSettings(), kind);
-                if (_choice is not null) _choice.SelectedIndex = (int)_selection;
                 if (FrameRateSlider is not null) FrameRateSlider.Value = _selection;
                 RefreshPreview();
             };
@@ -172,13 +210,28 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         CompleteButton = new Button { Content = T("adjustComplete") };
         CompleteButton.Classes.Add("accent");
         CompleteButton.Click += (_, _) => Complete();
-        _body.Children.Add(new Border { Height = 1, Background = new SolidColorBrush(AppTheme.Palette(null).Border), Margin = new Thickness(0, 4) });
-        _body.Children.Add(new StackPanel
+        _secondaryButtons.Add(cancel);
+        var footer = new StackPanel
         {
-            Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right,
-            Children = { cancel, CompleteButton }
-        });
-        Content = new ScrollViewer { Content = _body, Width = 332, MaxHeight = 570, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            Children =
+            {
+                _separator,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right,
+                    Children = { cancel, CompleteButton }
+                }
+            }
+        };
+        var shell = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto"), Width = 340, MaxHeight = 650 };
+        heading.Margin = new Thickness(0, 0, 0, 16);
+        shell.Children.Add(heading);
+        var scroller = new ScrollViewer { Content = _body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        Grid.SetRow(scroller, 1);
+        shell.Children.Add(scroller);
+        Grid.SetRow(footer, 2);
+        shell.Children.Add(footer);
+        Content = shell;
         View.AddHandler(InputElement.KeyDownEvent, (_, args) =>
         {
             if (args.Key == Key.Escape) { args.Handled = true; Hide(); }
@@ -193,6 +246,8 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
     protected override Control CreatePresenter()
     {
         _presenter = (FlyoutPresenter)base.CreatePresenter();
+        _presenter.FontFamily = new FontFamily("Segoe UI, Microsoft YaHei");
+        _presenter.FontSize = 14;
         _presenter.CornerRadius = new CornerRadius(18);
         _presenter.Padding = new Thickness(20);
         ApplyPalette();
@@ -207,8 +262,9 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         _owner = TopLevel.GetTopLevel(anchor) as Window;
         if (_owner is not null)
         {
-            View.Width = Math.Clamp(_owner.Bounds.Width - 100, 220, 332);
-            View.MaxHeight = Math.Max(220, _owner.Bounds.Height - 88);
+            View.Width = Math.Clamp(_owner.Bounds.Width - 100, 220, 340);
+            var screen = _owner.Screens.ScreenFromWindow(_owner) ?? _owner.Screens.Primary;
+            View.MaxHeight = Math.Max(220, Math.Min(650, screen is null ? 650 : screen.WorkingArea.Height / screen.Scaling - 80));
             _owner.Closed += OnOwnerClosed;
             _owner.PropertyChanged += OnOwnerPropertyChanged;
             _owner.PositionChanged += OnOwnerPositionChanged;
@@ -227,6 +283,12 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         _accept(accepted);
     }
 
+    internal void SelectChoice(int value)
+    {
+        _selection = Math.Clamp(value, 0, 2);
+        RefreshPreview();
+    }
+
     internal void DemonstrateStep(int direction) { _stepDirection = Math.Sign(direction); RefreshPreview(); }
 
     private void RefreshPreview()
@@ -239,10 +301,13 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
             var comparison = RevealSample.Comparison;
             _caption.Text = _kind switch
             {
-                AdjustmentKind.DiameterStep => $"{T("adjustBeforeSolid")}: {comparison.BeforeDiameter} px · {T("adjustAfterGhost")}: {comparison.AfterDiameter} px ({comparison.AfterDiameter - comparison.BeforeDiameter:+0;-0;0} px)",
-                AdjustmentKind.SoftEdgeWidth => $"{T("adjustHardEdgeSolid")} · {T("adjustFeatherGhost")}: {draft.RevealSoftEdgeWidthPx} px",
+                AdjustmentKind.DiameterStep => $"{T("adjustBeforeSolid")} {comparison.BeforeDiameter} px · {T("adjustAfterGhost")} {comparison.AfterDiameter} px ({comparison.AfterDiameter - comparison.BeforeDiameter:+0;-0;0} px)",
+                AdjustmentKind.SoftEdgeWidth => $"{T("adjustHardEdgeSolid")} · {T("adjustFeatherGhost")} {draft.RevealSoftEdgeWidthPx} px",
+                AdjustmentKind.BlurLevel => T("adjustBlurComparisonHint") + (draft.RevealSoftEdgeWidthPx == 0 ? " " + T("adjustBlurInactive") : string.Empty),
                 _ => T("adjustRevealHint")
             };
+            _stepText.Text = $"{comparison.BeforeDiameter} → {comparison.AfterDiameter} px";
+            if (_selectedBlurLabel is not null) _selectedBlurLabel.Text = SettingAdjustment.Format(draft, _kind, _initial.Language);
             UpdateScale();
             if (_kind == AdjustmentKind.FrameRate) RefreshFrameRate();
         }
@@ -270,6 +335,7 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
             }
             _caption.Text = T(_screen is null ? "adjustWidthHint" : "adjustScreenHint");
         }
+        ApplyPalette();
     }
 
     private void RefreshFrameRate()
@@ -297,17 +363,30 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         else { _clock.Stop(); _timer.Stop(); }
     }
 
-    private void UpdateScale() => _scaleText.Text = $"{T("adjustSample")} · {T("adjustScale")}: {RevealSample?.PreviewScale:P0}";
+    private void UpdateScale() => _scaleText.Text = _kind == AdjustmentKind.BlurLevel ? T("adjustBlurComparison") : $"{T("adjustSample")} · {RevealSample?.PreviewScale:P0}";
     private string T(string key) => UiText.Text(_initial.Language, key);
     private static TextBlock Note(string text) => new() { Text = text, FontSize = 12, TextWrapping = TextWrapping.Wrap, Opacity = 0.7 };
     private void ApplyPalette()
     {
         if (_presenter is null) return;
-        var palette = AppTheme.Palette(View.ActualThemeVariant);
-        _presenter.Background = new SolidColorBrush(palette.Surface);
-        _presenter.Foreground = new SolidColorBrush(palette.Primary);
-        _presenter.BorderBrush = new SolidColorBrush(palette.Border);
-        _caption.Foreground = new SolidColorBrush(palette.Secondary);
+        var palette = AdjustmentPalette.For(View.ActualThemeVariant);
+        _presenter.Background = AdjustmentPalette.Brush(palette.Surface);
+        _presenter.Foreground = AdjustmentPalette.Brush(palette.Text);
+        _presenter.BorderBrush = AdjustmentPalette.Brush(palette.Border);
+        _caption.Foreground = _scaleText.Foreground = _stepText.Foreground = AdjustmentPalette.Brush(palette.Muted);
+        _separator.Background = AdjustmentPalette.Brush(palette.Border);
+        if (_previewPanel is not null)
+        {
+            _previewPanel.Background = AdjustmentPalette.Brush(palette.Field);
+            _previewPanel.BorderBrush = AdjustmentPalette.Brush(palette.Border);
+        }
+        foreach (var button in _secondaryButtons) AdjustmentStyles.Button(button, palette);
+        for (var i = 0; i < _choiceButtons.Count; i++) AdjustmentStyles.Button(_choiceButtons[i], palette, selected: i == (int)_selection);
+        AdjustmentStyles.Button(CompleteButton, palette, primary: true);
+        if (_resetLink is not null) AdjustmentStyles.Link(_resetLink, palette);
+        _close.Background = Brushes.Transparent;
+        _close.BorderThickness = new Thickness(0);
+        _close.Foreground = AdjustmentPalette.Brush(palette.Muted);
     }
     private void OnOwnerClosed(object? sender, EventArgs args) => Hide();
     private void OnOwnerPositionChanged(object? sender, PixelPointEventArgs args) => Hide();
