@@ -378,7 +378,7 @@ public sealed class CoordinatorTests
     }
 
     [Fact]
-    public void Failed_size_correction_restores_the_window_without_attempting_reveal()
+    public void Failed_size_correction_keeps_recovery_data_and_stops_without_showing_the_window()
     {
         var api = new FakeWindowApi();
         var backend = new FakeVisibilityBackend
@@ -395,14 +395,14 @@ public sealed class CoordinatorTests
         };
 
         coordinator.UpdatePeek(new Point(200, 200), true);
-        api.Observation = api.Observation with { ScreenBounds = api.Target.ScreenBounds, IsVisible = true };
-        CompleteRestore(coordinator);
+        coordinator.UpdatePeek(new Point(200, 200), true);
 
         Assert.Equal(1, backend.EnsurePlacementCalls);
         Assert.Equal(0, backend.RevealCalls);
-        Assert.Equal(1, backend.RestoreCalls);
-        Assert.Equal(GhostState.Idle, coordinator.State);
-        Assert.Null(coordinator.CurrentProfile);
+        Assert.Equal(0, backend.RestoreCalls);
+        Assert.Equal(GhostState.RecoveryError, coordinator.State);
+        Assert.NotNull(coordinator.CurrentProfile);
+        Assert.Single(recovery.Profiles);
     }
 
     [Fact]
@@ -646,6 +646,7 @@ public sealed class CoordinatorTests
 
     private sealed class FakeVisibilityBackend : IVisibilityBackend
     {
+        public NativeResult HideOnly(nint hwnd) => NativeResult.Ok("HideOnly");
         private readonly List<string>? _calls;
 
         public FakeVisibilityBackend(List<string>? calls = null)

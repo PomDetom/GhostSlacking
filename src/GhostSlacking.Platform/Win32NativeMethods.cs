@@ -210,6 +210,21 @@ internal static class Win32NativeMethods
     [DllImport("user32.dll")]
     internal static extern nint MonitorFromPoint(POINT point, uint flags);
 
+    [DllImport("user32.dll")]
+    internal static extern nint MonitorFromWindow(nint hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    internal static extern nint MonitorFromRect(ref RECT rect, uint flags);
+
+    [DllImport("user32.dll")]
+    internal static extern int GetSystemMetricsForDpi(int index, uint dpi);
+
+    [DllImport("user32.dll")]
+    internal static extern uint GetDpiForWindow(nint hwnd);
+
+    [DllImport("shcore.dll")]
+    internal static extern int GetScaleFactorForMonitor(nint monitor, out int scale);
+
     [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetMonitorInfo(nint monitor, ref MONITORINFOEX monitorInfo);

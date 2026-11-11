@@ -384,11 +384,28 @@ public interface IWindowApi
 
 public interface IVisibilityBackend
 {
+    NativeResult HideOnly(nint hwnd);
     NativeResult ApplyGhost(nint hwnd, WindowSnapshot snapshot);
     NativeResult ApplyReveal(nint hwnd, CircleRegion region, WindowSnapshot snapshot);
     NativeResult UpdateRevealRegion(nint hwnd, CircleRegion region);
     NativeResult EnsureWindowPlacement(nint hwnd, WindowSnapshot snapshot);
     NativeResult Restore(nint hwnd, WindowSnapshot snapshot);
+}
+
+// Runtime geometry is queried separately: it must never replace captured styles,
+// identity, visibility or region data with the temporarily modified Ghost state.
+public sealed record WindowDisplayContext(
+    string Monitor, Rectangle MonitorBounds, Rectangle WorkArea, uint WindowDpi, int ScalePercent);
+
+public sealed record WindowEnvironment(
+    WindowDisplayContext Display, Rectangle Bounds, WindowPlacementSnapshot Placement)
+{
+    public bool IsSystemMaximized { get; init; }
+}
+
+public interface IWindowEnvironmentApi
+{
+    OperationResult<WindowEnvironment> ReadEnvironment(WindowSnapshot original);
 }
 
 public interface IRevealVisualHost
@@ -397,6 +414,7 @@ public interface IRevealVisualHost
     NativeResult Prepare(RevealVisualState visual);
     NativeResult Present();
     void Hide();
+    void InvalidateGeometry() => Hide();
 }
 
 public interface IClock

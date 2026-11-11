@@ -1,7 +1,17 @@
+using System.Drawing;
+
 namespace GhostSlacking.Core;
 
 public static class WindowPlacementRestoration
 {
+    // GetWindowRect includes invisible resize borders. A maximized window must
+    // cover its work area, with overhang limited by current DPI frame metrics.
+    public static bool IsSystemMaximizedBounds(Rectangle bounds, Rectangle workArea, int frameX, int frameY) =>
+        workArea.Width > 0 && workArea.Height > 0 && frameX >= 0 && frameY >= 0 &&
+        bounds.Contains(workArea) &&
+        bounds.Left >= workArea.Left - frameX && bounds.Right <= workArea.Right + frameX &&
+        bounds.Top >= workArea.Top - frameY && bounds.Bottom <= workArea.Bottom + frameY;
+
     public static bool Matches(WindowSnapshot snapshot, WindowObservation observation) =>
         VisibilityMatches(snapshot, observation) && PlacementMatches(snapshot, observation);
 

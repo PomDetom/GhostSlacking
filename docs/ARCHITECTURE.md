@@ -49,9 +49,15 @@ App 引用 Core/Platform，Watchdog 和 Updater 同样引用 Core/Platform。App
 | Restoring | 恢复并校验稳定性；完成后进入 Idle 或临时 Visible |
 | RecoveryError | 恢复失败，保留可用资料并向用户提供错误反馈 |
 
-主程序每 tick 观察目标身份和位置；失效后清理活动状态。当前位置保持逻辑将观测矩形与原快照比较，漂移时纠正。它与运行中 DPI 变化的关系尚未解决，已知闪烁见状态文档，不能据此宣称动态缩放可靠。
+主程序每 tick 观察目标身份和位置；失效后清理活动状态。Platform 另外读取窗口 DPI、显示器缩放、屏幕/工作区及 placement，Core 比较显示上下文。真实变化先暂停旧矩形纠正，Ghost/Reveal 目标仅隐藏，Visible 目标保持显示；几何连续稳定 250ms 后接受系统调整的位置与尺寸，再按当前 Peek 意图重新建立 region/overlay。过渡最长两秒；查询失败、状态不符或超时进入 RecoveryError，保留恢复资料并提示手动恢复，不自动反复显示。普通漂移最多连续纠正十次，成功观测匹配后清零。
+
+几何更新再次验证 HWND/PID/进程启动身份，只替换恢复快照的屏幕矩形与 placement 位置字段，保留最初捕获的显示状态、flags、可见性、样式、region、DWM 属性及捕获身份；不把 Ghost 状态重捕获为原始状态。首次稳定后，原两秒预算内后到的尺寸调整重新等待 250ms 静止，不立即纠正回刚接受的矩形，也不重置总超时。RecoveryManager 发布 ProfilesChanged，使主恢复路径与 Watchdog 使用相同的新几何；现有 schema 不变。过渡期间尚未稳定时保留上一份完整恢复资料。缩放过渡会结束实验输入并清理按下账本，实验模式须重新触发 Peek。
+
+临时工具窗口样式会改变 placement 坐标约定；Platform 将运行期读取的位置换算回原始样式约定，保留无位置的 (-1,-1) 哨兵。保持最大化/最小化 placement 时则反向转换到当前样式约定，避免顶部/左侧任务栏导致坐标偏移。依据 Windows 的 [WINDOWPLACEMENT 坐标约定](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-windowplacement)。实际单屏缩放和混合 DPI 验收边界见状态文档。
 
 Restore 恢复 region、style/ex-style、DWM 属性、TopMost、placement 和原始可见性。异步恢复要求连续三次观测匹配，最多纠正十次以容纳浏览器延迟漂移；失败保留恢复资料。同步 Restore All 逐项返回成功、失败或跳过结果。
+
+最大化恢复由 Windows 按当前工作区及 DPI 决定外框，不能强制重放旧缩放的像素矩形。Platform 在身份验证后检查原生最大化状态、目标显示器及工作区覆盖，允许的外扩只取窗口/显示器 DPI 对应的系统缩放边框；原始工具窗口也允许其显示器全区域。合法的新几何先登记并同步清单，再由异步/同步恢复使用同一基准完成三次稳定观测、清除恢复资料和菜单状态。普通窗口仍要求精确矩形，错误显示器、未最大化或异常外框不能仅因可见而算成功。Watchdog 的原生恢复共用此最大化验证，schema 不变。日志区分 RestoreApplied（已执行）与 RestoreVerified（稳定验证完成）。
 
 ## 3. 拾取、几何与 Reveal
 

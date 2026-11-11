@@ -6,6 +6,18 @@ namespace GhostSlacking.Core.Tests;
 public sealed class WindowPlacementRestorationTests
 {
     [Fact]
+    public void System_maximized_bounds_cover_current_work_area_with_only_resize_border_overhang()
+    {
+        var work = new Rectangle(0, 0, 1920, 1032);
+        Assert.True(WindowPlacementRestoration.IsSystemMaximizedBounds(new(-8, -8, 1936, 1048), work, 8, 8));
+        Assert.True(WindowPlacementRestoration.IsSystemMaximizedBounds(work, work, 8, 8));
+        Assert.False(WindowPlacementRestoration.IsSystemMaximizedBounds(new(-9, -9, 1938, 1038), work, 8, 8));
+        Assert.False(WindowPlacementRestoration.IsSystemMaximizedBounds(new(0, 0, 400, 300), work, 8, 8));
+        Assert.False(WindowPlacementRestoration.IsSystemMaximizedBounds(new(-1928, -8, 1936, 1048), work, 8, 8));
+        Assert.False(WindowPlacementRestoration.IsSystemMaximizedBounds(new(-100, -100, 2120, 1232), work, 8, 8));
+    }
+
+    [Fact]
     public void Normal_and_snap_windows_require_the_original_screen_bounds()
     {
         var snapshot = Snapshot(new Rectangle(0, 0, 960, 1040), showCommand: 1);

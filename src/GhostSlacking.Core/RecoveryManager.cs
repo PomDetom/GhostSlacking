@@ -46,6 +46,38 @@ public sealed class RecoveryManager
         }
     }
 
+    public OperationResult<GhostWindowProfile> UpdateGeometry(nint hwnd, WindowEnvironment environment)
+    {
+        if (!_profiles.TryGetValue(hwnd, out var profile))
+            return OperationResult<GhostWindowProfile>.Failed("No recovery profile registered.");
+        var observation = _windows.Observe(hwnd);
+        if (observation is null || !_windows.IsSameIdentity(profile.Original, observation) ||
+            observation.ScreenBounds != environment.Bounds || environment.Bounds.Width <= 0 || environment.Bounds.Height <= 0 ||
+            environment.Placement.NormalPosition.Width <= 0 || environment.Placement.NormalPosition.Height <= 0 ||
+            observation.IsMinimized != profile.Original.Placement.IsMinimized ||
+            observation.IsMaximized != profile.Original.Placement.IsMaximized)
+            return OperationResult<GhostWindowProfile>.Failed("Target identity, state or geometry changed before registration.");
+
+        var original = profile.Original;
+        var updated = profile with
+        {
+            Original = original with
+            {
+                ScreenBounds = environment.Bounds,
+                Placement = original.Placement with
+                {
+                    NormalPosition = environment.Placement.NormalPosition,
+                    MinPosition = environment.Placement.MinPosition,
+                    MaxPosition = environment.Placement.MaxPosition,
+                    DevicePosition = environment.Placement.DevicePosition
+                }
+            }
+        };
+        _profiles[hwnd] = updated;
+        ProfilesChanged?.Invoke(this, EventArgs.Empty);
+        return OperationResult<GhostWindowProfile>.Ok(updated);
+    }
+
     public RestoreItemResult RestoreWindow(nint hwnd, string reason, bool forgetOnSuccess = true)
     {
         if (!_profiles.TryGetValue(hwnd, out var profile))
@@ -73,12 +105,25 @@ public sealed class RecoveryManager
         var result = _visibility.Restore(hwnd, profile.Original);
         if (result.Success)
         {
+            if (profile.Original.Placement.IsMaximized && _windows is IWindowEnvironmentApi environmentApi)
+            {
+                var read = environmentApi.ReadEnvironment(profile.Original);
+                if (!read.Success || read.Value is null)
+                    return new RestoreItemResult(hwnd, false, false, read.Error ?? "Could not verify the restored display geometry.");
+                if (read.Value.Bounds != profile.Original.ScreenBounds && read.Value.IsSystemMaximized)
+                {
+                    var updated = UpdateGeometry(hwnd, read.Value);
+                    if (!updated.Success)
+                        return new RestoreItemResult(hwnd, false, false, updated.Error ?? "Could not register the restored geometry.");
+                    _logger.Log(LogLevel.Info, $"RestoreGeometryUpdated hwnd={hwnd} previous={profile.Original.ScreenBounds} current={read.Value.Bounds} display={read.Value.Display}");
+                }
+            }
             if (forgetOnSuccess)
             {
                 _profiles.Remove(hwnd);
                 ProfilesChanged?.Invoke(this, EventArgs.Empty);
             }
-            _logger.Log(LogLevel.Info, $"RestoreCompleted hwnd={hwnd}");
+            _logger.Log(LogLevel.Info, $"RestoreApplied hwnd={hwnd}");
             return new RestoreItemResult(hwnd, true, false, "Restored.");
         }
 
@@ -91,4 +136,6 @@ public sealed class RecoveryManager
         var items = _profiles.Keys.ToArray().Select(hwnd => RestoreWindow(hwnd, reason)).ToArray();
         return new RestoreReport(items);
     }
+
+    public GhostWindowProfile? Find(nint hwnd) => _profiles.GetValueOrDefault(hwnd);
 }
