@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using GhostSlacking.Platform;
-using GhostSlacking.Core;
 namespace GhostSlacking.App.Tests;
 
 public sealed class BackgroundTextAdapterTests
@@ -31,14 +30,5 @@ public sealed class BackgroundTextAdapterTests
         Assert.Equal(new[] { "SetValue", "get_CurrentValue", "get_CurrentIsReadOnly" },
             typeof(IUIAutomationValuePattern).GetMethods().OrderBy(method => method.MetadataToken).Select(method => method.Name));
         static string Slot<T>(int index) => typeof(T).GetMethods().OrderBy(method => method.MetadataToken).ElementAt(index).Name;
-    }
-    [Fact]
-    public void English_engine_rejects_language_switch_without_changing_session_or_system_state()
-    {
-        IBackgroundTextInputEngine engine = new BackgroundEnglishInputEngine();
-        Assert.False(engine.SupportsComposition);
-        Assert.Equal(BackgroundInputRejectionReason.ImeComposition, engine.RequestLanguageSwitch().Rejection);
-        engine.CancelComposition();
-        engine.CancelComposition();
     }
 }

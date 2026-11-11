@@ -1,739 +1,133 @@
-﻿# GhostSlacking 技术架构
+# GhostSlacking 技术架构
 
-> 文档范围：当前实现的运行结构与安全边界；V0.1 目标和未验收场景分别见 [实施计划](IMPLEMENTATION_PLAN.md) 与 [实施状态](IMPLEMENTATION_STATUS.md)。
-> 平台：Windows 10/11  x64  
-> 技术路线：C# + .NET + Avalonia/FluentAvalonia UI + Win32 P/Invoke
-> 渲染路线：`SetWindowRgn` 内容裁剪 + 非抓屏 Windows Composition 外扩羽化
+本文只记录当前实现、模块边界和恢复约束。完成度及已知问题见[实施状态](IMPLEMENTATION_STATUS.md)，验收步骤见[实施计划](IMPLEMENTATION_PLAN.md)，分支与打包规则见[开发流程](DEVELOPMENT_WORKFLOW.md)。
 
-## 1. 文档目的
+## 1. 运行结构与职责
 
-本文记录 GhostSlacking 已实现的技术边界和运行模型，重点回答：
-
-- 怎样选择并识别目标窗口；
-- 怎样让窗口进入 Ghost 状态并在 Peek 时只显示光标附近区域；
-- 怎样保证移动、缩放、最小化、关闭和异常退出时可恢复；
-- 怎样处理 Win32 坐标、DPI、多显示器和权限差异；
-- 哪些行为已由代码实现，哪些兼容性仍需验收。
-
-本文不是对所有 Windows 窗口类型的兼容性承诺。当前实现以普通顶层桌面窗口为目标，自动化测试已覆盖核心领域逻辑，但真实窗口、DPI、权限和图形设备兼容性仍需按手工矩阵验收。
-
-## 2. 目标与非目标
-
-### 2.1 目标
-
-当前代码提供以下单窗口闭环；不同目标窗口上的实际兼容性仍需按手工矩阵验收：
-
-1. 托盘程序启动，不显示常驻主窗口；
-2. 用户通过快捷键进入 Window Picker，点击一个普通顶层窗口；
-3. 保存必要的原始窗口状态后，目标窗口进入 Ghost 状态；
-4. 按配置的 Peek 模式（默认按下切换，也支持按住显示），且光标位于目标窗口原始屏幕区域内时，显示随光标移动的 Reveal 区域；
-5. Reveal 区域尽量保留目标窗口的正常鼠标点击和滚动行为；
-6. 按住显示模式在松开 Peek Key 后回到 Ghost；按下切换模式在再次按下时关闭 Peek；
-7. 用户可以通过 Restore 快捷键或托盘菜单恢复原窗口；
-8. 目标窗口关闭、可控退出或操作失败时尝试安全恢复；主进程异常终止时由 Watchdog 按最后的有效清单尝试恢复，失败情况须可诊断。
-
-### 2.2 非目标
-
-V0.1 不包含：
-
-- 多窗口同时 Ghost；
-- 云同步、账户、插件和复杂规则系统；
-- OCR、内容识别、截图录制或远程控制；
-- 抓屏、窗口内容复制、定制 GPU Shader、实时克隆和复杂动画；
-- 对 DirectX 独占窗口、受保护内容或所有管理员窗口的兼容承诺；
-- “防录屏”“防监控”或安全级别的隐私保证；
-- 通过注入、Hook 目标进程或修改目标应用业务逻辑来实现功能。
-
-## 3. 设计原则
-
-### 3.1 单一修改入口
-
-主程序由 `GhostCoordinator` 发起状态转换，经 Core 的 `VisibilityEngine` 调用 Platform 的 `Win32VisibilityBackend` 修改目标窗口的 region、style、DWM 属性和 visibility。Watchdog 在确认 HWND、PID 和进程启动身份后，通过 `Win32WatchdogRecoveryTarget` 使用同一 Platform 恢复适配器。App UI 和其他 Core 模块不直接调用这些 Win32 修改 API。
-
-### 3.2 先保存、后修改
-
-任何第一次修改目标窗口前，`RecoveryManager` 必须完成原始状态快照。快照失败时不进入 Ghost 状态。
-
-### 3.3 可恢复优先于功能完整
-
-可控退出和失败路径应尽量执行安全恢复；正常退出是否恢复由 `RestoreOnExit` 设置决定。主程序异常终止时由独立 Watchdog 尝试恢复。恢复操作应幂等：重复调用不会把窗口置于更坏状态。
-
-### 3.4 V0.1 保持简单
-
-主业务在一个 Avalonia UI/消息线程上运行，使用 Input 优先级定时器更新光标和窗口几何。非 Reveal 状态保持约 16.7ms（60 Hz）；Reveal 根据鼠标所在显示器的当前刷新率和用户上限动态调整，最高 120 Hz。Picker 的低级键盘/鼠标 Hook 位于 UI 线程；实验性后台交互另用独立 Hook 消息线程、MTA 可访问性线程及应用线程投递队列；Composition overlay 仅用于可选视觉层。两者都不注入目标进程，也不改变恢复契约。
-
-## 4. 系统上下文
+GhostSlacking 面向 Windows 10/11 x64，使用 .NET 8、Avalonia/FluentAvalonia 和 Win32。当前只管理一个活动目标窗口；不提供多窗口规则系统、窗口截图、录制或目标进程注入。通用后台交互是后续研究目标，当前实现不代表所有程序均兼容。
 
 ```text
-用户输入/托盘 → GhostSlacking.App.exe (Avalonia) → Core 状态协调
-                                                  → Platform/Win32 → 目标窗口
-App.exe ↔ Watchdog.exe（当前用户命名管道、心跳和恢复清单）
-Watchdog.exe → Platform/Win32 身份校验与安全恢复 → 目标窗口
+托盘 / 快捷键 / 设置 → App → Core 协调器 → Platform → 目标窗口
+                       ↕ 当前用户命名管道
+                    Watchdog → 身份校验 → Platform 恢复
 
-GhostSlacking.App.exe → GitHub Releases（可选检查与下载）
-GhostSlacking.App.exe → GhostSlacking.Updater.exe → NSIS EXE → 原生安装辅助程序（签名校验、安全关闭、事务替换）
+App → GitHub Releases → Updater → 签名 NSIS EXE → 原生安装辅助程序
 ```
 
-外部依赖限于 Windows 原生窗口系统、用户输入、本地文件系统，以及用于可选更新检查和下载的 GitHub 公共 Releases API；不需要数据库、目标应用 SDK 或用户访问令牌。
-
-## 5. 运行时结构
+| 项目 | 当前职责 |
+| --- | --- |
+| Core | 不依赖 Win32/UI 的状态、几何、配置、快照、恢复和后台输入归属规则 |
+| Platform | 窗口拾取/观察、P/Invoke、region、样式、Hook、热键、显示模式、管道及后台输入适配 |
+| App | Avalonia 生命周期、托盘、设置、Reveal 视觉宿主、通知及更新编排 |
+| Watchdog | 独立进程保存内存恢复清单，主进程异常退出后验证身份并尽力恢复 |
+| Updater | 独立验证升级包，等待安全退出，安装、重启并确认实际版本 |
 
-当前解决方案包含三个分层项目、两个独立进程项目和两个测试项目：
+App 引用 Core/Platform，Watchdog 和 Updater 同样引用 Core/Platform。App 构建携带 Watchdog，发布输出另带独立 Updater 子目录。两个测试项目分别验证 Core 与 App/Platform/Updater；独立研究工具不属于生产解决方案。
 
-```text
-src/
-  GhostSlacking.App/          Avalonia 托盘、生命周期、设置和提示 UI
-  GhostSlacking.Core/         状态机、领域模型、服务接口
-  GhostSlacking.Platform/     Win32 P/Invoke 和 Windows 适配器
-  GhostSlacking.Watchdog/     独立异常恢复进程
-  GhostSlacking.Updater/      独立签名 EXE 升级交接进程
-tests/
-  GhostSlacking.Core.Tests/
-  GhostSlacking.App.Tests/
-```
-
-`GhostSlacking.Watchdog` 引用 Core/Platform 的恢复协议和 Win32 适配；`GhostSlacking.Updater` 引用 Core/Platform。App 的构建/发布目标携带 Watchdog，发布目标将 Updater 放入独立子目录。当前没有独立的 `Platform.Tests` 或 `ManualTests` 项目，真实窗口验收以[实施计划的测试矩阵](IMPLEMENTATION_PLAN.md#9-测试矩阵)执行。
-
-### 5.1 依赖方向
-
-```text
-App ───────────────► Core ─────────────► 抽象接口
- │                    ▲
- └──────────────► Platform ─────────────┘
+## 2. 状态与窗口恢复
 
-Watchdog ───────────► Platform ─────────► Core 恢复协议
-Updater ────────────────────────────────► Core / Platform
-```
+### 2.1 修改入口与快照
 
-`Core` 不引用 UI 框架或 Win32；`Platform` 实现 `Core` 定义的接口并承载无界面的 Win32 HWND；`App` 负责组合依赖、Avalonia 托盘菜单、消息循环和用户反馈。Updater 在主进程安全退出后执行签名 EXE 的安装与启动确认交接，不参与目标窗口状态协调。
+`GhostCoordinator` 经 `VisibilityEngine` 和 `Win32VisibilityBackend` 控制 region、位置、样式与可见性；`RecoveryManager` 持有恢复资料。后台交互的临时非激活样式由独立会话经 Platform 操作，同样以已登记快照及身份检查为前提。UI 不直接修改目标窗口。
 
-## 6. 核心领域模型
+第一次修改前必须完整捕获并登记 `WindowSnapshot`：HWND、PID、进程启动身份、屏幕矩形、完整 `WINDOWPLACEMENT`、显示/最小化状态、原始 region 数据、style/ex-style 以及可读取的 DWM 属性。必需身份或 placement 捕获失败时，目标保持原状。快照 schema 为 2，region 复制为托管数据，不把临时 GDI 句柄当恢复资料。
 
-```csharp
-GhostWindowProfile
-{
-    nint Hwnd;
-    uint ProcessId;
-    string? ProcessName;
-    WindowSnapshot Original;
-    RevealSettings Reveal;
-}
+主进程和 Watchdog 恢复前均核对 HWND、PID 与进程启动身份。窗口标题不用于身份判断；目标关闭或句柄被复用后不得向新窗口重放恢复。恢复资料不包含窗口内容，Watchdog 清单只存内存，不持久化旧 HWND。
 
-WindowSnapshot
-{
-    Rectangle ScreenBounds;
-    bool WasVisible;
-    bool WasMinimized;
-    byte[]? OriginalRegionData;
-    WindowStyleSnapshot Styles;
-    WindowPlacementSnapshot Placement;
-    string ProcessStartIdentity;
-    int? OriginalSystemBackdropType;
-}
+### 2.2 状态转换
 
-RevealSettings
-{
-    int DiameterPx;       // 默认 144，以物理屏幕像素表达
-    int SoftEdgeWidthPx;  // 默认 16
-    RevealBlurLevel Blur; // 默认 Low
-    RevealShape Shape;    // Circle / Rectangle / RoundedRectangle
-    PeekTrigger Trigger;  // Hold 或 Toggle
-}
-```
+状态定义以 [Domain.cs](../src/GhostSlacking.Core/Domain.cs) 和 [GhostCoordinator.cs](../src/GhostSlacking.Core/GhostCoordinator.cs) 为准：
 
-实际实现不应长期持有来自 Win32 的裸资源句柄。region 数据应尽早复制为托管数据或序列化快照；原生 `HRGN` 的生命周期必须由 `SafeHandle` 或明确的 `try/finally` 管理。
+| 状态 | 行为和退出条件 |
+| --- | --- |
+| Idle | 无活动目标，等待选择 |
+| Picking | 拦截选择点击和 Esc；取消恢复进入拾取前的 Ghost/Reveal/Visible 状态 |
+| Preparing | 捕获登记快照后才应用 Ghost；切换目标须先恢复旧目标 |
+| Ghost | 隐藏目标，保留恢复资料，等待 Peek/显隐/恢复 |
+| Reveal | 只显示鼠标附近区域；关闭 Peek 或移出目标回到 Ghost |
+| Visible | 临时完整显示，保留资料以便再次隐藏；区别于最终 Restore |
+| Restoring | 恢复并校验稳定性；完成后进入 Idle 或临时 Visible |
+| RecoveryError | 恢复失败，保留可用资料并向用户提供错误反馈 |
 
-## 7. 核心模块
+主程序每 tick 观察目标身份和位置；失效后清理活动状态。当前位置保持逻辑将观测矩形与原快照比较，漂移时纠正。它与运行中 DPI 变化的关系尚未解决，已知闪烁见状态文档，不能据此宣称动态缩放可靠。
 
-### 7.1 `WindowPicker`
+Restore 恢复 region、style/ex-style、DWM 属性、TopMost、placement 和原始可见性。异步恢复要求连续三次观测匹配，最多纠正十次以容纳浏览器延迟漂移；失败保留恢复资料。同步 Restore All 逐项返回成功、失败或跳过结果。
 
-职责：把用户在屏幕上点击的位置解析为可操作的顶层目标窗口。
+## 3. 拾取、几何与 Reveal
 
-主要流程：
+- Picker 使用 `WindowFromPoint`/`GetAncestor` 选择顶层窗口，过滤桌面、任务栏、自身及不支持目标；Esc 按下、重复及抬起均拦截且只取消一次。
+- 领域几何统一使用物理屏幕像素，进程使用 Per Monitor V2 DPI manifest；UI 的 DIP 只在显示层转换。普通窗口、最大化和最小化按完整 placement 区分。
+- Ghost 使用 `SW_HIDE`，临时控制工具窗口、置顶和 DWM 装饰；保留标题栏与缩放边框样式，避免浏览器因非客户区变化重排。Restore 还原原值。
+- Reveal 支持圆形、矩形、圆角矩形。首次显示在隐藏时先应用 region，显示后再应用/校验；连续移动使用增量更新。光标与几何不变时跳过重复 native 更新。
+- `SetWindowRgn` 成功后由系统拥有 HRGN；失败时由调用方删除。曲线 region 的右/下开区间须补偿，原始 region 恢复失败须明确返回错误。
+- 为兼容重绘竞态，单次 region 更新最多重施/校验三次；该轮仍失败先安全隐藏，下个 tick 重试，连续三轮失败才通知。这不证明所有自绘窗口均兼容。
 
-1. 开始拾取，显示轻量提示或高亮边框；
-2. 根据光标位置调用 `WindowFromPoint`；
-3. 沿父子关系使用 `GetAncestor(hwnd, GA_ROOT)` 获取顶层窗口；
-4. 过滤自身窗口、桌面窗口、任务栏、不可见窗口和不适合作为目标的系统窗口；
-5. 使用 `GetWindowRect`、`GetWindowThreadProcessId` 获取基础信息；
-6. 在用户点击时输出 `TargetWindow`，失败则取消而不修改窗口。
+### Composition 与调度
 
-Picker 不应默认选择当前前台窗口，因为产品交互是“指向并点击目标”。应明确处理目标窗口在拾取期间销毁的竞态。
+`IRevealVisualHost` 隔离可选 `RevealEdgeOverlay`；`IVisibilityBackend` 保留可独立运行的硬边路径。默认 Reveal 为 144px 圆角矩形、16px 羽化、轻度模糊。Composition/Win2D 不抓屏：清晰核心保留，目标内容 region 外扩至羽化宽度的 70%，单一 backdrop 模糊配合渐变遮罩绘制外环。
 
-### 7.2 `WindowTracker`
+Overlay 非激活、鼠标穿透、无任务栏项，并由当前目标拥有，防止点击目标后被其遮挡。宿主覆盖目标 bounds，目标切换/销毁后重建；遮罩按视觉参数缓存，与光标位置无关。移动只更新 visual offset 和外环 region，核心点击/滚轮仍到目标。设备、初始化或渲染失败时隐藏 overlay，将内容缩回硬边 region，不依赖视觉层执行恢复。
 
-职责：维护目标 HWND 的生存性和几何信息。
+非 Reveal 轮询约 60 Hz，Reveal 按鼠标所在显示器当前模式及 Auto/60/90/120 上限调度，最高 120 Hz。显示查询按显示器缓存两秒，`WM_DISPLAYCHANGE` 使缓存失效，失败回退 60 Hz。Debug 每 120 个有效移动帧汇总有效 FPS、平均/P95/最大 tick 耗时和超预算帧数，不逐帧写成功日志。
 
-当前使用轻量定时检查，不使用全局窗口事件 Hook。Idle、Ghost 和恢复路径保持约 60 Hz（16.7ms）；Reveal 通过 `MonitorFromPoint`、`GetMonitorInfo` 和 `EnumDisplaySettingsEx` 跟随光标显示器刷新率，并受 Auto/60/90/120 FPS 上限约束。Picker 的鼠标/键盘低级 Hook 是独立的输入拦截路径。每次检查：
+## 4. 实验性后台输入
 
-- `IsWindow(hwnd)` 是否仍有效；
-- `GetWindowRect` 是否变化；
-- 是否最小化、隐藏或进入其他显示状态；
-- 进程 ID 是否仍与快照一致；
-- 光标是否位于目标窗口的最新屏幕区域。
+当前实现是默认关闭的兼容性原型，使用方法见[实验说明](EXPERIMENTAL_BACKGROUND_INTERACTION.md)。能力和实际验收必须分开：接口调用成功不证明目标完成操作，更不证明前台网页全程未失焦。
 
-窗口失效时发布 `TargetClosed` 或 `TargetInvalid`，由协调器进入恢复/清理路径。窗口移动或尺寸改变时通知 `VisibilityEngine` 重新计算区域。
+### 会话与输入归属
 
-### 7.3 `TriggerEngine`
+`BackgroundInteractionSession` 负责身份、受保护前台和输入归属；Platform 使用独立 Hook 消息线程、代次输入队列及 MTA UIA 工作线程。主业务仍在 Avalonia UI 线程；不注入目标进程，不使用 `AttachThreadInput` 借用前台输入上下文。
 
-职责：接收快捷键、Peek Key 和光标状态，输出无副作用的意图事件。
+仅为已登记目标临时设置 `WS_EX_NOACTIVATE`，结束时恢复快照中该位的原值，保留其他位。持续模式只允许 Toggle Peek：先等待有效独立前台和已按输入释放，再准备 Hook/目标，最后显示 Reveal。准备期间的新输入消费但不排队重放，准备前属于 A 的按键抬起仍交给 A。
 
-当前事件意图包括：
+正常移出/返回可结束/重建持续会话；真实失焦、投递失败、目标失效或未管理弹窗清除显示意图，须重新手动 Peek。设置、选窗、恢复和退出取消等待/准备/交互，恢复开始后不再追加隐藏。
 
-```text
-PickRequested
-GhostToggleRequested
-PeekPressed
-PeekReleased
-RestoreRequested
-EmergencyRestoreRequested
-CursorChanged
-SettingsRequested / ExitRequested
-RevealDiameterIncreaseRequested / RevealDiameterDecreaseRequested
-```
+只为实际投递的原生按下发送抬起；字符和编辑命令不伪造抬起。硬件归属与投递账本独立，释放尾部最多两秒，不因后续输入无限延长。停止清除接收者、修饰键、选区上下文及旧代次回执；未支持操作与真实失败分别处理，结果不确定时不重放。
 
-切换快捷键使用 `RegisterHotKey`/`WM_HOTKEY`。Peek 按键状态由定时器通过键状态轮询交给 `PeekStateTracker`，它处理按住/切换模式的按下沿与重复事件。输入层不直接调用 `SetWindowRgn`。
+### 当前能力路径
 
-鼠标位置和 Peek 按键状态使用 `GetCursorPos`/键状态的定时轮询；Picker 的 `WH_MOUSE_LL` 和 `WH_KEYBOARD_LL` 用于选择点击和 Esc 取消拦截。实验性后台交互另外拥有独立 Hook，只在显式会话及其未释放输入尾部存活。
+| 路径 | 当前实现及边界 |
+| --- | --- |
+| 英文键盘 | 已加载 US 布局只读翻译，缺少时固定映射；不加载/切换布局。普通字符只发 `WM_CHAR`，按翻译实际长度读取。Shift 单击、Ctrl/Win+Space 和 IME 组合请求直接返回 `ImeComposition`，不借用 A 的文本上下文。 |
+| Scintilla | 定位、单/双击、Shift/跨行拖选及编辑快捷键走控件标量命令；剪贴板由目标按用户快捷键处理。编辑区外、右键和未适配组合明确拒绝。 |
+| Edit/RichEdit | Edit 使用原生定位/选区/复制粘贴，RichEdit 按当前 UIA/原生命令能力处理；不由根窗口消息推断所有编辑器可用。 |
+| UIA | 每次按坐标命中并验证 B 祖先关系；正文选区和编辑框分离。Invoke/Toggle/ExpandCollapse/SelectionItem 仅在未拖动的完整单击抬起时调用一次；合并移动保留最大偏移。 |
+| 空白框粘贴 | 显式 Ctrl+V 才读 Unicode 纯文本，剪贴板分配块上限 1 MiB；要求当前 Edit、可写 ValuePattern、值精确为空且无未确认富内容/子项。读后复查身份和空白，SetValue 后核对；已有草稿、空格、换行或旧接收者拒绝。不是光标插入，不改剪贴板，不写内容日志。 |
 
-实验性后台交互的输入账本与守卫位于 Core 的 `BackgroundInteractionSession`，Win32 样式、投递、键盘翻译和 Hook 位于 Platform。App 仅为当前已登记快照的目标开启会话：手动模式从 Reveal 开始，持续模式从隐藏的 Ghost 开始准备；进入恢复状态时先停止会话再执行恢复。开始时只修改 `WS_EX_NOACTIVATE`，停止时只还原原始该位，保留其他 Ghost 样式；完整恢复/Watchdog 仍使用捕获前的完整扩展样式。每次输入与清理重新核对目标身份，前台事件按事件 HWND 判断而非只看结束时采样，失败不调用前台激活作为补救。中文输入法等限制和未验证兼容性见[原型报告](EXPERIMENTAL_BACKGROUND_INTERACTION.md)。
+已知 Chromium/Electron 语义窗口不回退根窗口按钮；其他通用消息接收者仍可能主动激活，发生时收起。UIA 只读发现含排队预算 1.5 秒，修改后 500ms 结果不确定即停止。逻辑超时不能取消已发 COM 调用，不能证明操作未发生，也不能据此换路线重试。
 
-鼠标按钮与滚轮由 Hook 消费，再向注册目标的子窗口投递客户端消息，避免触发原生物理点击的激活路径；子窗口解析不依赖上一帧 region，拖动和抬起固定到原接收者。物理指针移动保留，拖动移动消息显式投递。真实失焦、目标失效、投递失败或主动结束时立即隐藏目标并锁住自动重开路径，App 重置 Peek 锁存；仅新的手动 Peek 按下可解除。持续模式中自然关闭/移出静默结束，移出后保留切换显示意图，返回可重新准备。已经进入 Restore 的目标不再额外隐藏，避免覆盖恢复结果。应用自行激活或弹出菜单仍可导致失败，失败后的收起不等同于网页未失焦。
+原生 Edit/MSAA/隔离 CDP 探测与中文 TSF/独立小词表工具均独立运行，不自动接入真实目标。其构建、边界和命令由各工具 README 维护；历史证据与研究待办集中在状态文档。
 
-第五轮将启动前置结果区分为 `AwaitingForeground / AwaitingRelease / Preparing / Rejected`，实际输入阶段沿用 `Preparing / Ready / Active / Draining`。持续模式首次 Peek 时，若前台为空或属于 B，保留 Peek 意图并提示“先点前台”，此时 B 隐藏且不安装输入 Hook，用户可正常点击 A。有效独立前台和光标回到 B 范围同时满足后才继续准备；再次 Peek、设置、选窗、恢复、退出和目标失效取消等待。不会主动激活 A。一旦记录受保护前台，后续真实变化仍失败收起且不重试。
+## 5. 恢复进程、退出与安装更新
 
-持续模式在 Ghost 安装输入 Hook、记录受保护前台并校验身份，所有初始按下释放后建立临时样式租约；就绪后才由 App 显示 Reveal 并交付输入。准备期间新输入被消费且不重放，初始已按住输入的抬起继续交给前台，退出后的拦截只保护已有按下及必要组合尾部，最长两秒，不因新按键延长。会话代次防止旧异步通知覆盖新状态。准备超时按失败收起处理。Peek 在会话 Hook 内也能结束当前显示，避免依赖已消费按键的普通轮询。
+### Watchdog 与退出
 
-Reveal 直径的增大和缩小快捷键保留当前 Peek 意图及后台交互会话，保存成功后在下一次更新应用尺寸。后台 Hook 消费快捷键主键及其释放事件，修饰键按原有输入所有权处理；其他全局快捷键仍按原有规则停止会话。
+Watchdog 使用仅限当前用户的命名管道和逐行 JSON 协议。每次启动随机 session ID；握手校验协议、主 PID/启动身份，之后发送版本化恢复清单和心跳，正常恢复完成后发送 `ShutdownCompleted`。清单含 manifest ID、schema 2 快照及全部恢复字段；缺少 placement 的旧项拒绝。
 
-`ContinuousBackgroundInteraction` 在配置 schema 10 中默认关闭，只在后台交互总开关开启时有效。持续模式仅支持 Toggle；保存与运行时都有守卫，不回退普通 Reveal。关闭总开关保留持续选项。设置、选窗、恢复、退出取消准备与显示意图；完整快照与 Watchdog 协议未修改。
+主程序在恢复资料注册/移除/恢复成功时刷新清单。Watchdog 心跳超时取出最后有效清单，逐项校验身份后恢复并记录结果；取出、正常关闭后清空旧清单，同一会话清单只处理一次。版本/会话不匹配、握手前消息和关闭后追加消息拒绝。
 
-第二轮在 Platform 增加 `IBackgroundControlAdapter`，按控件类选择 Scintilla 的标量命令适配，替代其会主动调用 `SetFocus` 的鼠标按下路径。Scintilla 标量查询/命令通过有超时且重复身份/前台检查的访问器发送，不跨进程传递裸指针或读取文档内容。基本英文优先使用已加载的标准 US 布局只读翻译，没有时使用固定映射表，不加载或激活系统布局；字符仅发送 `WM_CHAR`，Scintilla 导航及常用快捷键使用控件命令。
+可控退出取消更新/Picker/交互，按 `RestoreOnExit` 或强制恢复标志执行 Restore All，再释放 Hook、热键、视觉层和 UI。安装关闭请求强制恢复；成功后才通知 Watchdog 正常关闭，否则保留清单供其超时处理。UI 线程异常记录并提示，`AppDomain.UnhandledException` 只保留诊断，不保证异常中执行恢复。注销/关机消息提前恢复尚未实现；异常恢复依赖独立 Watchdog。
 
-Core 使用 `BackgroundInputDispatchResult` 区分字符、编辑命令、原生键及输入拒绝，并记录原生按下是否实际投递。仅真实按下需要恢复抬起；物理输入尾部仍由独立账本消费。明确拒绝且未投递的操作保留会话，通过 `InputRejected`/`InputResumed` 事件更新 HUD；身份、前台、超时和部分投递失败保持收起路径。配置与恢复协议不变。
+### 签名更新与原生安装器
 
-第四轮将硬件归属账本 `BackgroundInputOwnership` 与目标投递账本分开。Hook 在独立消息线程安装、分流及卸载，输入工作入有界代次队列，由应用线程执行；相邻移动可以合并，按钮/滚轮边界保持顺序。停止立即切断新投递，前台所属抬起透传，目标仅释放实际按下。释放尾部使用独立线程的单调时钟和两秒绝对截止，超时后透传、记录及撤销 Hook；不合成前台补偿输入。卸载失败会继续尝试，回调保持透传。恢复开始后仍不追加隐藏。
+- App 默认检查 Stable，主动开启 Test 后才纳入 beta/RC；完整 SemVer 排序。跳过版本只抑制该版本启动通知/托盘入口，“关于”仍允许安装。检查时间与跳过版本写入 `update-state.json`。
+- 旧 MSI-only Release 与无效签名包、网络错误分开处理。标签、清单、EXE 名称/大小、SHA256 相互核对；下载先写 `.partial`。固定公钥 ECDSA P-256/SHA256 验证格式 2 清单；发布签名不同于尚未实现的 Windows Authenticode。
+- 仅 HKCU 注册路径匹配、NSIS 协议 2 且未提权的安装副本提供自动安装；其他副本打开 Releases。Updater 再验清单与包体，并在安装期间保持禁止写入/删除的包体锁。
+- Ready/Go 两阶段交接授权后才关闭 App。原生安装辅助程序验证管道服务端可执行路径、PID/启动时间，等待 App 恢复目标及 Watchdog 退出后收到 SAFE；身份不符、恢复失败、残留进程或 30 秒超时均停止，不强杀 App/Watchdog。
+- Updater 等待安全退出，显示 NSIS 被动进度，安装后重启；失败/取消尝试重启旧应用。成功安装须在 15 秒内经当前用户管道确认新 PID、会话和实际版本，保存一次性结果并回执后才消费结果/清理备份。
+- 原生辅助程序独立于 .NET，负责 x64 .NET 8 检测、旧 MSI UpgradeCode 检测、目录互斥、暂存解包、事务回退及中断恢复。安装目录归属通过 `installation.ini` 确认；拒绝不安全目录、降级及自动 MSI 迁移。新版本确认前保留备份，替换阶段禁止取消。
+- 安装为当前用户 NSIS EXE；用户数据独立于程序目录。卸载器也携带原生辅助程序，卸载不依赖 .NET，保留设置与日志。构建、密钥和版本规则只维护在开发流程中。
 
-`IBackgroundControlAdapter` 增加定位、拖选、复制、粘贴和确认文本提交能力。标准 Edit 使用标量坐标/选区及 WM_COPY/WM_PASTE；RichEdit 的指针型坐标消息不跨进程传递，改用 UIA 选区。Chromium/Electron、Firefox、WPF/部分 WinUI 不回退根窗口按钮消息，使用限定 B 根节点的 UIA TextPattern。UIA 客户端在 MTA 线程异步执行，应用线程只提交并接收结果，不阻塞等待统一 200ms。第七轮坐标命中使用 BuildCache 和最多 32 层祖先验证，每次 Down 重新区分编辑框、语义操作控件及正文；不让文档的大边界缓存遮蔽按钮/其他编辑框，也不回退到第一个正文提供者。最近 Edit/动作控件优先于文本祖先，动作控件缺少模式时明确拒绝。接收上下文按会话目标身份、根窗口几何/DPI、控件运行时身份及边界检查。元素失效时只允许一次只读重新发现，不重放结果不确定的修改。
+## 6. 设置、通知与诊断
 
-投递结果携带 pending 操作号，完成回执携带会话代次及操作号，停止后旧回执失效。按下、移动、抬起、复制以及 RichEdit 复制/粘贴在同一 MTA 队列保持顺序，仅相邻未执行移动可合并；拖动锚点固定。RichEdit 有待完成文本操作时普通输入提示准备并消费，不越过选区输入。只读预算 1.5 秒（包含排队、命中及获取范围），发出选区/复制修改后的预算为 500ms，由独立计时器执行。修改前超时提示“正文受限”且保留会话，修改后超时按结果不确定停止并收起。COM 调用不能强制撤销；超时/停止后的迟到结果丢弃，不代表已发出的原生修改被撤销。队列及请求分阶段记录耗时和 HRESULT，不记录内容。
+配置位于 `%LOCALAPPDATA%\GhostSlacking`，`AppSettings` schema 为 10。保存前归一化；损坏配置回退。旧通知样式和三个位置字段继续兼容读写但不参与显示，不因 UI 入口消失删除。后台总开关及持续选项默认关闭；关闭总开关保留持续偏好但不生效。
 
-选区从客户坐标还原到物理屏幕坐标，不调用 SetFocus。UIA 选区复制是显式读取选区的例外，只在 Ctrl+C 时使用并写 Unicode 纯文本；不读取整篇文档或记录/持久化内容。第七轮增加独立的空白编辑框 SetValue 试验，显式 Ctrl+V 才读取纯文本剪贴板并检查编辑框空值；已有草稿、空白字符及富内容不整字段重写，缺少已验证插入能力时明确拒绝并保持会话。
+设置使用草稿，支持中英文、跟随系统/浅/深主题、实时预览、单项默认值及全局热键捕获。浮动保存条只在修改/反馈时显示；取消还原最近保存值并保持窗口打开，保存失败保留草稿，成功反馈后收起。单实例互斥避免多个主进程控制窗口；开机启动使用 HKCU。
 
-Core 增加 `IBackgroundTextInputEngine`，正式引擎仍为固定英文。语言切换请求不进入 A；未就绪的组合输入会提示受限，结束后恢复系统正常处理。独立中文原型、原生 TSF 的未验证结论和应用矩阵见[第四轮报告](BACKGROUND_INTERACTION_ROUND4.md)。UIA 提供者仍可能主动激活或超时；超时不代表原生操作被撤销，实际结果需验收。
+HUD 单窗口复用，默认最大宽度 132 DIP、高度 44 DIP、圆角 10 DIP、鼠标屏幕底部居中距工作区 18 DIP。实际宽度随内容收缩，布局/测量缓存由运行时、持续 HUD 和设置预览共享；18 DIP 图标、9 DIP 间距、两侧 10 DIP 留白，13–11 DIP 字体，图文组居中。空间不足只收窄实际渲染尺寸，不改配置。
 
-### 7.4 `VisibilityEngine`
+普通提示 2.5 秒且鼠标穿透；可点击更新提示 4.5 秒、悬停暂停、回调只消费一次。连续消息按优先级替换，可见替换不重启动画；淡入/淡出 150/200ms 和 8 DIP 位移遵循系统动画开关。窗口不激活，原生样式失败则隐藏。新消息选鼠标屏幕，显示配置变化/工作区变化重新定位。
 
-职责：将领域状态转换为对目标窗口的最小、可恢复的 Win32 修改。
+主程序与 Watchdog 共用 `RollingFileLogger`、使用不同文件组：每文件 2 MB，每组最多五文件，清理 30 天前备份；满文件滚动失败丢弃新记录，不影响恢复。主程序等级可配置，Watchdog 固定 Info 及以上。
 
-它是主程序对目标窗口发起可见性变更的 Core 入口；实际 Win32 调用位于 Platform 的 `Win32VisibilityBackend`。Watchdog 的恢复例外使用同一 Platform 适配器。当前主程序的主要路径是：
-
-```text
-Normal  → Ghost       保存快照后使用 SW_HIDE，并应用临时恢复所需的窗口属性
-Ghost   → Reveal      显示目标并应用所选形状的 region；可选显示 Composition 外环
-Reveal  → Ghost       隐藏目标并移除 Reveal visual
-Ghost   → Visible     临时完整显示目标，但保留恢复资料
-Ghost   → Normal      清除 GhostSlacking 修改并恢复快照
-```
-
-核心可见性使用 `SW_HIDE` + `SetWindowRgn`，不使用整窗 alpha。Composition overlay 是 Reveal 外环的独立视觉层，失败时回退到硬边 region。
-
-### 7.5 `RegionEngine`
-
-职责：根据目标窗口最新屏幕矩形、光标屏幕坐标和设置生成窗口本地坐标的圆形、矩形或圆角矩形区域。
-
-```text
-cursorScreen = GetCursorPos()
-windowScreen = GetWindowRect(hwnd)
-centerLocal  = cursorScreen - windowScreen.TopLeft
-radius       = diameter / 2
-region       = RegionEngine.CreateReveal(
-                  centerLocal, diameter, shape, cornerRadius)
-SetWindowRgn(hwnd, region, true)
-```
-
-需要注意：
-
-- 圆形区域应与窗口矩形求交，避免无意义的大区域；
-- 区域坐标必须与 `SetWindowRgn` 所要求的窗口本地坐标一致；
-- 成功传给 `SetWindowRgn` 后，region 句柄的所有权由系统接管；失败时才由调用方释放；
-- 旧 region 的更新频率应与光标变化绑定，光标未变时不重复创建；
-- `SetWindowRgn` 负责可靠的二值裁剪；首次显示保留显示前后两次 region 应用、同步重绘和 placement 校验，连续移动只应用并校验一次增量 region；
-- 启用羽化时，目标内容 region 外扩到设置宽度的 70%，独立的鼠标穿透 Composition overlay 在原始清晰 Reveal 外侧实时模糊并淡出，不改变目标窗口输入。
-
-### 7.6 `RecoveryManager`
-
-职责：保存、校验和恢复 GhostSlacking 修改过的窗口状态。
-
-第一次修改前至少保存：
-
-- HWND 和目标进程 ID；
-- 初始屏幕矩形、可见状态和最小化状态；
-- 原始 window region（无 region 也要记录）；
-- 与本功能有关的 style/ex-style、完整 `WINDOWPLACEMENT`、进程启动身份和相关 DWM 属性；
-- 快照创建时间；Watchdog 清单另带版本号，恢复原因记录在日志中。
-
-恢复路径包括手动 Restore、切换目标、目标失效后的清理、按 `RestoreOnExit` 设置执行的正常退出恢复、强制恢复的关闭/升级交接，以及主程序异常终止后的 Watchdog 恢复。Avalonia UI 线程的未处理异常当前记录错误并提示用户；`AppDomain.UnhandledException` 当前只写入诊断输出，不能当作主程序恢复保证。恢复操作需逐项记录结果，即使其中一项失败也继续尝试其他项。
-
-### 7.7 `TrayHost` 与设置 UI
-
-Avalonia `TrayIcon` 承载常驻入口。托盘菜单至少包含：
-
-```text
-Pick Window
-Toggle Ghost
-Restore Window
-Restore All Windows
-Settings
-Exit
-```
-
-设置窗口使用 Avalonia + FluentAvalonia 控件，暴露 Peek Key、最大 Peek 帧率、Reveal Diameter、直径快捷键与步长、软边宽度、Reveal 形状、Peek 模式、全部全局功能快捷键、开机启动、退出时恢复和日志级别。“关于”页展示版本、上次成功检查时间、项目入口与更新状态。托盘、设置、提示浮层和主业务协调器运行在同一个 Avalonia STA UI 线程；主业务状态不存放在窗口控件中。
-
-设置侧栏收起/展开宽度为 56/184 DIP，图标为 20 DIP，菜单使用“显示 / 快捷键 / 常规 / 实验性功能 / 关于”和“Display / Shortcuts / General / Experimental / About”等简短文案；实验页沿用相同导航样式，使用 `PathIconSource` 绘制简洁瓶口、瓶身与液面，不含气泡；内容区四角统一使用 12 DIP 圆角，右侧和底部外间距约 3.3 DIP。修改后显示底部居中的浮动横条，宽度随单行状态文字与按钮自适应（不超过内容区可用宽度），高度固定 60 DIP，以绿色三角感叹号提示未保存修改，并提供“取消”“保存”。横条只显示简短状态，详细错误信息保留在悬停提示中。“取消”恢复最近一次成功保存的全部设置、语言、主题及通知位置草稿，保持窗口打开；保存失败保留草稿，成功反馈在 2.5 秒后收起。横条以 200ms 位移与透明度过渡显示/隐藏，遵循系统动画设置；显示时增加滚动内容末尾留白，隐藏后释放留白，不占固定底栏。
-
-第七轮实验烧瓶使用完整 20 DIP 画布和约 0.85 DIP 线框；`PathIconSource` 实际生成 FluentAvalonia `FAPathIcon`。为避免来源默认值覆盖导航状态色，对生成控件绑定最近图标 ContentPresenter 的实际 Foreground，不绑定正文画刷、不单独减透明度。实际控件与相邻 SymbolIcon 的状态画刷、大小及浅深主题渲染均检查；删除来源的 Foreground 本身不是正确性的证明。
-
-通知统一使用 `AvaloniaNotificationService` 管理的单个 `NotificationWindow`，采用图标和单行文字；状态仅改变图标颜色和形状，背景、边框和文字复用设置页的 `AppTheme.Palette`。第六轮默认按内容自适应宽度，原 `NotificationHud.Width`（默认 132 DIP，范围 100–300）改作上限，高度默认 44 DIP、圆角默认 10 DIP。自然宽度为默认 13 DIP 文字测量值加边框、水平各 10 DIP 内边距、18 DIP 图标及 9 DIP 间距；最小取 64 DIP 与实际高度较大值，最终受配置上限及屏幕空间约束，短通知可小于 100 DIP。图文组整体居中，达到上限后字号最低缩至 11 DIP，短提示可收紧字距，一般长消息单行省略。
-
-`NotificationWindow.MeasurePreferredWidth` 和 `NotificationLayout.Calculate` 由运行时、持续交互 HUD 及设置预览共用；先更新文字再计算几何及位置。文字、字体、主题、设置或 DPI 变化时重新测量，定时位置检查复用缓存。宽度变化按现有百分比位置重算，居中保持居中、左右端点保持原边距；不新增宽度动画。交互提示统一使用简短中英文，持续 HUD 仅在状态变化时更新，自然移出/关闭不弹结束通知；不展示进程名、窗口标题、版本详情、快捷键说明或详情悬停提示。
-
-常规设置提供圆角、最大宽度、高度、水平位置和垂直位置，使用现有 NumberBox 控件；不再提供样式选择、边距参数或拖动位置入口。预览使用草稿并保持非激活、鼠标穿透，修改实时更新预览，保存或取消后关闭预览；保存失败保留参数草稿。配置 schema 8 新增 `NotificationHud`，第六轮保持当前 schema 10，不增加字段或开关，旧宽度值直接作为上限；旧样式与三个位置字段继续兼容读写但不参与显示。
-
-普通 HUD 保持 2.5 秒，可点击更新提示保持 4.5 秒；悬停暂停可点击提示并保留剩余时间，回调只消费一次，过期回调不执行。连续提示沿用来源优先级并替换当前消息，不堆叠。首次出现／消失采用 150ms／200ms 透明度及 8 DIP 位移过渡，可见期间替换不重启动画，淡出途中可反转；遵循系统动画开关。窗口使用 `ShowActivated=false`、原生 `WS_EX_NOACTIVATE` 与无激活置顶，普通提示还使用鼠标穿透；原生交互样式设置失败则隐藏提示。
-
-每条新消息选择鼠标所在屏幕，停留期间保持该屏幕；屏幕不可用时回退主屏。布局以工作区和该屏幕缩放计算，保留阴影与位移空间，默认可见表面距底部 18 DIP；显示区域不足时只收窄实际渲染尺寸，不改写用户配置。显示配置／系统设置消息触发重新定位，显示期间也定期检查工作区变化。Core 只存放归一化后的五项参数，窗口及 Win32 操作仍分别属于 App 和 Platform。
-
-第七轮 UIA 语义能力按命中控件报告 Locate/Drag/Copy、Invoke/Toggle/ExpandCollapse/SelectItem 和 SetEmptyText。编辑框单击只登记目标，不调用 SetFocus；动作控件只在完整抬起且未拖动时调用一次，移动合并保留最大偏移。显式粘贴仅读取受限大小的 Unicode 文本，不改剪贴板；复查 Edit 身份、可写且精确空值、非富内容树及空正文后 SetValue，写后核对值，修改结果不确定不回退/重放。已有草稿、空格、换行、嵌入内容、过期接收者均拒绝。该路径不是通用光标插入；应用状态和 A 全程焦点仍需实测。研究工具以独立进程试验原生 Edit/MSAA 与隔离 Chromium CDP，不把目标应用开放协议或不会激活当作已知事实。见[第七轮证据和兼容性表](BACKGROUND_INTERACTION_ROUND7.md)。
-
-### 7.8 GitHub Releases 更新
-
-更新管理器在每次启动后异步检查更新，并把上次成功检查时间和跳过版本独立写入 `%LOCALAPPDATA%\GhostSlacking\update-state.json`。默认 Stable 通道只检查稳定版，用户开启 Test 通道后才检查 beta/RC，并按完整 SemVer 选择版本；手动检查仍可随时发起。跳过版本只抑制完全相同版本的启动通知和托盘入口，“关于”页仍显示该版本并允许安装。升级格式切换期间，只有旧 MSI 资产且没有签名 NSIS 包的 Release 会被识别为旧格式并跳过；尚无兼容签名包时显示明确状态，不当作网络错误。下载前要求 Release 的标签、`release.json`、EXE 文件名/大小和 `.sha256` 相互一致；下载使用 `.partial` 临时文件，校验成功后才允许启动 EXE。
-
-应用内更新仅对 HKCU 注册路径与当前程序目录一致、安装类型为 NSIS、协议版本为 2 且未提权的副本生效。安装根目录保存 `uninstall.exe` 与事务日志，`app` 保存程序，`previous` 保存待启动确认的旧程序；用户数据继续位于独立的 `%LOCALAPPDATA%\GhostSlacking`。未注册副本只打开 Releases 页面。
-
-Core 的 `SignedReleaseManifest` 验证格式 2 清单的 ECDSA P-256/SHA256 签名和包体哈希；App 验证后保存原始清单及签名，临时 Updater 再验证并持有禁止写入/删除的文件句柄。交接使用 Ready/Go 两阶段授权，未收到授权的 Updater 不关闭应用。安装结果按完整 SemVer 保存，成功安装后通过当前用户专用管道，在 15 秒内确认新进程 PID、会话和实际版本；Updater 保存结果后回执，新进程收到回执才消费结果及清理备份。启动确认失败使用独立结果状态。
-
-`InstallationControlServer` 提供当前用户专用、按程序目录派生的管道。原生辅助程序核对服务端可执行文件、PID 和进程启动时间，发出关闭请求；App 强制恢复全部受控窗口，等待 Watchdog 成功退出后才返回 SAFE。恢复失败、身份不符、残留进程或 30 秒超时均阻止程序文件修改，不强制终止进程。
-
-`installer/InstallerHelper.cpp` 使用 Win32 实现运行时检测、按 UpgradeCode 识别旧 MSI、目录锁及事务。NSIS 3.11 以普通用户权限运行，先解包 `.staging`，持久化事务后切换目录和卸载器，最后写 HKCU 注册与当前用户快捷方式。提交前失败或中断由下次安装回退；新版本初始化成功后才清理备份。新卸载器携带同一原生辅助程序，因此不依赖系统 .NET 8，且保留用户设置和日志。
-
-首次安装要求可写的空本地目录；`installation.ini` 标记安装根目录归属，避免在用户误选的非空目录清理 `.staging` 或恢复无关事务。用户目录中的日志记录安装阶段耗时及失败原因；替换阶段的取消按钮和中止回调均被禁用。
-
-### 7.9 `Watchdog`
-
-Watchdog 不属于 Phase 0/Phase 1 的核心闭环；当前已作为独立进程实现 Phase 2 的 v1 恢复协议：
-
-```text
-GhostSlacking.App.exe ── heartbeat + recovery manifest ──► GhostSlacking.Watchdog.exe
-       │                                                   │
-       └── 正常退出并清理                                  └── 心跳超时则执行恢复
-```
-
-Watchdog 只能恢复它理解且验证过的状态，不能盲目对所有同名窗口操作。恢复清单必须包含 HWND、进程 ID、进程启动标识、受支持的快照版本、placement、region、style 和 DWM 恢复字段。
-
-## 8. 状态机
-
-### 8.1 应用级状态
-
-```text
-Idle
-  │ PickRequested
-  ▼
-Picking ── Cancel/Error ──► Idle
-  │ WindowSelected
-  ▼
-Preparing ── Snapshot/Apply failure ──► Recovering ──► Idle/Error
-  │ success
-  ▼
-Ghost
-  │ PeekPressed + cursor in target bounds
-  ▼
-Reveal
-  │ CursorChanged
-  ├──────────────► Reveal (更新所选形状的 region)
-  │ PeekReleased / cursor leaves / target invalid
-  ▼
-Ghost
-  │ WindowVisibilityRequested
-  ▼
-Visible ── WindowVisibilityRequested ──► Ghost
-  │ RestoreRequested / Exit / TargetClosed
-  ▼
-Restoring ── success ──► Idle
-       └── partial failure ──► RecoveryError
-```
-
-### 8.2 状态不变量
-
-| 状态          | 目标窗口要求        | 允许的修改                    | 退出条件          |
-| ----------- | ------------- | ------------------------ | ------------- |
-| `Idle`      | 无活动目标或已恢复     | 无                        | Pick          |
-| `Picking`   | 不修改目标         | Picker 高亮层可见             | 选择/取消         |
-| `Preparing` | 快照已开始         | 只允许一次性应用                 | 成功/失败         |
-| `Ghost`     | HWND 有效，默认不可见 | 可更新检测信息                  | Peek/Restore  |
-| `Reveal`    | HWND 有效       | 更新所选形状的 region 和可选视觉层    | Release/离开/失效 |
-| `Visible`   | HWND 有效，完整显示  | 保留恢复资料，不应用 Reveal region | 显隐切换/Restore  |
-| `Restoring` | 允许目标已关闭       | 恢复原始状态                   | 完成/失败         |
-
-禁止并发执行 `ApplyGhost`、`ApplyReveal` 和 `Restore`。所有窗口修改在同一协调上下文串行执行，避免光标更新与恢复交叉覆盖。
-
-## 9. Win32/PInvoke 技术方案
-
-### 9.1 User32 API
-
-当前实现使用：
-
-| API/消息                                      | 用途                                  |
-| ------------------------------------------- | ----------------------------------- |
-| `WindowFromPoint`                           | 根据屏幕点获取窗口                           |
-| `GetAncestor`                               | 获取顶层窗口                              |
-| `GetWindowRect`                             | 获取屏幕坐标矩形                            |
-| `GetClientRect`                             | 辅助检查客户区尺寸                           |
-| `IsWindow` / `IsWindowVisible`              | 生命周期和可见性检查                          |
-| `IsIconic`                                  | 判断最小化                               |
-| `GetWindowThreadProcessId`                  | 绑定进程身份                              |
-| `GetCursorPos`                              | 获取鼠标屏幕坐标                            |
-| `SetWindowRgn`                              | 应用/清除窗口区域                           |
-| `GetWindowRgn`                              | 读取原始区域信息                            |
-| `GetWindowPlacement` / `SetWindowPlacement` | 保存/恢复普通、最大化和最小化状态                   |
-| `Windows.UI.Composition` / Win2D            | 绘制鼠标穿透的实时背景模糊和羽化遮罩                  |
-| `CreateDispatcherQueueController`           | 为 Avalonia UI 线程建立 Composition 调度队列 |
-| `RegisterHotKey`                            | 注册全局组合快捷键                           |
-| `UnregisterHotKey`                          | 注销快捷键                               |
-| `GetWindowLongPtr` / `SetWindowLongPtr`     | 读取/恢复必要 style                       |
-| `ShowWindow`                                | 必要时隐藏/恢复显示状态                        |
-| `GetLastError`                              | 获取失败原因                              |
-
-消息循环通过 Avalonia 主线程承载 `WM_HOTKEY` 和定时器回调。P/Invoke 声明应集中在 `Win32NativeMethods`，返回值统一封装为可诊断的结果类型。
-
-### 9.2 GDI region API
-
-V0.1 主要使用：
-
-- `CreateEllipticRgn` 创建圆形 region；
-- `CreateRectRgn`/`CombineRgn` 做边界求交（需要时）；
-- `GetRgnBox` 获取区域包围盒；
-- `GetRegionData` 或等价方式复制原始 region 数据；
-- `DeleteObject` 释放创建失败或尚未移交的 GDI 对象。
-
-region 句柄封装为 `SafeHandle` 更安全。每次更新都必须有明确的所有权分支：创建失败、`SetWindowRgn` 失败、`SetWindowRgn` 成功分别如何释放。
-
-### 9.3 关于 `SetWindowRgn` 的边界
-
-`SetWindowRgn` 直接裁剪窗口可见区域，不需要截图或目标进程注入。但它有明确限制：
-
-- 边缘是硬切，不支持羽化；
-- 不同应用、自绘窗口和复杂合成内容可能表现不同；
-- region 频繁更新可能造成重绘压力；
-- 目标窗口的原始 region 必须可可靠保存和恢复；
-- 它不等于安全隐私机制，不能承诺阻止所有捕获路径。
-
-当前羽化不替换上述裁剪机制：应用为当前目标创建一个非激活、无任务栏项、鼠标穿透且由目标窗口拥有的 Composition overlay。Win32 owner 关系保证目标因清晰核心内的点击而激活时，overlay 仍保持在目标之上；目标切换或销毁后会为新目标重建 overlay 和 Composition host。原始 Reveal 保持完全清晰，目标内容 region 向外扩展到羽化宽度的 70%；一个 alpha 遮罩驱动一个 `CompositionBackdropBrush`，用用户选择的轻/中/强单一模糊半径从清晰边界平滑渐入，并在外侧 30% 淡出。遮罩按形状、尺寸、羽化宽度和模糊量缓存，光标移动只更新小型 visual 的 offset 和“外扩轮廓减去清晰核心”的系统窗口 region，因此窗口边缘裁剪不会重建 Composition 资源，清晰核心的点击和滚轮仍直接到达目标窗口。应用不读取或持久化窗口像素；overlay 或图形设备失败时，协调器立即把目标缩回原始硬边 Reveal。
-
-对目标窗口应用 Reveal region 后会立即读取校验。Chrome/Electron 在重绘消息交错时可能瞬时返回无 region，因此单次更新内部最多重施三次；若一整轮仍无法确认，协调器先安全隐藏目标并在下一 tick 重试，而不是立即向用户报错。连续三轮均失败才视为持续故障。
-
-## 10. Window Picker 细节
-
-Picker 需要避免把 GhostSlacking 自己的提示窗选为目标。推荐以屏幕点为中心按以下顺序处理：
-
-Picker 活跃期间同时安装鼠标与键盘低级钩子；Esc 的按下、自动重复和抬起均由应用拦截，取消流程只执行一次并恢复进入 Picker 前的领域状态。
-
-```text
-WindowFromPoint
-  ↓
-排除 GhostSlacking HWND / owned helper window
-  ↓
-GetAncestor(GA_ROOT)
-  ↓
-验证可见、可恢复、非桌面/任务栏
-  ↓
-读取 rect、PID、进程名
-  ↓
-用户点击确认
-```
-
-高亮可以先做为边框提示，且必须是临时 UI。不要让高亮窗覆盖目标的输入区域，避免干扰最终点击。
-
-## 11. WindowTracker 细节
-
-Tracker 维护一个 `TrackedWindow`，包含最后一次有效 rect、PID、最小化状态和更新时间。轮询到几何变化时：
-
-1. 更新 profile 的当前 rect；
-2. 若处于 `Reveal`，将光标位置重新转换为窗口本地坐标；
-3. 仅当中心点或直径变化时重建 region；
-4. 若窗口最小化或不可见，暂停 Reveal 更新；
-5. 若 HWND 无效或 PID 不匹配，进入恢复清理。
-
-不要依据窗口标题作为身份。窗口标题会变，HWND 也可能被系统复用，因此恢复前必须再次验证 HWND、PID 和进程启动身份；当前恢复路径已经执行这三项校验。
-
-## 12. TriggerEngine 细节
-
-默认建议沿用产品设计：
-
-```text
-Ctrl + Alt + P   进入 Picker（可配置）
-Ctrl + Alt + G   切换当前窗口隐藏与完整显示；无目标时保持原状态（可配置）
-Peek Key         Hold-to-Peek 或按下切换（可配置）
-Ctrl + Alt + R   Restore 当前窗口（可配置）
-Ctrl + Shift + Alt + R  Emergency Restore All（可配置）
-Ctrl + Alt + S   打开设置（可配置）
-Ctrl + Alt + Q   退出（可配置）
-```
-
-当前默认键位为 `P/G/R/S/Q` 的 `Ctrl+Alt` 组合，Peek 默认使用 `Alt` 且默认按下切换；所有快捷键均可在设置中捕获、清除或恢复默认，并对重复或注册失败提供反馈。
-
-Hold-to-Peek 的判定条件为：
-
-```text
-ghostWindow != null
-AND peekKeyDown
-AND cursor 在当前目标屏幕矩形内
-AND targetWindow 有效
-```
-
-未满足条件时保持 Ghost。按住显示模式在按键松开后关闭 Reveal；按下切换模式在下一次有效按下沿关闭 Reveal。
-
-## 13. Visibility/RegionEngine 细节
-
-### 13.1 Ghost 策略
-
-Ghost 的当前实现固定采用 `SW_HIDE`，并在 Reveal 前后配合 region 和 placement 校正：
-
-1. 使用 `ShowWindow(SW_HIDE)` 隐藏目标；
-2. Reveal 时先应用所选形状的 region，再显示目标并再次校验 region；
-3. 对窗口帧、DWM 属性和 TopMost 状态做临时控制，Restore 时还原快照。
-
-产品要求是“默认不可见”。`SW_HIDE` 对当前实现的 Ghost 路径提供确定的隐藏语义，但不同窗口仍需验证视觉效果、点击、焦点、重绘、恢复和窗口移动。
-
-实现上不使用空 region 作为 Ghost 的主要机制，因为部分窗口会在空 region 和重绘之间出现不稳定行为；Reveal region 失败时先安全隐藏并按重试策略处理，连续失败才报告错误。
-
-### 13.2 Reveal 更新
-
-```text
-每个 tick:
-  if cursor 未变化且 rect 未变化: return
-  if 不在 targetRect: ApplyGhost()
-  else:
-      local = ScreenToTargetLocal(cursor, targetRect)
-      rgn = RegionEngine.CreateReveal(local, diameter, shape, cornerRadius)
-      ApplyReveal(rgn)
-```
-
-更新需要避免无意义的 `SetWindowRgn` 调用。当前对 Reveal region 做立即读取校验；遇到 Chrome/Electron 等窗口的瞬时重绘竞态时，单轮最多重施三次，失败后安全隐藏并在下一 tick 重试，连续三轮失败才通知用户。
-
-### 13.3 交互假设
-
-region 裁剪有机会让清晰核心内的目标窗口继续接收鼠标输入；羽化 overlay 只覆盖外环并保持鼠标穿透。焦点、拖拽、鼠标离开事件和不同窗口的重绘行为仍需用真实应用验证，不把所有应用视为等价。
-
-## 14. Recovery/Watchdog
-
-### 14.1 主进程恢复
-
-应用退出时按以下顺序清理（正常退出遵循 `RestoreOnExit`；关闭请求和升级交接强制恢复）：
-
-```text
-标记退出，取消更新任务和 Picker
-  ↓
-按 `RestoreOnExit` 或强制恢复标志执行 RestoreAll()
-  ↓
-注销 Hook/热键，停止定时器并释放视觉层和 UI
-  ↓
-恢复无失败时通知 Watchdog 正常关闭；否则保留清单供其超时恢复
-  ↓
-写入退出日志，结束 Avalonia 消息循环
-```
-
-当前 `Dispatcher.UIThread.UnhandledException` 记录错误并显示提示；`AppDomain.UnhandledException` 仅输出诊断信息。两者都不保证在异常时执行 `RestoreAll()`；主进程异常终止后的恢复依赖 Watchdog 及其最后一次有效清单。注销/关机通知下的提前恢复仍是未完成目标，见[实施状态](IMPLEMENTATION_STATUS.md#尚未完成验收与后续工作)。
-
-### 14.2 Watchdog 恢复协议
-
-Phase 2 的 Watchdog v1 使用仅限当前用户的本地命名管道和逐行 JSON 消息。主进程每次启动生成随机会话 ID，并按以下顺序发送：
-
-```text
-Hello(protocolVersion, sessionId, main PID/start identity)
-  ↓ HelloAcknowledged
-RecoveryManifest(schemaVersion, manifestId, targets[])
-  ↕ Heartbeat
-ShutdownCompleted
-```
-
-每个 envelope 都携带协议版本、会话 ID、消息类型和发送时间。Watchdog 拒绝版本不兼容、会话不匹配、握手前消息、清单 schema 不兼容和正常关闭后的追加消息。恢复清单只包含恢复窗口原状所需的元数据：HWND、PID、进程启动标识、快照版本、region 数据、style/ex-style、可见/最小化状态和相关 DWM 属性，不包含窗口内容。
-
-心跳超时后，Watchdog：
-
-1. 读取最后一份清单；
-2. 验证目标进程仍存在且 PID/启动身份匹配；
-3. 逐个执行支持的恢复操作；
-4. 记录成功、失败和跳过原因；
-5. 清理清单，避免重复处理旧目标。
-
-同一 `(sessionId, manifestId)` 只执行一次；超时取出清单后立即从会话状态移除，正常关闭也清空最后清单。如果验证失败，宁可逐项跳过并记录明确原因，不根据窗口标题或旧 HWND 猜测目标。当前 v1 清单由独立 Watchdog 进程保存在内存中，不写入磁盘；Watchdog 日志写入本地日志目录。
-
-## 15. DPI 与多显示器
-
-### 15.1 进程 DPI 设置
-
-应用 manifest 已声明 `Per Monitor DPI Aware V2`，避免不同显示器缩放比例下出现虚拟化坐标。Avalonia DIP 和 Win32 屏幕物理像素的职责要分开。
-
-### 15.2 坐标约定
-
-GhostSlacking 内部统一使用屏幕物理像素表达目标 rect、光标位置和 Reveal 直径。转换路径固定为：
-
-```text
-GetCursorPos()                 屏幕坐标
-GetWindowRect()                屏幕坐标
-cursor - windowRect.TopLeft    目标窗口本地坐标
-CreateEllipticRgn()             region 本地坐标
-```
-
-严禁在核心计算中混用 Avalonia DIP、Win32 物理像素或未经标注的缩放值。
-
-### 15.3 测试组合
-
-至少验证：
-
-- 单屏 100%、125%、150%；
-- 左侧/上方存在负坐标显示器；
-- 两台显示器不同缩放比例；
-- 窗口跨显示器移动；
-- 光标位于窗口边缘和显示器边缘；
-- DPI 变化后重新计算 region。
-
-## 16. 权限与安全边界
-
-GhostSlacking 默认普通用户权限运行，不默认要求管理员权限。控制更高完整性级别的窗口可能因 UIPI 或窗口策略失败；当前提供 native 错误码和通用失败反馈。目标完整性级别诊断与更具体的“以相同权限运行”提示仍是[未完成目标](IMPLEMENTATION_STATUS.md#尚未完成验收与后续工作)。
-
-安全边界：
-
-- 不读取目标窗口内容，不注入目标进程；
-- 不保存截图或聊天内容；
-- 配置和日志只写入用户本地应用数据目录；
-- Watchdog 恢复清单只保存恢复所需的窗口元数据；
-- 不将功能宣传为防录屏或防监控。
-
-## 17. 性能设计
-
-目标值：
-
-| 项目            | V0.1 目标          |
-| ------------- | ----------------:|
-| 空闲 CPU        | 接近 0%            |
-| Ghost 状态 CPU  | 通常低于 1%          |
-| Reveal 状态 CPU | 通常低于 3%          |
-| 内存            | 小于 100 MB        |
-| 启动时间          | 通常小于 1 秒         |
-| 光标响应          | Reveal 跟随显示器，最高 120 Hz；其他状态 60 Hz |
-
-性能原则：
-
-- 不截图、不做 OCR、不引入浏览器运行时；
-- 光标和 rect 未变化时不重建 region；
-- 首次 Reveal 使用完整兼容路径，连续移动使用单次 region 增量更新；
-- Composition 遮罩与屏幕位置解耦，连续移动只更新 visual offset 和环形命中 region；
-- P/Invoke 失败不进入高频重试死循环；
-- 高频成功路径不逐帧写日志；Debug 模式每 120 个有效移动帧汇总有效 FPS、平均/P95/最大 tick 耗时和超预算帧数；
-- 显示模式查询按显示器缓存 2 秒，`WM_DISPLAYCHANGE` 立即失效缓存；刷新率不可用时安全回退到 60 Hz；
-- 用限频计数器和手工矩阵测量 `SetWindowRgn` 频率、tick 耗时和失败率。
-
-## 18. 错误处理
-
-错误分为三类：
-
-1. 用户可修复：快捷键冲突、目标权限不足、选择了不支持窗口；
-2. 可恢复运行错误：目标窗口关闭、region 应用失败、窗口状态发生变化；
-3. 严重错误：恢复失败、IPC/Watchdog 异常、内部状态不一致。
-
-每次原生调用失败都记录 API、参数摘要、错误码、目标 HWND/PID 和当前状态。不要在日志中记录窗口内容、键盘输入内容或不必要的个人数据。
-
-应用层收到错误后的原则：
-
-```text
-修改前失败  → 保持原状并提示
-修改中失败  → 立即尝试 Restore
-恢复部分失败 → 继续其他项，显示 RecoveryError
-连续失败    → 停止自动重试，等待用户操作
-```
-
-## 19. 配置与日志
-
-### 19.1 配置
-
-配置文件建议使用 `%LOCALAPPDATA%\GhostSlacking\settings.json`，只保存：
-
-- 快捷键定义；
-- Peek Key；
-- 最大 Peek 帧率（Auto/60/90/120，Auto 最高 120 FPS）；
-- Reveal 直径、快捷键调整步长、软边宽度和形状；
-- 开机启动、退出恢复和日志级别；
-- 以后版本的 schema version。
-
-V0.1 不持久化窗口内容，也不默认持久化目标 HWND。若未来支持应用 profile，应以进程名/应用标识为主，并重新验证窗口身份。
-
-### 19.2 日志
-
-日志级别：`Error`、`Warning`、`Info`、`Debug`。生产默认 `Info`，设置保存后立即更新主程序过滤级别；Watchdog 固定记录 `Info` 及以上的恢复审计。高频状态转换和采样性能数据使用 `Debug`，成功路径不逐帧写入。
-
-主程序和 Watchdog 使用同一滚动实现、不同文件组。每个文件最大 2 MB，每组包含当前文件和最多 4 个备份，并清理超过 30 天的备份；滚动失败且当前文件已满时丢弃新记录，避免无限增长，同时绝不让日志错误影响恢复路径。
-
-设置页可分别导出日志 ZIP 和已保存配置 JSON。日志 ZIP 只收集 GhostSlacking 管理的日志，并附带版本、操作系统、运行时、架构和日志级别摘要；不自动包含配置、用户名、机器名、窗口标题或其他环境数据。导出只由用户主动触发，不包含上传行为。
-
-关键事件：`PickStarted`、`WindowSelected`、`SnapshotSaved`、`GhostApplied`、`RevealApplied`、`RestoreStarted`、`RestoreCompleted`、`NativeCallFailed`、`TargetClosed`、`WatchdogRecovery`。
-
-## 20. 测试边界
-
-### 20.1 必测窗口
-
-- 记事本或其他标准 Win32 窗口；
-- 文件资源管理器；
-- Chrome/Edge；
-- VS Code 或其他 Electron 窗口；
-- 微信、Discord、Telegram、Slack 中至少一种；
-- 一个需要管理员权限的窗口；
-- 一个最小化、关闭和频繁调整大小的窗口。
-
-### 20.2 明确记录但不承诺的窗口
-
-- 全屏游戏、独占 DirectX/OpenGL 窗口；
-- 受 DRM/受保护内容窗口；
-- 具有特殊 overlay 或始终置顶策略的窗口；
-- UWP/系统安全桌面窗口；
-- 运行在更高权限或不同用户会话的窗口。
-
-### 20.3 单元测试与手工测试分工
-
-纯状态机、坐标计算、边界求交、配置校验、恢复计划生成可做自动化测试。真实 HWND 生命周期、DPI、焦点、region 重绘和权限必须通过 Windows 集成/手工测试验证。
-
-## 21. Composition 羽化与后续演进
-
-`SetWindowRgn` 继续承担可恢复的核心裁剪，Windows Composition 只负责原始 Reveal 外侧的非抓屏实时毛玻璃。当前路径为：
-
-```text
-V0.1  SetWindowRgn                  硬边 Reveal 和原生交互
-  +
-V0.1  Windows Composition overlay   外扩实时模糊、透明羽化、硬边回退
-  ↓
-后续  可替换视觉宿主                 不改变 region、交互和恢复契约
-```
-
-演进时应保持不变的接口：
-
-- `VisibilityEngine` 的状态和命令；
-- `RegionEngine`/`RevealGeometry` 的几何输入输出；
-- `RecoveryManager` 的恢复契约；
-- `TriggerEngine` 的用户交互事件。
-
-`IRevealVisualHost` 隔离可选 GPU 视觉层，`IVisibilityBackend` 继续负责窗口 region/style/尺寸和恢复。Composition 不是恢复链路的必要依赖，任何初始化或设备失败都必须回退到原始硬边 Reveal；后续若评估 DWM Thumbnail 或 live clone，也只能替换视觉宿主，不能绕过快照与恢复契约。
-
-## 22. 架构验收条件
-
-当前实现已满足的架构条件：
-
-- 目标窗口的 region 应用、跟随和恢复已沉淀到 Core/Platform/App 实现；
-- 核心状态机可以在不启动 Avalonia 的情况下测试；
-- 所有原生资源有明确的拥有者和释放路径；
-- 目标窗口身份至少绑定 HWND + PID，恢复流程可拒绝不匹配对象；
-- DPI、多显示器和权限边界已写入测试矩阵，但真实环境验收仍未完成；
-- GPU 羽化与恢复链路边界明确，未引入截图或目标进程注入架构。
-
-自动化构建和测试通过不代表真实窗口验收完成；Windows 版本、DPI、权限、重绘、Composition 设备和长时间运行结果必须继续记录在实施状态文档中。
+日志保留身份、API/错误码、状态和操作耗时，不记录窗口文字、按键字符或剪贴板内容。日志 ZIP 只包含应用管理的日志及受限版本/系统/运行时摘要；配置另行主动导出，无自动上传。后台启动、代次、分阶段超时与焦点事件的诊断方法见[验收矩阵](IMPLEMENTATION_PLAN.md#94-实验性后台交互)。
