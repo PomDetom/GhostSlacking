@@ -408,6 +408,8 @@ public sealed partial class GhostCoordinator
             return false;
         }
 
+        profile = _recovery.Find(profile.Hwnd) ?? profile;
+        if (_current?.Hwnd == profile.Hwnd) _current = profile with { Reveal = _current.Reveal };
         _restoreSession = new RestoreSession(profile, forgetOnSuccess, successState);
         return true;
     }
@@ -460,7 +462,7 @@ public sealed partial class GhostCoordinator
         session.Stability.ObserveDrift();
         if (!session.Stability.CanCorrect)
         {
-            Fail(UserErrorKind.RestoreFailed, "Restore did not stabilize after 10 placement corrections.");
+            Fail(UserErrorKind.RestoreFailed, $"Restore did not stabilize after 10 placement corrections. expected={session.Profile.Original.ScreenBounds} observed={observation.ScreenBounds} visible={observation.IsVisible} maximized={observation.IsMaximized}");
             _restoreSession = null;
             _pendingSelection = null;
             SetState(GhostState.RecoveryError);
@@ -479,6 +481,10 @@ public sealed partial class GhostCoordinator
             _pendingSelection = null;
             SetState(GhostState.RecoveryError);
         }
+        else
+        {
+            session.Profile = _recovery.Find(session.Profile.Hwnd) ?? session.Profile;
+        }
     }
 
     private void CompleteRestore(RestoreSession session)
@@ -488,6 +494,11 @@ public sealed partial class GhostCoordinator
             _recovery.Forget(session.Profile.Hwnd);
             _current = null;
         }
+        else if (_current is not null)
+        {
+            _current = session.Profile with { Reveal = _current.Reveal };
+        }
+        _logger.Log(LogLevel.Info, $"RestoreVerified hwnd={session.Profile.Hwnd} bounds={session.Profile.Original.ScreenBounds} forgotten={session.ForgetOnSuccess}");
 
         _restoreSession = null;
         _lastReveal = null;
@@ -512,6 +523,8 @@ public sealed partial class GhostCoordinator
         {
             return restored;
         }
+
+        profile = _recovery.Find(profile.Hwnd) ?? profile;
 
         var stability = new RestoreStabilityTracker();
         while (!stability.IsStable)
@@ -538,7 +551,9 @@ public sealed partial class GhostCoordinator
             stability.ObserveDrift();
             if (!stability.CanCorrect)
             {
-                return new RestoreItemResult(profile.Hwnd, false, false, "Restore did not stabilize after 10 placement corrections.");
+                var reasonDetail = $"Restore did not stabilize after 10 placement corrections. expected={profile.Original.ScreenBounds} observed={observation.ScreenBounds} visible={observation.IsVisible} maximized={observation.IsMaximized}";
+                _logger.Log(LogLevel.Error, $"RestoreVerificationFailed hwnd={profile.Hwnd} {reasonDetail}");
+                return new RestoreItemResult(profile.Hwnd, false, false, reasonDetail);
             }
 
             stability.RecordCorrection();
@@ -550,9 +565,11 @@ public sealed partial class GhostCoordinator
             {
                 return restored;
             }
+            profile = _recovery.Find(profile.Hwnd) ?? profile;
         }
 
         _recovery.Forget(profile.Hwnd);
+        _logger.Log(LogLevel.Info, $"RestoreVerified hwnd={profile.Hwnd} bounds={profile.Original.ScreenBounds} forgotten=True");
         return new RestoreItemResult(profile.Hwnd, true, false, "Restored and stabilized.");
     }
 
@@ -613,7 +630,7 @@ public sealed partial class GhostCoordinator
         bool forgetOnSuccess,
         GhostState successState)
     {
-        public GhostWindowProfile Profile { get; } = profile;
+        public GhostWindowProfile Profile { get; set; } = profile;
         public bool ForgetOnSuccess { get; } = forgetOnSuccess;
         public GhostState SuccessState { get; } = successState;
         public RestoreStabilityTracker Stability { get; } = new();

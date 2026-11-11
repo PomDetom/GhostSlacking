@@ -214,6 +214,12 @@ internal static class Win32NativeMethods
     internal static extern nint MonitorFromWindow(nint hwnd, uint flags);
 
     [DllImport("user32.dll")]
+    internal static extern nint MonitorFromRect(ref RECT rect, uint flags);
+
+    [DllImport("user32.dll")]
+    internal static extern int GetSystemMetricsForDpi(int index, uint dpi);
+
+    [DllImport("user32.dll")]
     internal static extern uint GetDpiForWindow(nint hwnd);
 
     [DllImport("shcore.dll")]

@@ -14,6 +14,45 @@ public sealed class Win32DisplayTransitionTests
     public void Owned_maximized_window_preserves_native_state_across_simulated_display_changes()
         => CheckNativeTransition(maximized: true);
 
+    [Fact]
+    public void Restore_all_clears_stale_maximized_recovery_after_display_query_failure()
+    {
+        var hwnd = Win32NativeMethods.CreateWindowEx(0,
+            "STATIC", "GhostSlacking isolated stale restore test", 0x00CF0000u /* WS_OVERLAPPEDWINDOW */ | 0x01000000u,
+            0, 0, 160, 120, 0, 0, Win32NativeMethods.GetModuleHandle(null), 0);
+        Assert.NotEqual(0, hwnd);
+        try
+        {
+            var api = new DisplayApi();
+            var actual = api.Observe(hwnd)!.ScreenBounds;
+            api.CaptureBoundsOverride = new Rectangle(actual.Left - 1, actual.Top - 1, actual.Width + 2, actual.Height - 10);
+            var backend = new Win32VisibilityBackend();
+            var recovery = new RecoveryManager(api, backend);
+            var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend));
+            var target = new TargetWindow { Hwnd = hwnd, ProcessId = (uint)Environment.ProcessId, ScreenBounds = actual };
+            Assert.True(coordinator.SelectWindow(target, new RevealSettings()));
+            api.FailRead = true;
+            coordinator.UpdatePeek(Point.Empty, false);
+            Assert.Equal(GhostState.RecoveryError, coordinator.State);
+            api.FailRead = false;
+            var report = coordinator.RestoreAll("stale maximized bounds after scale failure");
+            Assert.True(report.Success, string.Join("; ", report.Items.Select(item => item.Reason)));
+            Assert.Equal(GhostState.Idle, coordinator.State);
+            Assert.Null(coordinator.CurrentProfile);
+            Assert.Empty(recovery.Profiles);
+            Assert.True(api.Observe(hwnd)!.IsMaximized);
+
+            // The independent Watchdog backend must accept the same system
+            // maximized rectangle when its manifest still has old pixel bounds.
+            var snapshot = api.CaptureSnapshot(target).Value!;
+            Assert.True(backend.Restore(hwnd, WatchdogRecoveryItem.FromSnapshot(snapshot).ToSnapshot()).Success);
+        }
+        finally
+        {
+            Win32NativeMethods.DestroyWindow(hwnd);
+        }
+    }
+
     private static void CheckNativeTransition(bool maximized)
     {
         // This exercises real HWND/style/region/placement calls. The display
@@ -82,13 +121,22 @@ public sealed class Win32DisplayTransitionTests
     {
         private readonly Win32WindowApi _native = new();
         public int Scale { get; set; } = 100;
+        public bool FailRead { get; set; }
+        public Rectangle? CaptureBoundsOverride { get; set; }
         public bool IsWindow(nint hwnd) => _native.IsWindow(hwnd);
         public WindowObservation? Observe(nint hwnd) => _native.Observe(hwnd);
-        public OperationResult<WindowSnapshot> CaptureSnapshot(TargetWindow target) => _native.CaptureSnapshot(target);
+        public OperationResult<WindowSnapshot> CaptureSnapshot(TargetWindow target)
+        {
+            var captured = _native.CaptureSnapshot(target);
+            return captured.Success && captured.Value is { } value && CaptureBoundsOverride is { } bounds
+                ? OperationResult<WindowSnapshot>.Ok(value with { ScreenBounds = bounds })
+                : captured;
+        }
         public bool IsSameIdentity(WindowSnapshot snapshot, WindowObservation observation) => _native.IsSameIdentity(snapshot, observation);
         public Point GetCursorPosition() => Point.Empty;
         public OperationResult<WindowEnvironment> ReadEnvironment(WindowSnapshot original)
         {
+            if (FailRead) return OperationResult<WindowEnvironment>.Failed("simulated display query failure");
             var read = _native.ReadEnvironment(original);
             return read.Success && read.Value is { } value
                 ? OperationResult<WindowEnvironment>.Ok(value with { Display = value.Display with { ScalePercent = Scale } })

@@ -57,6 +57,8 @@ App 引用 Core/Platform，Watchdog 和 Updater 同样引用 Core/Platform。App
 
 Restore 恢复 region、style/ex-style、DWM 属性、TopMost、placement 和原始可见性。异步恢复要求连续三次观测匹配，最多纠正十次以容纳浏览器延迟漂移；失败保留恢复资料。同步 Restore All 逐项返回成功、失败或跳过结果。
 
+最大化恢复由 Windows 按当前工作区及 DPI 决定外框，不能强制重放旧缩放的像素矩形。Platform 在身份验证后检查原生最大化状态、目标显示器及工作区覆盖，允许的外扩只取窗口/显示器 DPI 对应的系统缩放边框；原始工具窗口也允许其显示器全区域。合法的新几何先登记并同步清单，再由异步/同步恢复使用同一基准完成三次稳定观测、清除恢复资料和菜单状态。普通窗口仍要求精确矩形，错误显示器、未最大化或异常外框不能仅因可见而算成功。Watchdog 的原生恢复共用此最大化验证，schema 不变。日志区分 RestoreApplied（已执行）与 RestoreVerified（稳定验证完成）。
+
 ## 3. 拾取、几何与 Reveal
 
 - Picker 使用 `WindowFromPoint`/`GetAncestor` 选择顶层窗口，过滤桌面、任务栏、自身及不支持目标；Esc 按下、重复及抬起均拦截且只取消一次。

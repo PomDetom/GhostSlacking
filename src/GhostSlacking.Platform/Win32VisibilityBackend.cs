@@ -239,6 +239,16 @@ public sealed class Win32VisibilityBackend : IVisibilityBackend
             return Failure("SetWindowPos(RestoreVisibility)", "Could not restore the target window visibility.");
         }
 
+        // Windows chooses the maximized rectangle from the current work area
+        // and DPI. Replaying a pre-scale pixel rectangle cannot restore it.
+        if (snapshot.Placement.IsMaximized && Win32NativeMethods.IsZoomed(hwnd))
+        {
+            var environment = new Win32WindowApi().ReadEnvironment(snapshot);
+            if (environment.Success && environment.Value is { } current &&
+                (current.Bounds == snapshot.ScreenBounds || current.IsSystemMaximized))
+                return NativeResult.Ok("Restore");
+            return Failure("ValidateMaximizedRestore", environment.Error ?? $"The maximized target does not cover the expected monitor work area. current={environment.Value}");
+        }
         var placementRestored = EnsureWindowPlacement(hwnd, snapshot);
         return placementRestored.Success ? NativeResult.Ok("Restore") : placementRestored;
     }

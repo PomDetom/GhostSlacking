@@ -265,6 +265,95 @@ public sealed class DisplayTransitionTests
         Assert.Equal(320, h.Visual.LastVisual.CoreRegion.DiameterPx);
     }
 
+    [Fact]
+    public void Restore_all_from_recovery_error_adopts_valid_system_maximized_bounds_and_forgets_target()
+    {
+        var h = new Harness(maximized: true);
+        h.Api.FailQuery = true;
+        h.Tick();
+        Assert.Equal(GhostState.RecoveryError, h.Coordinator.State);
+        h.Api.FailQuery = false;
+        h.Backend.RestoredBounds = new Rectangle(-8, -8, 1936, 1048);
+        var report = h.Coordinator.RestoreAll("100 percent emergency restore");
+        Assert.True(report.Success);
+        Assert.True(h.Api.Visible);
+        Assert.Equal(GhostState.Idle, h.Coordinator.State);
+        Assert.Null(h.Coordinator.CurrentProfile);
+        Assert.Empty(h.Recovery.Profiles);
+        Assert.Equal(1, h.Backend.Restores);
+    }
+
+    [Fact]
+    public void Async_restore_uses_registered_new_maximized_bounds_for_three_stable_observations()
+    {
+        var h = new Harness(maximized: true);
+        var initial = h.Coordinator.CurrentProfile!.Original;
+        h.Backend.RestoredBounds = new Rectangle(-8, -8, 1936, 1048);
+        Assert.True(h.Coordinator.RestoreCurrent("100 percent restore"));
+        var updated = h.Coordinator.CurrentProfile!.Original;
+        Assert.Equal(h.Backend.RestoredBounds, updated.ScreenBounds);
+        Assert.Equal(initial.Styles, updated.Styles);
+        Assert.Equal(initial.ProcessStartIdentity, updated.ProcessStartIdentity);
+        Assert.Equal(initial.OriginalRegionData, updated.OriginalRegionData);
+        h.Tick();
+        h.Tick();
+        Assert.Equal(GhostState.Restoring, h.Coordinator.State);
+        h.Tick();
+        Assert.Equal(GhostState.Idle, h.Coordinator.State);
+        Assert.Empty(h.Recovery.Profiles);
+        Assert.Equal(1, h.Backend.Restores);
+    }
+
+    [Fact]
+    public void Visible_maximized_window_with_invalid_system_bounds_is_not_forgotten()
+    {
+        var h = new Harness(maximized: true);
+        h.Api.ValidMaximizedBounds = false;
+        h.Backend.RestoredBounds = new Rectangle(0, 0, 400, 300);
+        Assert.False(h.Coordinator.RestoreAll("invalid max geometry").Success);
+        Assert.Equal(GhostState.RecoveryError, h.Coordinator.State);
+        Assert.Single(h.Recovery.Profiles);
+        Assert.Equal(h.Api.Snapshot.ScreenBounds, h.Recovery.Profiles.Single().Original.ScreenBounds);
+    }
+
+    [Fact]
+    public void Normal_window_restore_keeps_exact_geometry_requirement()
+    {
+        var h = new Harness();
+        h.Backend.RestoredBounds = new Rectangle(0, 0, 400, 300);
+        Assert.False(h.Coordinator.RestoreAll("normal geometry mismatch").Success);
+        Assert.Single(h.Recovery.Profiles);
+    }
+
+    [Fact]
+    public void Identity_changed_during_restore_geometry_registration_is_rejected()
+    {
+        var h = new Harness(maximized: true);
+        h.Backend.RestoredBounds = new Rectangle(-8, -8, 1936, 1048);
+        h.Backend.ReplaceIdentityOnRestore = true;
+        Assert.False(h.Coordinator.RestoreCurrent("identity race"));
+        Assert.Equal(GhostState.RecoveryError, h.Coordinator.State);
+        Assert.Equal(h.Api.Snapshot, h.Recovery.Profiles.Single().Original);
+    }
+
+    [Fact]
+    public void Temporary_visible_profile_keeps_geometry_updated_during_restore_stabilization()
+    {
+        var h = new Harness(maximized: true);
+        h.Backend.RestoredBounds = new Rectangle(-8, -8, 1936, 1048);
+        Assert.True(h.Coordinator.ToggleWindowVisibility("show at 100 percent"));
+        var settled = new Rectangle(-9, -9, 1938, 1038);
+        h.Api.Bounds = settled;
+        h.Backend.RestoredBounds = settled;
+        h.Tick();
+        h.Tick();
+        h.Tick();
+        h.Tick();
+        Assert.Equal(GhostState.Visible, h.Coordinator.State);
+        Assert.Equal(settled, h.Coordinator.CurrentProfile!.Original.ScreenBounds);
+        Assert.Equal(settled, h.Recovery.Profiles.Single().Original.ScreenBounds);
+    }
+
     private sealed class Harness
     {
         public Api Api { get; }
@@ -315,6 +404,7 @@ public sealed class DisplayTransitionTests
         public bool Visible { get; set; } = true;
         public bool IdentityMatches { get; set; } = true;
         public bool FailQuery { get; set; }
+        public bool ValidMaximizedBounds { get; set; } = true;
         public bool Maximized { get; }
         public TargetWindow Target { get; }
         public WindowSnapshot Snapshot { get; }
@@ -346,7 +436,7 @@ public sealed class DisplayTransitionTests
             : OperationResult<WindowEnvironment>.Ok(new(Display, Bounds, original.Placement with
             {
                 NormalPosition = Bounds, DevicePosition = Bounds, ShowCommand = Visible ? original.Placement.ShowCommand : 0, Flags = 0
-            }));
+            }) { IsSystemMaximized = Maximized && ValidMaximizedBounds });
     }
 
     private sealed class Backend(Api api) : IVisibilityBackend
@@ -354,12 +444,23 @@ public sealed class DisplayTransitionTests
         public int Corrections { get; private set; }
         public int Reveals { get; private set; }
         public int Hides { get; private set; }
+        public int Restores { get; private set; }
+        public Rectangle? RestoredBounds { get; set; }
+        public bool ReplaceIdentityOnRestore { get; set; }
         public WindowSnapshot? LastRestored { get; private set; }
         public NativeResult HideOnly(nint hwnd) { Hides++; api.Visible = false; return NativeResult.Ok("Hide"); }
         public NativeResult ApplyGhost(nint hwnd, WindowSnapshot snapshot) => HideOnly(hwnd);
         public NativeResult ApplyReveal(nint hwnd, CircleRegion region, WindowSnapshot snapshot) { Reveals++; api.Visible = true; return NativeResult.Ok("Reveal"); }
         public NativeResult UpdateRevealRegion(nint hwnd, CircleRegion region) => NativeResult.Ok("Update");
         public NativeResult EnsureWindowPlacement(nint hwnd, WindowSnapshot snapshot) { Corrections++; return NativeResult.Ok("Correct"); }
-        public NativeResult Restore(nint hwnd, WindowSnapshot snapshot) { LastRestored = snapshot; api.Visible = snapshot.WasVisible; api.Bounds = snapshot.ScreenBounds; return NativeResult.Ok("Restore"); }
+        public NativeResult Restore(nint hwnd, WindowSnapshot snapshot)
+        {
+            Restores++;
+            LastRestored = snapshot;
+            api.Visible = snapshot.WasVisible;
+            api.Bounds = RestoredBounds ?? snapshot.ScreenBounds;
+            if (ReplaceIdentityOnRestore) api.IdentityMatches = false;
+            return NativeResult.Ok("Restore");
+        }
     }
 }

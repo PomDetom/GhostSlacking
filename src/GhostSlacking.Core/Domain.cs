@@ -398,7 +398,10 @@ public sealed record WindowDisplayContext(
     string Monitor, Rectangle MonitorBounds, Rectangle WorkArea, uint WindowDpi, int ScalePercent);
 
 public sealed record WindowEnvironment(
-    WindowDisplayContext Display, Rectangle Bounds, WindowPlacementSnapshot Placement);
+    WindowDisplayContext Display, Rectangle Bounds, WindowPlacementSnapshot Placement)
+{
+    public bool IsSystemMaximized { get; init; }
+}
 
 public interface IWindowEnvironmentApi
 {

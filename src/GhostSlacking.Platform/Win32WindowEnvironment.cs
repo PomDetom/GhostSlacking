@@ -38,7 +38,27 @@ public sealed partial class Win32WindowApi
         var after = Observe(hwnd);
         if (after is null || !IsSameIdentity(original, after) || after.ScreenBounds != observation.ScreenBounds)
             return OperationResult<WindowEnvironment>.Failed("Target geometry changed during the display query.");
-        return OperationResult<WindowEnvironment>.Ok(new(display, observation.ScreenBounds, normalized));
+        if (!after.IsMaximized)
+            return OperationResult<WindowEnvironment>.Ok(new(display, observation.ScreenBounds, normalized));
+        var expectedRect = new Win32NativeMethods.RECT
+        {
+            Left = original.ScreenBounds.Left, Top = original.ScreenBounds.Top,
+            Right = original.ScreenBounds.Right, Bottom = original.ScreenBounds.Bottom
+        };
+        var expectedMonitor = Win32NativeMethods.MonitorFromRect(ref expectedRect, Win32NativeMethods.MONITOR_DEFAULTTONEAREST);
+        var monitorDpi = (uint)Math.Max(96, scale * 96 / 100);
+        int Frame(int metric, uint frameDpi) => Win32NativeMethods.GetSystemMetricsForDpi(metric, frameDpi) +
+            Win32NativeMethods.GetSystemMetricsForDpi(92 /* SM_CXPADDEDBORDER */, frameDpi);
+        var frameX = Math.Max(Frame(32 /* SM_CXSIZEFRAME */, dpi), Frame(32, monitorDpi));
+        var frameY = Math.Max(Frame(33 /* SM_CYSIZEFRAME */, dpi), Frame(33, monitorDpi));
+        var isToolWindow = (original.Styles.ExtendedStyle & Win32NativeMethods.WS_EX_TOOLWINDOW) != 0;
+        var fitsWorkArea = WindowPlacementRestoration.IsSystemMaximizedBounds(after.ScreenBounds, display.WorkArea, frameX, frameY);
+        var fitsToolMonitor = isToolWindow &&
+            WindowPlacementRestoration.IsSystemMaximizedBounds(after.ScreenBounds, display.MonitorBounds, frameX, frameY);
+        return OperationResult<WindowEnvironment>.Ok(new(display, observation.ScreenBounds, normalized)
+        {
+            IsSystemMaximized = after.IsMaximized && expectedMonitor == monitor && (fitsWorkArea || fitsToolMonitor)
+        });
     }
 }
 

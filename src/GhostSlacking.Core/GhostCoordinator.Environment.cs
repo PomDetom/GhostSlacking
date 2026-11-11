@@ -9,6 +9,7 @@ public sealed partial class GhostCoordinator
     private WindowEnvironment? _pendingEnvironment;
     private long _environmentStarted;
     private long _geometryStableSince;
+    private long _environmentDiagnosticAt;
     private bool _transitionWasVisible;
     private bool _allowsLateGeometry;
     private int _placementCorrections;
@@ -43,6 +44,7 @@ public sealed partial class GhostCoordinator
             _transitionWasVisible = _state == GhostState.Visible;
             if (!lateGeometry) _environmentStarted = now;
             _geometryStableSince = now;
+            _environmentDiagnosticAt = now;
             _pendingEnvironment = environment;
             _lastReveal = null;
             _lastCursor = null;
@@ -79,12 +81,17 @@ public sealed partial class GhostCoordinator
         };
         if (candidate != previous)
         {
+            if (_timeProvider.GetElapsedTime(_environmentDiagnosticAt, now) >= GeometryStableDuration)
+            {
+                _logger.Log(LogLevel.Info, $"DisplayGeometryChanging hwnd={_current.Hwnd} previous={previous} current={candidate}");
+                _environmentDiagnosticAt = now;
+            }
             _pendingEnvironment = candidate;
             _geometryStableSince = now;
         }
         if (_timeProvider.GetElapsedTime(_environmentStarted, now) >= EnvironmentTransitionTimeout)
         {
-            SuspendWindowControl("Display geometry did not stabilize within two seconds. Restore the target to continue.");
+            SuspendWindowControl($"Display geometry did not stabilize within two seconds. current={candidate}. Restore the target to continue.");
             return false;
         }
         if (_timeProvider.GetElapsedTime(_geometryStableSince, now) < GeometryStableDuration) return false;
