@@ -15,6 +15,8 @@ pwsh -NoProfile -File tests/Installer.Tests.ps1
 
 输出被运行实例占用时，可给 build/test 传 `-p:BaseOutputPath=bin/Validation/` 使用隔离输出，不结束用户正在使用的实例。生成文件只放 `bin/`、`obj/` 或 `artifacts/`。
 
+Codex 本地工作树环境由 [environment.toml](../../.codex/environments/environment.toml) 共享。Windows 初始化检查开发工具并还原依赖；脚本正文保持 ASCII，以兼容 Windows PowerShell 5.1 读取无 BOM 的 UTF-8 临时脚本。中文快捷操作名称不受此限制；初始化输出 PowerShell 版本，构建、测试和启动应用通过操作入口按需执行。
+
 ## 代码组织
 
 保留 Core、Platform、App、Watchdog 和 Updater 五个生产项目及两个测试项目。按职责而非文件类型分目录：Core 分协调、窗口、Reveal、输入、设置、恢复、更新、诊断和公共基础；Platform 分窗口、输入、后台交互、安装和恢复；App 分宿主、设置、Reveal、通知、更新、诊断和表现资源。
