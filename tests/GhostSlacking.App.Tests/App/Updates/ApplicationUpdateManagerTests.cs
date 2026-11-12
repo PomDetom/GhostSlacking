@@ -224,7 +224,7 @@ public sealed class ApplicationUpdateManagerTests
     }
 
     [Fact]
-    public async Task Cancelled_download_removes_partial_file_and_returns_to_available_state()
+    public async Task Cancelled_download_retains_checkpoint_and_returns_to_paused_state()
     {
         using var files = new TemporaryUpdateFiles();
         var handler = new ReleaseHandler(TestRelease.Create("1.2.0")) { PauseInstallerDownload = true };
@@ -239,8 +239,9 @@ public sealed class ApplicationUpdateManagerTests
         var installerPath = await download;
 
         Assert.Null(installerPath);
-        Assert.Equal(ApplicationUpdateStatus.Available, manager.Snapshot.Status);
-        Assert.Empty(Directory.EnumerateFiles(files.UpdatesDirectory, "*.partial", SearchOption.AllDirectories));
+        Assert.Equal(ApplicationUpdateStatus.Paused, manager.Snapshot.Status);
+        Assert.True(manager.Snapshot.HasDownloadTask);
+        Assert.Single(Directory.EnumerateFiles(files.UpdatesDirectory, "download.json", SearchOption.AllDirectories));
     }
 
     [Fact]
@@ -347,9 +348,9 @@ public sealed class ApplicationUpdateManagerTests
             "\n<!-- release-notes:zh:start -->duplicate<!-- release-notes:zh:end -->";
         var incomplete = "<!-- release-notes:zh:start -->中文";
 
-        Assert.Null(GitHubApplicationUpdateManager.ParseReleaseNotes(duplicate).Chinese);
-        Assert.Equal("### What's new\n- English", GitHubApplicationUpdateManager.ParseReleaseNotes(duplicate).English);
-        Assert.Null(GitHubApplicationUpdateManager.ParseReleaseNotes(incomplete).Chinese);
+        Assert.Null(GitHubUpdateSource.ParseReleaseNotes(duplicate).Chinese);
+        Assert.Equal("### What's new\n- English", GitHubUpdateSource.ParseReleaseNotes(duplicate).English);
+        Assert.Null(GitHubUpdateSource.ParseReleaseNotes(incomplete).Chinese);
     }
 
     [Fact]
@@ -416,7 +417,7 @@ public sealed class ApplicationUpdateManagerTests
         Assert.Equal(5, handler.RequestCount);
     }
 
-    private static GitHubApplicationUpdateManager CreateManager(
+    private static ApplicationUpdateManager CreateManager(
         TemporaryUpdateFiles files,
         HttpClient client,
         string currentVersion,
@@ -454,12 +455,12 @@ public sealed class ApplicationUpdateManagerTests
         {
             RequestCount++;
             var uri = request.RequestUri?.AbsoluteUri;
-            if (uri == GitHubApplicationUpdateManager.LatestReleaseApiUri.AbsoluteUri)
+            if (uri == GitHubUpdateSource.LatestReleaseApiUri.AbsoluteUri)
             {
                 return JsonResponse(Release.ApiJson());
             }
 
-            if (uri?.StartsWith(GitHubApplicationUpdateManager.ReleasesApiUri.AbsoluteUri + "?", StringComparison.Ordinal) == true)
+            if (uri?.StartsWith(GitHubUpdateSource.ReleasesApiUri.AbsoluteUri + "?", StringComparison.Ordinal) == true)
             {
                 var page = request.RequestUri?.Query
                     .TrimStart('?')

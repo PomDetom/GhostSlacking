@@ -14,11 +14,13 @@ using Microsoft.Win32;
 
 namespace GhostSlacking.App;
 
-internal sealed partial class GitHubApplicationUpdateManager : IApplicationUpdateManager
+internal sealed partial class GitHubUpdateSource : IUpdateSource
 {
 
-    private async Task<UpdateRelease?> GetLatestReleaseAsync(CancellationToken cancellationToken)
+    public async Task<UpdateRelease?> GetLatestReleaseAsync(UpdateChannel channel, ReleaseVersion currentVersion, CancellationToken cancellationToken)
     {
+        _channel = channel;
+        _currentVersion = currentVersion;
         var requestUri = _channel == UpdateChannel.Test
             ? new Uri($"{ReleasesApiUri.AbsoluteUri}?per_page={ReleasesPerPage}")
             : LatestReleaseApiUri;
