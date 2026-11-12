@@ -1,6 +1,51 @@
+# Build output
 bin/
 obj/
-.vs/
 artifacts/
+
+# Visual Studio, Rider and ReSharper local state
+.vs/
+.idea/
+_ReSharper*/
 *.user
 *.suo
+*.userosscache
+*.sln.docstates
+*.sln.iml
+*.DotSettings.user
+
+# Test results and coverage
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# Logs, temporary files and editor backups
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Local environment files and signing certificates
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+*.pfx
+*.p12
+
+# Optional in-repository worktrees
+/.worktrees/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+Thumbs.db:encryptable
+Desktop.ini
+$RECYCLE.BIN/
