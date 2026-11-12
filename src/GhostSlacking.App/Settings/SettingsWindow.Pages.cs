@@ -201,16 +201,20 @@ internal sealed partial class SettingsWindow : AppWindow
             }
         };
 
-        var updateButtons = new StackPanel
+        var updateSummary = new Grid
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10,
-            Children =
-            {
-                _checkUpdatesButton,
-                _viewUpdateButton
-            }
+            ColumnDefinitions = new ColumnDefinitions("*,Auto")
         };
+        updateSummary.Children.Add(new StackPanel
+        {
+            Spacing = 8,
+            Margin = new Thickness(0, 0, 20, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { _lastUpdateCheckText, _updateStatusText, _updateProgress }
+        });
+        _checkUpdatesButton.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(_checkUpdatesButton, 1);
+        updateSummary.Children.Add(_checkUpdatesButton);
         var updatePanel = new StackPanel
         {
             Spacing = 10,
@@ -218,11 +222,8 @@ internal sealed partial class SettingsWindow : AppWindow
             {
                 _currentVersionText,
                 _latestVersionText,
-                _lastUpdateCheckText,
-                _updateStatusText,
-                CreateSettingRow(language, "updateChannel", "updateChannelDescription", _updateChannel),
-                _updateProgress,
-                updateButtons
+                WrapCard(updateSummary),
+                CreateSettingRow(language, "updateChannel", "updateChannelDescription", _updateChannel)
             }
         };
 

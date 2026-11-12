@@ -34,15 +34,23 @@ internal sealed partial class SettingsWindow : AppWindow
 
     private async void OnCheckUpdatesClicked(object? sender, RoutedEventArgs args)
     {
-        if (_updates is null)
+        if (_updates is null || !_checkUpdatesButton.IsEnabled)
         {
             return;
         }
 
-        await _updates.CheckAsync();
+        if (HasKnownUpdate(_updates.Snapshot))
+        {
+            _openUpdateWindow?.Invoke();
+        }
+        else
+        {
+            await _updates.CheckAsync();
+        }
     }
 
-    private void OnViewUpdateClicked(object? sender, RoutedEventArgs args) => _openUpdateWindow?.Invoke();
+    private static bool HasKnownUpdate(ApplicationUpdateSnapshot snapshot) =>
+        snapshot.Release is { } release && release.Version > ReleaseVersion.Parse(snapshot.CurrentVersion);
 
     private void OnSourceRepositoryClicked(object? sender, RoutedEventArgs args) => _updates?.OpenSourceRepository();
 
@@ -86,23 +94,26 @@ internal sealed partial class SettingsWindow : AppWindow
             ApplicationUpdateStatus.Skipped => string.Format(UiText.Text(language, "updateSkippedDescription"), releaseVersion),
             ApplicationUpdateStatus.Downloading => string.Format(UiText.Text(language, "downloadingUpdate"), snapshot.ProgressPercent ?? 0),
             ApplicationUpdateStatus.Verifying => UiText.Text(language, "verifyingUpdate"),
-            ApplicationUpdateStatus.Ready => UiText.Text(language, "startingInstaller"),
+            ApplicationUpdateStatus.Ready => UiText.Text(language, "updateVerified"),
             ApplicationUpdateStatus.Preparing => UiText.Text(language, "updatePreparing"),
             ApplicationUpdateStatus.Error => UiText.Text(language, "updateFailed"),
             _ => UiText.Text(language, "updateNotChecked")
         };
 
-        var busy = snapshot.Status is ApplicationUpdateStatus.Checking or
-            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Preparing;
-        _checkUpdatesButton.Content = UiText.Text(language, "checkUpdates");
-        _checkUpdatesButton.IsEnabled = !busy && _updates is not null;
-        _updateProgress.IsVisible = snapshot.Status == ApplicationUpdateStatus.Downloading;
+        var updateKnown = HasKnownUpdate(snapshot);
+        var blocked = snapshot.Status is ApplicationUpdateStatus.Checking or ApplicationUpdateStatus.Preparing;
+        _checkUpdatesButton.Content = UiText.Text(language, snapshot.Status switch
+        {
+            ApplicationUpdateStatus.Checking => "checkingUpdatesAction",
+            ApplicationUpdateStatus.Preparing => "updatePreparing",
+            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying => "viewUpdateProgress",
+            _ => updateKnown ? "viewUpdateDetails" : "checkUpdates"
+        });
+        _checkUpdatesButton.IsEnabled = !blocked && _updates is not null && (!updateKnown || _openUpdateWindow is not null);
+        _checkUpdatesButton.Classes.Set("accent", updateKnown);
+        _updateProgress.IsVisible = snapshot.Status is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or
+            ApplicationUpdateStatus.Preparing;
+        _updateProgress.IsIndeterminate = snapshot.Status != ApplicationUpdateStatus.Downloading;
         _updateProgress.Value = snapshot.ProgressPercent ?? 0;
-
-        var updateKnown = snapshot.Release is not null && snapshot.Release.Version >
-            ReleaseVersion.Parse(snapshot.CurrentVersion);
-        _viewUpdateButton.Content = UiText.Text(language, "viewUpdateDetails");
-        _viewUpdateButton.IsVisible = updateKnown;
-        _viewUpdateButton.IsEnabled = !busy && _openUpdateWindow is not null;
     }
 }
