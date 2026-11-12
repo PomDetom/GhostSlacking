@@ -44,7 +44,9 @@ public sealed class AvaloniaStartupTests
                 SettingsValueControlsTests.VerifyUi();
                 AssertPeekFrameRateSetting(settingsWindow);
                 AssertBackgroundInteractionSetting();
+                stage = "update presentation";
                 UpdatePresentationTests.VerifyUi();
+                stage = "settings theme and exports";
                 AssertThemePreviewLifecycle();
                 AssertSavedSettingsExport();
                 stage = "tray and notifications";

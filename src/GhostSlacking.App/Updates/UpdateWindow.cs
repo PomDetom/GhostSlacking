@@ -28,6 +28,7 @@ internal sealed class UpdateWindow : AppWindow
     private readonly Border _historyWarning;
     private readonly TextBlock _notesHeading;
     private readonly TextBlock _closeHint;
+    private readonly TextBlock _downloadDetails;
     private readonly StackPanel _notesPanel;
     private readonly ProgressBar _progress;
     private readonly Button _installButton;
@@ -36,7 +37,9 @@ internal sealed class UpdateWindow : AppWindow
     private readonly MenuItem _releaseItem;
     private readonly MenuItem _recheckItem;
     private readonly Button _laterButton;
-    private CancellationTokenSource? _downloadCancellation;
+    private readonly Button _backgroundButton;
+    private readonly MenuItem _stopItem;
+    private bool _background;
     private UpdateRelease? _renderedRelease;
     private UiLanguage _language;
     private bool _checking;
@@ -64,6 +67,7 @@ internal sealed class UpdateWindow : AppWindow
         _historyWarning = Card(_historyWarningText, new Thickness(12, 9));
         _notesHeading = new TextBlock { FontSize = 14, FontWeight = FontWeight.SemiBold, Foreground = _primaryBrush };
         _closeHint = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = _secondaryBrush };
+        _downloadDetails = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = _secondaryBrush };
         _notesPanel = new StackPanel { Spacing = 8 };
         _progress = new ProgressBar { Minimum = 0, Maximum = 100, Height = 5, IsVisible = false };
         _installButton = new Button { MinWidth = 130, HorizontalContentAlignment = HorizontalAlignment.Center };
@@ -72,14 +76,18 @@ internal sealed class UpdateWindow : AppWindow
         _skipItem = new MenuItem();
         _releaseItem = new MenuItem();
         _recheckItem = new MenuItem();
+        _stopItem = new MenuItem();
+        _backgroundButton = new Button();
         _moreButton.Flyout = new MenuFlyout
         {
             Placement = PlacementMode.TopEdgeAlignedLeft,
-            Items = { _releaseItem, _skipItem, new Separator(), _recheckItem }
+            Items = { _releaseItem, _skipItem, new Separator(), _recheckItem, _stopItem }
         };
         _laterButton = new Button { MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
 
         _installButton.Click += OnInstallClicked;
+        _backgroundButton.Click += OnBackgroundClicked;
+        _stopItem.Click += OnStopClicked;
         _skipItem.Click += OnSkipClicked;
         _releaseItem.Click += OnReleaseClicked;
         _recheckItem.Click += OnRecheckClicked;
@@ -146,11 +154,11 @@ internal sealed class UpdateWindow : AppWindow
         var primaryActions = new StackPanel
         {
             Orientation = Orientation.Horizontal, Spacing = 10,
-            Children = { _laterButton, _installButton }
+            Children = { _laterButton, _backgroundButton, _installButton }
         };
         Grid.SetColumn(primaryActions, 2);
         actions.Children.Add(primaryActions);
-        var footer = new StackPanel { Spacing = 12, Children = { _statusText, _progress, _closeHint, actions } };
+        var footer = new StackPanel { Spacing = 12, Children = { _statusText, _progress, _downloadDetails, _closeHint, actions } };
 
         var root = new Grid
         {
@@ -197,7 +205,8 @@ internal sealed class UpdateWindow : AppWindow
     }
 
     private static bool IsBusy(ApplicationUpdateStatus status) => status is ApplicationUpdateStatus.Checking or
-        ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Preparing;
+        ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Pausing or
+        ApplicationUpdateStatus.Stopping or ApplicationUpdateStatus.Preparing;
 
     private bool HasKnownUpdate(ApplicationUpdateSnapshot snapshot) =>
         snapshot.Release is { } release && release.Version > ReleaseVersion.Parse(snapshot.CurrentVersion);
@@ -208,49 +217,60 @@ internal sealed class UpdateWindow : AppWindow
         var snapshot = _updates.Snapshot;
         var release = snapshot.Release;
         var updateKnown = HasKnownUpdate(snapshot);
-        var busy = IsBusy(snapshot.Status) || _downloadCancellation is not null || _checking;
+        var busy = IsBusy(snapshot.Status) || _checking;
         var downloading = snapshot.Status == ApplicationUpdateStatus.Downloading;
-        var cancelling = _downloadCancellation?.IsCancellationRequested == true;
+        var transferable = snapshot.Status is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying;
+        var transition = snapshot.Status is ApplicationUpdateStatus.Pausing or ApplicationUpdateStatus.Stopping or ApplicationUpdateStatus.Preparing ||
+            snapshot.Status == ApplicationUpdateStatus.Ready && snapshot.HasDownloadTask;
         _headingText.Text = "GHOSTSLACKING · " + T("softwareUpdate");
         _versionText.Text = release is null ? T("updateWindowNoRelease") : string.Format(T("releaseNotesVersion"), release.VersionText);
         _packageText.Text = string.Format(T("currentVersion"), snapshot.CurrentVersion) +
             (release is null ? string.Empty : "  ·  " + string.Format(T("updatePackageSize"), (release.Installer.Size / 1048576d).ToString("0.0", CultureInfo.InvariantCulture)));
-        _statusText.Text = cancelling ? T("cancellingDownload") : StatusText(snapshot);
+        _statusText.Text = StatusText(snapshot);
         _statusText.Foreground = snapshot.Status == ApplicationUpdateStatus.Error ? _errorBrush : _secondaryBrush;
         _historyWarningText.Text = T("releaseHistoryIncomplete");
         _historyWarning.IsVisible = release?.ReleaseHistoryIncomplete == true;
         _notesHeading.Text = T("updateReleaseNotes");
-        _closeHint.Text = T("closeCancelsDownload");
-        _closeHint.IsVisible = snapshot.Status is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying;
-        _progress.IsVisible = snapshot.Status is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Preparing ||
-            (snapshot.Status == ApplicationUpdateStatus.Ready && _downloadCancellation is not null);
-        _progress.IsIndeterminate = !downloading;
+        _closeHint.Text = T("closePausesDownload");
+        _closeHint.IsVisible = transferable;
+        _downloadDetails.Text = UpdateDownloadText.Format(_language, snapshot.Download);
+        _downloadDetails.IsVisible = snapshot.Download is not null && snapshot.HasDownloadTask;
+        _progress.IsVisible = transferable || transition || snapshot.Status == ApplicationUpdateStatus.Paused;
+        _progress.IsIndeterminate = !downloading && snapshot.Status != ApplicationUpdateStatus.Paused;
         _progress.Value = snapshot.ProgressPercent ?? 0;
 
         _installButton.IsVisible = updateKnown;
-        _installButton.IsEnabled = updateKnown && (downloading
-            ? _downloadCancellation is not null && !cancelling
-            : !busy);
+        _installButton.IsEnabled = updateKnown && !transition && !_checking &&
+            (transferable || snapshot.Status != ApplicationUpdateStatus.Checking);
         _installButton.Content = T(snapshot.Status switch
         {
-            ApplicationUpdateStatus.Downloading => cancelling ? "cancellingDownloadAction" : "cancelDownload",
-            ApplicationUpdateStatus.Verifying => "verifyingUpdateAction",
-            ApplicationUpdateStatus.Ready when _downloadCancellation is not null => "updatePreparing",
+            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying => "pauseDownload",
+            ApplicationUpdateStatus.Pausing => "pausingDownload",
+            ApplicationUpdateStatus.Stopping => "stoppingDownload",
             ApplicationUpdateStatus.Preparing => "updatePreparing",
+            ApplicationUpdateStatus.Ready when snapshot.HasDownloadTask => "updatePreparing",
             _ when !_updates.CanInstallUpdates => "openReleasePage",
+            _ when snapshot.DownloadError == UpdateDownloadError.ResumeUnsupported => "restartDownloadAndInstall",
+            ApplicationUpdateStatus.Paused => "resumeDownloadAndInstall",
             ApplicationUpdateStatus.Error => "retryDownloadAndInstall",
             _ => "downloadAndInstall"
         });
         _skipItem.IsVisible = updateKnown;
-        _skipItem.IsEnabled = !busy;
+        _skipItem.IsEnabled = !busy && !snapshot.HasDownloadTask;
         _skipItem.Header = T(snapshot.Status == ApplicationUpdateStatus.Skipped ? "resumeReminders" : "skipVersion");
         _releaseItem.Header = T("viewRelease");
         _recheckItem.Header = T("recheckUpdates");
-        _recheckItem.IsEnabled = !busy;
+        _recheckItem.IsEnabled = !busy && !snapshot.HasDownloadTask;
+        _stopItem.Header = T("stopAndClearDownload");
+        _stopItem.IsVisible = snapshot.HasDownloadTask;
+        _stopItem.IsEnabled = !transition && !_checking;
         _moreButton.Content = T("moreUpdateActions");
         _laterButton.Content = T("later");
-        _laterButton.IsVisible = !downloading;
+        _laterButton.IsVisible = !transferable && !transition;
         _laterButton.IsEnabled = !busy;
+        _backgroundButton.Content = T(snapshot.Status == ApplicationUpdateStatus.Verifying ? "backgroundUpdate" : "backgroundDownload");
+        _backgroundButton.IsVisible = transferable;
+        _backgroundButton.IsEnabled = !transition;
 
         if (rebuildNotes || !ReferenceEquals(_renderedRelease, release))
         {
@@ -272,11 +292,14 @@ internal sealed class UpdateWindow : AppWindow
             ApplicationUpdateStatus.NoCompatibleRelease => T("noCompatibleRelease"),
             ApplicationUpdateStatus.Available => string.Format(T("updateAvailableDescription"), snapshot.Release?.VersionText),
             ApplicationUpdateStatus.Skipped => string.Format(T("updateSkippedDescription"), snapshot.Release?.VersionText),
+            ApplicationUpdateStatus.Paused => T("downloadPaused"),
+            ApplicationUpdateStatus.Pausing => T("pausingDownload"),
+            ApplicationUpdateStatus.Stopping => T("stoppingDownload"),
             ApplicationUpdateStatus.Downloading => string.Format(T("downloadingUpdate"), snapshot.ProgressPercent ?? 0),
             ApplicationUpdateStatus.Verifying => T("verifyingUpdate"),
             ApplicationUpdateStatus.Preparing => T("updatePreparing"),
             ApplicationUpdateStatus.Ready => T("updateVerified"),
-            ApplicationUpdateStatus.Error => T("updateFailed"),
+            ApplicationUpdateStatus.Error => T(snapshot.DownloadError == UpdateDownloadError.ResumeUnsupported ? "resumeUnsupported" : "updateFailed"),
             _ => T("updateNotChecked")
         };
     }
@@ -316,38 +339,28 @@ internal sealed class UpdateWindow : AppWindow
     private async void OnInstallClicked(object? sender, RoutedEventArgs args)
     {
         if (_closed || !_installButton.IsEnabled || !HasKnownUpdate(_updates.Snapshot)) return;
-        if (_updates.Snapshot.Status == ApplicationUpdateStatus.Downloading)
+        if (_updates.Snapshot.Status is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying)
         {
-            _downloadCancellation?.Cancel();
-            RefreshView(rebuildNotes: false);
+            await _updates.PauseDownloadAsync();
             return;
         }
-        if (_downloadCancellation is not null || IsBusy(_updates.Snapshot.Status)) return;
-        if (!_updates.CanInstallUpdates)
-        {
-            _updates.OpenReleasePage();
-            return;
-        }
+        if (IsBusy(_updates.Snapshot.Status)) return;
+        if (!_updates.CanInstallUpdates) { _updates.OpenReleasePage(); return; }
+        if (_updates.Snapshot.DownloadError == UpdateDownloadError.ResumeUnsupported) await _updates.StopDownloadAsync();
+        await _updates.StartDownloadAndInstallAsync();
+    }
 
-        using var cancellation = new CancellationTokenSource();
-        _downloadCancellation = cancellation;
-        RefreshView(rebuildNotes: false);
-        try
-        {
-            var installerPath = await _updates.DownloadInstallerAsync(cancellation.Token);
-            // A completed download must not authorize installation after the user closed or cancelled.
-            if (!_closed && !cancellation.IsCancellationRequested && installerPath is not null)
-                _updates.BeginAutomaticInstall(installerPath);
-        }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-        {
-            // Cancellation can occur while the manager is still waiting for its operation gate.
-        }
-        finally
-        {
-            _downloadCancellation = null;
-            RefreshView(rebuildNotes: false);
-        }
+    private void OnBackgroundClicked(object? sender, RoutedEventArgs args)
+    {
+        if (!_backgroundButton.IsEnabled || !_backgroundButton.IsVisible) return;
+        _background = true;
+        Close();
+    }
+
+    private async void OnStopClicked(object? sender, RoutedEventArgs args)
+    {
+        if (_closed || !_stopItem.IsEnabled || !_stopItem.IsVisible) return;
+        await _updates.StopDownloadAsync();
     }
 
     private void OnSkipClicked(object? sender, RoutedEventArgs args)
@@ -378,17 +391,20 @@ internal sealed class UpdateWindow : AppWindow
     private void OnReleaseClicked(object? sender, RoutedEventArgs args) => _updates.OpenReleasePage();
     private void OnLaterClicked(object? sender, RoutedEventArgs args) => Close();
 
-    private void OnClosed(object? sender, EventArgs args)
+    private async void OnClosed(object? sender, EventArgs args)
     {
         _closed = true;
-        if (_updates.Snapshot.Status != ApplicationUpdateStatus.Preparing)
-            _downloadCancellation?.Cancel();
         _updates.Changed -= OnUpdateStateChanged;
         Closed -= OnClosed;
         _installButton.Click -= OnInstallClicked;
+        _backgroundButton.Click -= OnBackgroundClicked;
+        _stopItem.Click -= OnStopClicked;
         _skipItem.Click -= OnSkipClicked;
         _releaseItem.Click -= OnReleaseClicked;
         _recheckItem.Click -= OnRecheckClicked;
         _laterButton.Click -= OnLaterClicked;
+        if (!_background && _updates.Snapshot.HasDownloadTask && _updates.Snapshot.Status is
+            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Ready)
+            await _updates.PauseDownloadAsync();
     }
 }

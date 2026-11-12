@@ -11,6 +11,9 @@ internal enum ApplicationUpdateStatus
     Available,
     Skipped,
     Downloading,
+    Pausing,
+    Paused,
+    Stopping,
     Verifying,
     Ready,
     Preparing,
@@ -50,4 +53,16 @@ internal sealed record ApplicationUpdateSnapshot(
     string CurrentVersion,
     UpdateRelease? Release = null,
     int? ProgressPercent = null,
-    DateTimeOffset? LastSuccessfulCheckUtc = null);
+    DateTimeOffset? LastSuccessfulCheckUtc = null,
+    UpdateDownloadProgress? Download = null,
+    UpdateDownloadError DownloadError = UpdateDownloadError.None,
+    bool HasDownloadTask = false);
+
+internal enum UpdateDownloadError { None, ResumeUnsupported, Failed }
+
+internal sealed record UpdateDownloadProgress(
+    long DownloadedBytes,
+    long TotalBytes,
+    double BytesPerSecond = 0,
+    TimeSpan? Remaining = null,
+    bool? SupportsResume = null);

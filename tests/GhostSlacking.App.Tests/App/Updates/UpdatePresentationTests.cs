@@ -23,10 +23,9 @@ internal static class UpdatePresentationTests
     {
         About_action_tracks_update_state_without_saving_drafts();
         Update_menu_preserves_skip_resume_recheck_and_release_actions();
-        Download_can_be_cancelled_and_retried_without_duplicate_installation();
-        Cancelled_download_task_does_not_escape_the_click_handler();
-        Closing_before_handoff_cancels_without_installing();
-        Verification_and_handoff_do_not_offer_download_cancellation();
+        Download_can_pause_stop_and_continue_in_background();
+        Closing_the_window_pauses_without_installing();
+        Verification_can_pause_but_install_handoff_disables_controls();
         Portable_and_current_copies_offer_only_valid_actions();
         Localized_windows_fit_and_release_notes_scroll();
     }
@@ -70,23 +69,23 @@ internal static class UpdatePresentationTests
             Assert.Equal(SettingsStatus.None, Field<SettingsEditState>(window, "_editState").Status);
             window.ApplyAdjustmentResult(initial with { RevealDiameterPx = initial.RevealDiameterPx + 8 }, AdjustmentKind.Diameter);
 
-            foreach (var state in new[] { ApplicationUpdateStatus.Skipped, ApplicationUpdateStatus.Error, ApplicationUpdateStatus.Downloading, ApplicationUpdateStatus.Verifying, ApplicationUpdateStatus.Ready })
+            foreach (var state in new[] { ApplicationUpdateStatus.Skipped, ApplicationUpdateStatus.Error, ApplicationUpdateStatus.Downloading, ApplicationUpdateStatus.Verifying, ApplicationUpdateStatus.Ready, ApplicationUpdateStatus.Paused })
             {
                 updates.SetStatus(state, 42);
                 Assert.True(action.IsEnabled);
                 Assert.Equal(UiText.Text(UiLanguage.Chinese,
-                    state is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying ? "viewUpdateProgress" : "viewUpdateDetails"), action.Content);
+                    state is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Paused ? "viewUpdateProgress" : "viewUpdateDetails"), action.Content);
                 Click(action);
             }
-            Assert.Equal(6, opened);
+            Assert.Equal(7, opened);
             Assert.Equal("上次成功检查：2026-09-10 16:30", checkTime.Text);
-            foreach (var state in new[] { ApplicationUpdateStatus.Checking, ApplicationUpdateStatus.Preparing })
+            foreach (var state in new[] { ApplicationUpdateStatus.Checking, ApplicationUpdateStatus.Preparing, ApplicationUpdateStatus.Pausing, ApplicationUpdateStatus.Stopping })
             {
                 updates.SetStatus(state);
                 Assert.False(action.IsEnabled);
                 Click(action);
             }
-            Assert.Equal(6, opened);
+            Assert.Equal(7, opened);
             Assert.Equal(SettingsStatus.Modified, Field<SettingsEditState>(window, "_editState").Status);
             Assert.Equal(initial.Normalize(), Field<SettingsEditState>(window, "_editState").SavedSettings);
             Assert.Equal(initial.RevealDiameterPx + 8, Field<NumberBox>(window, "_diameter").Value);
@@ -155,110 +154,79 @@ internal static class UpdatePresentationTests
         finally { resumedWindow.Close(); }
     }
 
-    private static void Download_can_be_cancelled_and_retried_without_duplicate_installation()
+    private static void Download_can_pause_stop_and_continue_in_background()
     {
         using var updates = AvailableUpdates();
         var window = new UpdateWindow(updates, UiLanguage.Chinese);
-        try
-        {
-            var install = Field<Button>(window, "_installButton");
-            Click(install);
-            Assert.Equal(1, updates.DownloadCalls);
-            Assert.Equal("取消下载", install.Content);
-            Assert.False(Field<Button>(window, "_laterButton").IsVisible);
-            Assert.True(Field<TextBlock>(window, "_closeHint").IsVisible);
-            updates.SetStatus(ApplicationUpdateStatus.Downloading, 42);
-            Assert.Equal(42, Field<ProgressBar>(window, "_progress").Value);
-            Assert.False(Field<ProgressBar>(window, "_progress").IsIndeterminate);
-            Click(install);
-            Assert.True(updates.DownloadToken.IsCancellationRequested);
-            Assert.False(install.IsEnabled);
-            Click(install);
-            Assert.Equal(1, updates.DownloadCalls);
-            updates.CompleteDownload(null, ApplicationUpdateStatus.Available);
-            Assert.True(install.IsEnabled);
-            Assert.Equal("下载并安装", install.Content);
-            Assert.True(Field<Button>(window, "_laterButton").IsVisible);
-            Assert.False(Field<ProgressBar>(window, "_progress").IsVisible);
-
-            Click(install);
-            updates.CompleteDownload(null, ApplicationUpdateStatus.Error);
-            Assert.Equal("重试下载并安装", install.Content);
-            Assert.Equal(UiText.Text(UiLanguage.Chinese, "updateFailed"), Field<TextBlock>(window, "_statusText").Text);
-            Click(install);
-            Assert.Equal(3, updates.DownloadCalls);
-            updates.CompleteDownload("update.exe", ApplicationUpdateStatus.Ready);
-            Assert.Equal(1, updates.BeginInstallCalls);
-            Assert.Equal(ApplicationUpdateStatus.Preparing, updates.Snapshot.Status);
-            Click(install);
-            Assert.Equal(3, updates.DownloadCalls);
-            Assert.Equal(1, updates.BeginInstallCalls);
-        }
-        finally { window.Close(); }
+        var install = Field<Button>(window, "_installButton");
+        Click(install);
+        Assert.Equal(1, updates.DownloadCalls);
+        Assert.Equal("暂停", install.Content);
+        Assert.True(Field<Button>(window, "_backgroundButton").IsVisible);
+        Assert.False(Field<Button>(window, "_laterButton").IsVisible);
+        updates.SetStatus(ApplicationUpdateStatus.Downloading, 42);
+        Assert.Equal(42, Field<ProgressBar>(window, "_progress").Value);
+        Click(install);
+        Assert.Equal(1, updates.PauseCalls);
+        Assert.Equal("继续下载并安装", install.Content);
+        Assert.Equal(ApplicationUpdateStatus.Paused, updates.Snapshot.Status);
+        Click(install);
+        Assert.Equal(2, updates.DownloadCalls);
+        Assert.False(Field<MenuItem>(window, "_recheckItem").IsEnabled);
+        Click(Field<MenuItem>(window, "_stopItem"));
+        Assert.Equal(1, updates.StopCalls);
+        Assert.Equal("下载并安装", install.Content);
+        Click(install);
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+        Click(Field<Button>(window, "_backgroundButton"));
+        Assert.True(closed);
+        Assert.Equal(1, updates.PauseCalls);
+        updates.CompleteDownload("update.exe", ApplicationUpdateStatus.Ready);
+        Assert.Equal(1, updates.BeginInstallCalls);
+        Assert.Equal(ApplicationUpdateStatus.Preparing, updates.Snapshot.Status);
     }
 
-    private static void Closing_before_handoff_cancels_without_installing()
+    private static void Closing_the_window_pauses_without_installing()
     {
-        foreach (var state in new[] { ApplicationUpdateStatus.Downloading, ApplicationUpdateStatus.Verifying })
+        foreach (var state in new[] { ApplicationUpdateStatus.Downloading, ApplicationUpdateStatus.Verifying, ApplicationUpdateStatus.Ready })
         {
             using var updates = AvailableUpdates();
             var window = new UpdateWindow(updates, UiLanguage.English);
             Click(Field<Button>(window, "_installButton"));
             updates.SetStatus(state);
             window.Close();
-            Assert.True(updates.DownloadToken.IsCancellationRequested);
-            // Even a late success from the downloader cannot authorize installation after closing.
-            updates.CompleteDownload("update.exe", ApplicationUpdateStatus.Ready);
+            Assert.Equal(1, updates.PauseCalls);
             Assert.Equal(0, updates.BeginInstallCalls);
             var reopened = new UpdateWindow(updates, UiLanguage.English);
-            Assert.True(Field<Button>(reopened, "_installButton").IsEnabled);
-            Assert.True(Field<MenuItem>(reopened, "_recheckItem").IsEnabled);
+            Assert.Equal("Resume and install", Field<Button>(reopened, "_installButton").Content);
+            Assert.Equal(1, updates.DownloadCalls);
+            Assert.False(Field<MenuItem>(reopened, "_recheckItem").IsEnabled);
             reopened.Close();
+            Assert.Equal(1, updates.PauseCalls);
         }
     }
 
-    private static void Cancelled_download_task_does_not_escape_the_click_handler()
-    {
-        using var updates = AvailableUpdates();
-        var window = new UpdateWindow(updates, UiLanguage.English);
-        try
-        {
-            var install = Field<Button>(window, "_installButton");
-            Click(install);
-            Click(install);
-            updates.CancelDownloadTask();
-            Dispatcher.UIThread.RunJobs();
-            Assert.True(install.IsEnabled);
-            Assert.Equal("Download and install", install.Content);
-            Assert.Equal(0, updates.BeginInstallCalls);
-        }
-        finally { window.Close(); }
-    }
-
-    private static void Verification_and_handoff_do_not_offer_download_cancellation()
+    private static void Verification_can_pause_but_install_handoff_disables_controls()
     {
         using var updates = AvailableUpdates();
         var window = new UpdateWindow(updates, UiLanguage.Chinese);
         var install = Field<Button>(window, "_installButton");
         Click(install);
-        foreach (var state in new[] { ApplicationUpdateStatus.Verifying, ApplicationUpdateStatus.Ready })
-        {
-            updates.SetStatus(state);
-            Assert.False(install.IsEnabled);
-            Assert.NotEqual("取消下载", install.Content);
-            Assert.True(Field<ProgressBar>(window, "_progress").IsIndeterminate);
-            Click(install);
-            Assert.False(updates.DownloadToken.IsCancellationRequested);
-            Assert.Equal(1, updates.DownloadCalls);
-        }
-        updates.DuringHandoff = () =>
-        {
-            Assert.False(install.IsEnabled);
-            window.Close();
-            Assert.False(updates.DownloadToken.IsCancellationRequested);
-        };
-        updates.CompleteDownload("update.exe", ApplicationUpdateStatus.Ready);
-        Assert.Equal(1, updates.BeginInstallCalls);
+        updates.SetStatus(ApplicationUpdateStatus.Verifying);
+        Assert.True(install.IsEnabled);
+        Assert.Equal("暂停", install.Content);
+        Assert.Equal("后台更新", Field<Button>(window, "_backgroundButton").Content);
+        Assert.True(Field<ProgressBar>(window, "_progress").IsIndeterminate);
+        Click(install);
+        Assert.Equal(1, updates.PauseCalls);
+        Click(install);
+        updates.SetStatus(ApplicationUpdateStatus.Preparing);
+        Assert.False(install.IsEnabled);
+        Assert.False(Field<MenuItem>(window, "_stopItem").IsEnabled);
+        window.Close();
+        Assert.Equal(1, updates.PauseCalls);
+        updates.CompleteDownload(null, ApplicationUpdateStatus.Preparing);
 
         using var failed = AvailableUpdates();
         failed.FailHandoff = true;
@@ -318,7 +286,7 @@ internal static class UpdatePresentationTests
                     var notes = Field<StackPanel>(window, "_notesPanel");
                     var scroll = Assert.IsType<ScrollViewer>(notes.Parent);
                     Assert.True(scroll.Extent.Height > scroll.Viewport.Height);
-                    foreach (var state in new[] { ApplicationUpdateStatus.Available, ApplicationUpdateStatus.Downloading, ApplicationUpdateStatus.Verifying, ApplicationUpdateStatus.Error, ApplicationUpdateStatus.Preparing })
+                    foreach (var state in new[] { ApplicationUpdateStatus.Available, ApplicationUpdateStatus.Downloading, ApplicationUpdateStatus.Verifying, ApplicationUpdateStatus.Paused, ApplicationUpdateStatus.Error, ApplicationUpdateStatus.Preparing })
                     {
                         updates.SetStatus(state, 42);
                         Settle(window);
@@ -412,6 +380,7 @@ internal static class UpdatePresentationTests
     {
         private TaskCompletionSource<string?>? _download;
         private TaskCompletionSource<ApplicationUpdateSnapshot>? _check;
+        private CancellationTokenSource? _cancellation;
         public ApplicationUpdateSnapshot Snapshot { get; private set; } = snapshot;
         public bool CanInstallUpdates => canInstall;
         public UpdateChannel Channel { get; private set; } = UpdateChannel.Stable;
@@ -421,9 +390,9 @@ internal static class UpdatePresentationTests
         public int DownloadCalls { get; private set; }
         public int BeginInstallCalls { get; private set; }
         public int ReleasePageCalls { get; private set; }
-        public CancellationToken DownloadToken { get; private set; }
+        public int PauseCalls { get; private set; }
+        public int StopCalls { get; private set; }
         public bool FailHandoff { get; set; }
-        public Action? DuringHandoff { get; set; }
         public Task<ApplicationUpdateSnapshot> CheckAsync(CancellationToken cancellationToken = default)
         {
             CheckCalls++;
@@ -439,27 +408,45 @@ internal static class UpdatePresentationTests
         public Task<string?> DownloadInstallerAsync(CancellationToken cancellationToken = default)
         {
             DownloadCalls++;
-            DownloadToken = cancellationToken;
             _download = new();
             SetStatus(ApplicationUpdateStatus.Downloading, 0);
             return _download.Task;
         }
+        public async Task StartDownloadAndInstallAsync()
+        {
+            using var cancellation = new CancellationTokenSource();
+            _cancellation = cancellation;
+            var path = await DownloadInstallerAsync(cancellation.Token);
+            if (!cancellation.IsCancellationRequested && path is not null) BeginAutomaticInstall(path);
+            if (ReferenceEquals(_cancellation, cancellation)) _cancellation = null;
+        }
+        public Task PauseDownloadAsync()
+        {
+            PauseCalls++;
+            _cancellation?.Cancel();
+            SetStatus(ApplicationUpdateStatus.Paused, Snapshot.ProgressPercent);
+            _download?.TrySetResult(null);
+            return Task.CompletedTask;
+        }
+        public Task StopDownloadAsync()
+        {
+            StopCalls++;
+            _cancellation?.Cancel();
+            SetStatus(ApplicationUpdateStatus.Available);
+            _download?.TrySetResult(null);
+            return Task.CompletedTask;
+        }
+        public Task PrepareForExitAsync() => Task.CompletedTask;
         public void CompleteDownload(string? path, ApplicationUpdateStatus status)
         {
             SetStatus(status);
-            _download!.SetResult(path);
-        }
-        public void CancelDownloadTask()
-        {
-            SetStatus(ApplicationUpdateStatus.Available);
-            _download!.SetCanceled(DownloadToken);
+            _download!.TrySetResult(path);
         }
         public bool BeginAutomaticInstall(string installerPath)
         {
             BeginInstallCalls++;
             SetStatus(FailHandoff ? ApplicationUpdateStatus.Error : ApplicationUpdateStatus.Preparing);
             if (FailHandoff) return false;
-            DuringHandoff?.Invoke();
             InstallHandoffStarted?.Invoke(this, EventArgs.Empty);
             return true;
         }
@@ -467,7 +454,11 @@ internal static class UpdatePresentationTests
         public void ResumeCurrentRelease() => SetStatus(ApplicationUpdateStatus.Available);
         public void SetStatus(ApplicationUpdateStatus status, int? progress = null)
         {
-            Snapshot = Snapshot with { Status = status, ProgressPercent = progress };
+            var task = status is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Paused or
+                ApplicationUpdateStatus.Preparing or ApplicationUpdateStatus.Ready || status == ApplicationUpdateStatus.Error && Snapshot.HasDownloadTask;
+            var total = Snapshot.Release?.Installer.Size ?? 1;
+            Snapshot = Snapshot with { Status = status, ProgressPercent = progress, HasDownloadTask = task,
+                Download = task ? new UpdateDownloadProgress(total * (progress ?? 0) / 100, total) : null };
             Changed?.Invoke(this, EventArgs.Empty);
         }
         public bool OpenSourceRepository() => true;

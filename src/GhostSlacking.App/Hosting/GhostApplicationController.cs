@@ -80,7 +80,7 @@ internal sealed partial class GhostApplicationController : IDisposable
         _logger = new FileLogger(_settings);
         _dataExport = new DataExportService(_logger);
         _updateCompletionStore = new UpdateCompletionStore(logger: _logger);
-        _updates = new GitHubApplicationUpdateManager(_logger, channel: _settings.UpdateChannel);
+        _updates = new ApplicationUpdateManager(_logger, channel: _settings.UpdateChannel);
         _windows = new Win32WindowApi();
         _revealOverlay = new RevealEdgeOverlay(_logger);
         var backend = new Win32VisibilityBackend(_logger);
@@ -220,7 +220,7 @@ internal sealed partial class GhostApplicationController : IDisposable
         ExitApplication(restoreAll: false);
     }
 
-    private void ExitApplication(bool restoreAll)
+    private async void ExitApplication(bool restoreAll)
     {
         if (_isExiting)
         {
@@ -231,11 +231,12 @@ internal sealed partial class GhostApplicationController : IDisposable
         _isExiting = true;
         try
         {
-            Dispose();
+            await _updates.PrepareForExitAsync();
         }
         finally
         {
-            _lifetime.Shutdown();
+            try { Dispose(); }
+            finally { _lifetime.Shutdown(); }
         }
     }
 

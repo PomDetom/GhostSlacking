@@ -122,6 +122,8 @@ internal sealed partial class GhostApplicationController : IDisposable
         _updateWindow = null;
     }
 
+    private ApplicationUpdateStatus _lastUpdateStatus;
+
     private void UpdateTrayStatus()
     {
         var profile = _coordinator.CurrentProfile;
@@ -140,7 +142,14 @@ internal sealed partial class GhostApplicationController : IDisposable
                 not ApplicationUpdateStatus.NoCompatibleRelease;
         _updateItem.IsVisible = showUpdate;
         _updateItem.Header = showUpdate
-            ? string.Format(UiText.Text(_settings.Language, "updateAvailableTray"), update.Release!.VersionText)
+            ? update.Status switch
+            {
+                ApplicationUpdateStatus.Downloading => string.Format(UiText.Text(_settings.Language, "downloadingUpdate"), update.ProgressPercent ?? 0),
+                ApplicationUpdateStatus.Paused => UiText.Text(_settings.Language, "downloadPaused"),
+                ApplicationUpdateStatus.Verifying => UiText.Text(_settings.Language, "verifyingUpdate"),
+                ApplicationUpdateStatus.Preparing => UiText.Text(_settings.Language, "updatePreparing"),
+                _ => string.Format(UiText.Text(_settings.Language, "updateAvailableTray"), update.Release!.VersionText)
+            }
             : string.Empty;
         _exitItem.Header = UiText.Text(_settings.Language, "exit");
         _restoreItem.IsEnabled = profile is not null;
@@ -162,12 +171,23 @@ internal sealed partial class GhostApplicationController : IDisposable
 
         if (Dispatcher.UIThread.CheckAccess())
         {
-            UpdateTrayStatus();
+            RefreshUpdateStatus();
         }
         else
         {
-            Dispatcher.UIThread.Post(UpdateTrayStatus);
+            Dispatcher.UIThread.Post(RefreshUpdateStatus);
         }
+    }
+
+    private void RefreshUpdateStatus()
+    {
+        if (_isExiting) return;
+        var snapshot = _updates.Snapshot;
+        if (snapshot.Status == ApplicationUpdateStatus.Error && snapshot.HasDownloadTask && _lastUpdateStatus != ApplicationUpdateStatus.Error)
+            _notifications.Show(UiText.Text(_settings.Language, "downloadInterrupted"), UserNotificationSeverity.Error,
+                OpenUpdateWindow, UserNotificationSource.Update);
+        _lastUpdateStatus = snapshot.Status;
+        UpdateTrayStatus();
     }
 
     private void ShowError(string message, UserNotificationSource source = UserNotificationSource.Error)

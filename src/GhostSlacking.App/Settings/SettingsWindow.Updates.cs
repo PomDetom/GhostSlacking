@@ -93,27 +93,32 @@ internal sealed partial class SettingsWindow : AppWindow
             ApplicationUpdateStatus.Available => string.Format(UiText.Text(language, "updateAvailableDescription"), releaseVersion),
             ApplicationUpdateStatus.Skipped => string.Format(UiText.Text(language, "updateSkippedDescription"), releaseVersion),
             ApplicationUpdateStatus.Downloading => string.Format(UiText.Text(language, "downloadingUpdate"), snapshot.ProgressPercent ?? 0),
+            ApplicationUpdateStatus.Paused => UiText.Text(language, "downloadPaused"),
+            ApplicationUpdateStatus.Pausing => UiText.Text(language, "pausingDownload"),
+            ApplicationUpdateStatus.Stopping => UiText.Text(language, "stoppingDownload"),
             ApplicationUpdateStatus.Verifying => UiText.Text(language, "verifyingUpdate"),
             ApplicationUpdateStatus.Ready => UiText.Text(language, "updateVerified"),
             ApplicationUpdateStatus.Preparing => UiText.Text(language, "updatePreparing"),
-            ApplicationUpdateStatus.Error => UiText.Text(language, "updateFailed"),
+            ApplicationUpdateStatus.Error => UiText.Text(language, snapshot.DownloadError == UpdateDownloadError.ResumeUnsupported ? "resumeUnsupported" : "updateFailed"),
             _ => UiText.Text(language, "updateNotChecked")
         };
+        if (snapshot.HasDownloadTask && snapshot.Download is not null)
+            _updateStatusText.Text += "\n" + UpdateDownloadText.Format(language, snapshot.Download);
 
         var updateKnown = HasKnownUpdate(snapshot);
-        var blocked = snapshot.Status is ApplicationUpdateStatus.Checking or ApplicationUpdateStatus.Preparing;
+        var blocked = snapshot.Status is ApplicationUpdateStatus.Checking or ApplicationUpdateStatus.Preparing or ApplicationUpdateStatus.Pausing or ApplicationUpdateStatus.Stopping;
         _checkUpdatesButton.Content = UiText.Text(language, snapshot.Status switch
         {
             ApplicationUpdateStatus.Checking => "checkingUpdatesAction",
             ApplicationUpdateStatus.Preparing => "updatePreparing",
-            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying => "viewUpdateProgress",
+            ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Paused => "viewUpdateProgress",
             _ => updateKnown ? "viewUpdateDetails" : "checkUpdates"
         });
         _checkUpdatesButton.IsEnabled = !blocked && _updates is not null && (!updateKnown || _openUpdateWindow is not null);
         _checkUpdatesButton.Classes.Set("accent", updateKnown);
-        _updateProgress.IsVisible = snapshot.Status is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or
+        _updateProgress.IsVisible = snapshot.Status is ApplicationUpdateStatus.Downloading or ApplicationUpdateStatus.Verifying or ApplicationUpdateStatus.Paused or
             ApplicationUpdateStatus.Preparing;
-        _updateProgress.IsIndeterminate = snapshot.Status != ApplicationUpdateStatus.Downloading;
+        _updateProgress.IsIndeterminate = snapshot.Status is not ApplicationUpdateStatus.Downloading and not ApplicationUpdateStatus.Paused;
         _updateProgress.Value = snapshot.ProgressPercent ?? 0;
     }
 }
