@@ -47,6 +47,8 @@ internal sealed partial class SettingsWindow : AppWindow
             Width = 36,
             Height = 36,
             Padding = new Thickness(8),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
             Content = new SymbolIcon { Symbol = symbol, FontSize = 16 }
         };
         button.Tag = tooltipKey;
@@ -83,11 +85,16 @@ internal sealed partial class SettingsWindow : AppWindow
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
 
-    private static ComboBox CreateComboBox() => new()
+    private static ComboBox CreateComboBox()
     {
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-        MinHeight = 36
-    };
+        var combo = new ComboBox();
+        SettingsFieldStyles.Configure(combo);
+        return combo;
+    }
+
+    // The control group is 240/260 DIP wide; its gap from the copy is additional.
+    private static double SettingEditorColumnWidth(UiLanguage language) =>
+        (language == UiLanguage.English ? 260 : 240) + 16;
 
     private void PopulateChoices(AppSettings settings)
     {
@@ -201,7 +208,7 @@ internal sealed partial class SettingsWindow : AppWindow
             _saveBar.SetLanguage(language);
             foreach (var (column, hotkey) in _editorColumns)
             {
-                column.Width = new GridLength(hotkey ? 280 : language == UiLanguage.English ? 260 : 240);
+                column.Width = new GridLength(hotkey ? 280 : SettingEditorColumnWidth(language));
             }
             foreach (var (text, key) in _localizedText)
             {

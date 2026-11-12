@@ -108,6 +108,7 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
                     ItemsSource = new[] { T("adjustShortText"), T("adjustLongText") },
                     SelectedIndex = 0, HorizontalAlignment = HorizontalAlignment.Stretch
                 };
+                SettingsFieldStyles.Configure(MessageChoice);
                 AutomationProperties.SetName(MessageChoice, T("adjustSample"));
                 MessageChoice.SelectionChanged += (_, _) => RefreshPreview();
                 _body.Children.Add(MessageChoice);
@@ -254,11 +255,12 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         return _presenter;
     }
 
-    internal void OpenAt(Control anchor)
+    internal void OpenAt(Control anchor, Control? inputPassThrough = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        // Let the trigger toggle this flyout without light-dismiss consuming its click.
-        OverlayInputPassThroughElement = anchor;
+        // Let the trigger and its sibling reset button receive the first click,
+        // rather than letting light-dismiss consume it before the reset runs.
+        OverlayInputPassThroughElement = inputPassThrough ?? anchor;
         _owner = TopLevel.GetTopLevel(anchor) as Window;
         if (_owner is not null)
         {
