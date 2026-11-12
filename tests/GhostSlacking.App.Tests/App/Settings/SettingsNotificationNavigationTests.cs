@@ -39,11 +39,11 @@ internal static class SettingsNotificationNavigationTests
             var notificationItem = items.Single(item => Equals(item.Tag, "notifications"));
             var generalItem = items.Single(item => Equals(item.Tag, "general"));
             var pages = Field<Dictionary<string, Control>>(window, "_pages");
-            var adjustments = Field<Dictionary<AdjustmentKind, (TextBlock Value, Button Row)>>(window, "_adjustmentValues");
+            var adjustments = Field<Dictionary<AdjustmentKind, SettingsAdjustmentRow>>(window, "_adjustmentValues");
             var kinds = new[] { AdjustmentKind.NotificationRadius, AdjustmentKind.NotificationWidth,
                 AdjustmentKind.NotificationHeight, AdjustmentKind.NotificationHorizontal, AdjustmentKind.NotificationVertical };
             var notificationRows = pages["notifications"].GetLogicalDescendants().OfType<Button>().ToArray();
-            Assert.Equal(kinds.Select(kind => adjustments[kind].Row), notificationRows);
+            Assert.Equal(kinds.SelectMany(kind => new[] { adjustments[kind].Row, adjustments[kind].Reset }), notificationRows);
             foreach (var row in notificationRows)
             {
                 Assert.DoesNotContain(row, pages["general"].GetLogicalDescendants());

@@ -40,6 +40,8 @@ public sealed class AvaloniaStartupTests
                 AssertSaveBarFitsSingleLineMessages();
                 AssertSettingsCancelAndSaveLifecycle();
                 SettingsNotificationNavigationTests.VerifyUi();
+                stage = "settings value controls";
+                SettingsValueControlsTests.VerifyUi();
                 AssertPeekFrameRateSetting(settingsWindow);
                 AssertBackgroundInteractionSetting();
                 AssertAboutPage();

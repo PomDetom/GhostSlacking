@@ -80,7 +80,7 @@ internal sealed partial class SettingsWindow : AppWindow
     private readonly NumberBox _notificationHeight;
     private readonly NumberBox _notificationHorizontalPosition;
     private readonly NumberBox _notificationVerticalPosition;
-    private readonly Dictionary<AdjustmentKind, (TextBlock Value, Button Row)> _adjustmentValues = [];
+    private readonly Dictionary<AdjustmentKind, SettingsAdjustmentRow> _adjustmentValues = [];
     private SettingsAdjustmentFlyout? _activeAdjustment;
     internal SettingsAdjustmentFlyout? ActiveAdjustment => _activeAdjustment;
     private readonly ComboBox _logLevel;

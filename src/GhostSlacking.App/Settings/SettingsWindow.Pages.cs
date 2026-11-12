@@ -291,7 +291,7 @@ internal sealed partial class SettingsWindow : AppWindow
     {
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        var editorColumn = new ColumnDefinition(new GridLength(hotkey ? 280 : 240));
+        var editorColumn = new ColumnDefinition(new GridLength(hotkey ? 280 : SettingEditorColumnWidth(language)));
         grid.ColumnDefinitions.Add(editorColumn);
         _editorColumns.Add((editorColumn, hotkey));
 

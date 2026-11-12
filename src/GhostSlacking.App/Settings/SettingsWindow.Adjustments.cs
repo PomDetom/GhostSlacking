@@ -21,6 +21,8 @@ using ToolTip = Avalonia.Controls.ToolTip;
 
 namespace GhostSlacking.App;
 
+internal sealed record SettingsAdjustmentRow(TextBlock Value, Button Row, Button Reset, Border Field);
+
 internal sealed partial class SettingsWindow : AppWindow
 {
 
@@ -43,26 +45,46 @@ internal sealed partial class SettingsWindow : AppWindow
         description.FontSize = 12;
         description.Foreground = _secondaryBrush;
         description.TextWrapping = TextWrapping.Wrap;
-        var copy = new StackPanel { Spacing = 4, Children = { title, description } };
-        var value = new TextBlock { Foreground = _primaryBrush, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 240 };
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        var copy = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Children = { title, description } };
+        var value = new TextBlock();
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(SettingEditorColumnWidth(language))));
+        _editorColumns.Add((grid.ColumnDefinitions[1], false));
         grid.Children.Add(copy);
-        value.Margin = new Thickness(16, 0, 0, 0);
-        Grid.SetColumn(value, 1);
-        grid.Children.Add(value);
         var button = new Button
         {
             Content = grid, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            HorizontalAlignment = HorizontalAlignment.Stretch, Background = _cardBrush,
-            BorderBrush = _fieldBorderBrush, BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Stretch, Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
             CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 14)
         };
-        _adjustmentValues[kind] = (value, button);
-        button.Click += (_, _) => OpenAdjustment(kind, button);
-        return button;
+        var field = SettingsFieldStyles.CreateValueField(value, button);
+        Grid.SetColumn(field, 1);
+        grid.Children.Add(field);
+        var reset = CreateIconButton(Symbol.Refresh, "resetSetting");
+        reset.HorizontalAlignment = HorizontalAlignment.Right;
+        reset.VerticalAlignment = VerticalAlignment.Center;
+        reset.Margin = new Thickness(0, 0, 16, 0);
+        reset.Click += (_, args) =>
+        {
+            args.Handled = true;
+            CloseAdjustment();
+            CancelKeyCapture();
+            ApplyAdjustmentResult(DefaultSettings, kind);
+        };
+        // Siblings keep the entire card clickable without nesting interactive controls.
+        var actions = new Grid { Children = { button, reset } };
+        _adjustmentValues[kind] = new(value, button, reset, field);
+        button.Click += (_, _) => OpenAdjustment(kind, button, actions);
+        return new Border
+        {
+            Background = _cardBrush, BorderBrush = _fieldBorderBrush, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10), Child = actions
+        };
     }
 
-    internal void OpenAdjustment(AdjustmentKind kind, Control anchor)
+    internal void OpenAdjustment(AdjustmentKind kind, Control anchor, Control? inputPassThrough = null)
     {
         CancelKeyCapture();
         var same = _activeAdjustment?.Kind == kind;
@@ -71,7 +93,7 @@ internal sealed partial class SettingsWindow : AppWindow
         var flyout = new SettingsAdjustmentFlyout(GetSettings(), kind, result => ApplyAdjustmentResult(result, kind));
         _activeAdjustment = flyout;
         flyout.Closed += (_, _) => { if (ReferenceEquals(_activeAdjustment, flyout)) _activeAdjustment = null; };
-        flyout.OpenAt(anchor);
+        flyout.OpenAt(anchor, inputPassThrough);
     }
 
     private void CloseAdjustment()
@@ -112,9 +134,13 @@ internal sealed partial class SettingsWindow : AppWindow
         foreach (var (kind, row) in _adjustmentValues)
         {
             var formatted = SettingAdjustment.Format(settings, kind, CurrentLanguage);
-            row.Value.Text = formatted + "  ⌄";
+            row.Value.Text = formatted;
+            var label = UiText.Text(CurrentLanguage, SettingAdjustment.For(kind).Label);
             Avalonia.Automation.AutomationProperties.SetName(row.Row,
-                UiText.Text(CurrentLanguage, SettingAdjustment.For(kind).Label) + ": " + formatted);
+                label + ": " + formatted);
+            var resetLabel = UiText.Text(CurrentLanguage, "resetSetting") + ": " + label;
+            ToolTip.SetTip(row.Reset, resetLabel);
+            Avalonia.Automation.AutomationProperties.SetName(row.Reset, resetLabel);
         }
     }
 }
