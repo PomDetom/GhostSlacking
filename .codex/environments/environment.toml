@@ -9,19 +9,21 @@ script = ""
 script = '''
 $ErrorActionPreference = 'Stop'
 
+Write-Host ("Initializing GhostSlacking with PowerShell {0}." -f $PSVersionTable.PSVersion)
+
 foreach ($tool in @('git', 'dotnet', 'pwsh')) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "缺少开发工具：$tool"
+        throw "Required development tool not found: $tool"
     }
 }
 
 if (-not (Test-Path -LiteralPath './GhostSlacking.sln')) {
-    throw '请从 GhostSlacking 仓库根目录执行初始化。'
+    throw 'Run setup from the GhostSlacking repository root.'
 }
 
 dotnet restore GhostSlacking.sln
 if ($LASTEXITCODE -ne 0) {
-    throw '依赖还原失败。'
+    throw 'Dependency restore failed.'
 }'''
 
 [[actions]]
