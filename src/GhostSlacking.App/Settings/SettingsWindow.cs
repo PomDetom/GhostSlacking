@@ -93,7 +93,6 @@ internal sealed partial class SettingsWindow : AppWindow
     private readonly TextBlock _updateStatusText;
     private readonly ProgressBar _updateProgress;
     private readonly Button _checkUpdatesButton;
-    private readonly Button _viewUpdateButton;
     private readonly Button _sourceRepositoryButton;
     private readonly Button _releasePageButton;
     private readonly ToggleSwitch _restoreOnExit;
@@ -172,15 +171,13 @@ internal sealed partial class SettingsWindow : AppWindow
         _exportSettingsButton.Click += OnExportSettingsClicked;
         _currentVersionText = new TextBlock();
         _latestVersionText = new TextBlock();
-        _lastUpdateCheckText = new TextBlock();
+        _lastUpdateCheckText = new TextBlock { TextWrapping = TextWrapping.Wrap };
         _updateStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap };
         _updateProgress = new ProgressBar { Minimum = 0, Maximum = 100, IsVisible = false };
         _checkUpdatesButton = new Button { MinWidth = 120 };
-        _viewUpdateButton = new Button { MinWidth = 130, IsVisible = false };
         _sourceRepositoryButton = CreateTextButton(settings.Language, "sourceRepository");
         _releasePageButton = CreateTextButton(settings.Language, "releasePage");
         _checkUpdatesButton.Click += OnCheckUpdatesClicked;
-        _viewUpdateButton.Click += OnViewUpdateClicked;
         _sourceRepositoryButton.Click += OnSourceRepositoryClicked;
         _releasePageButton.Click += OnReleasePageClicked;
         _restoreOnExit = new ToggleSwitch { IsChecked = settings.RestoreOnExit };
@@ -321,7 +318,6 @@ internal sealed partial class SettingsWindow : AppWindow
         _exportLogsButton.Click -= OnExportLogsClicked;
         _exportSettingsButton.Click -= OnExportSettingsClicked;
         _checkUpdatesButton.Click -= OnCheckUpdatesClicked;
-        _viewUpdateButton.Click -= OnViewUpdateClicked;
         _sourceRepositoryButton.Click -= OnSourceRepositoryClicked;
         _releasePageButton.Click -= OnReleasePageClicked;
         _themeMode.SelectionChanged -= OnThemeModeSelectionChanged;
