@@ -337,9 +337,16 @@ public sealed class SettingsAdjustmentTests
                     PumpUi(TimeSpan.FromMilliseconds(30));
                     var normal = RenderColors(button);
                     Send(RawPointerEventType.Move, 0, false, trackX: x);
-                    PumpUi(TimeSpan.FromMilliseconds(30));
                     Assert.True(button.IsPointerOver);
-                    Assert.False(normal.SequenceEqual(RenderColors(button)), $"{kind} {button.Name} must show hover feedback.");
+                    // Pointer state changes synchronously, but the themed hover transition and
+                    // compositor can take more than one frame on a busy Windows runner.
+                    var hovered = normal;
+                    for (var attempt = 0; normal.SequenceEqual(hovered) && attempt < 40; attempt++)
+                    {
+                        PumpUi(TimeSpan.FromMilliseconds(25));
+                        hovered = RenderColors(button);
+                    }
+                    Assert.False(normal.SequenceEqual(hovered), $"{kind} {button.Name} must show hover feedback.");
                     if (kind == AdjustmentKind.Diameter && Environment.GetEnvironmentVariable("GHOST_ADJUSTMENT_OUTPUT") is { Length: > 0 } output)
                         RenderLayout(flyout, output, $"{button.Name}-hover");
                 }
