@@ -90,10 +90,6 @@ internal sealed partial class SettingsWindow : AppWindow
             ])
         ]);
 
-        var experimentalNote = LocalizedText(language, "backgroundInteractionNote");
-        experimentalNote.FontSize = 13;
-        experimentalNote.Foreground = _secondaryBrush;
-        experimentalNote.TextWrapping = TextWrapping.Wrap;
         _pages[ExperimentsPage] = CreatePage(
         [
             CreateSection(language, "backgroundInteractionSection",
@@ -101,8 +97,7 @@ internal sealed partial class SettingsWindow : AppWindow
                 CreateSettingRow(language, "backgroundInteraction", "backgroundInteractionDescription", _backgroundInteraction),
                 CreateSettingRow(language, "continuousInteraction", "continuousInteractionDescription", _continuousInteraction),
                 CreateHotkeyRow(language, "backgroundInteractionHotkey", "backgroundInteractionHotkeyDescription", _backgroundInteractionHotkey)
-            ]),
-            experimentalNote
+            ])
         ]);
 
         _pages[HotkeysPage] = CreatePage(
