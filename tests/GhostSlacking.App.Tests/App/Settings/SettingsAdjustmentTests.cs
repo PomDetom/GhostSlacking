@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Input.Raw;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Media.Imaging;
@@ -86,8 +87,10 @@ public sealed class SettingsAdjustmentTests
         try
         {
             VerifyDraftLifecycle(owner);
+            VerifyPointerInteraction();
             VerifyNotificationContentParity(owner);
             VerifyAnimationLifecycle(owner);
+            VerifyFrameRateDescriptions(owner);
             VerifyBlurContrast(owner);
             VerifyLocalizedLayouts(owner);
         }
@@ -211,19 +214,238 @@ public sealed class SettingsAdjustmentTests
     private static void VerifyAnimationLifecycle(SettingsWindow owner)
     {
         using var flyout = new SettingsAdjustmentFlyout(new AppSettings(), AdjustmentKind.FrameRate, _ => { }, new FixedDisplay());
-        flyout.OpenAt(owner);
         Assert.False(flyout.IsAnimationRunning);
+        flyout.OpenAt(owner);
+        Assert.True(flyout.IsAnimationRunning);
         flyout.FrameRateSlider!.Value = 2;
         Assert.Equal(75, flyout.Decision.TargetFramesPerSecond);
-        flyout.SetPlaying(true);
-        Assert.True(flyout.IsAnimationRunning);
-        flyout.SetPlaying(false);
-        Assert.False(flyout.IsAnimationRunning);
-        flyout.SetPlaying(true);
+        var frame = new DispatcherFrame();
+        DispatcherTimer.RunOnce(() => frame.Continue = false, TimeSpan.FromMilliseconds(60));
+        Dispatcher.UIThread.PushFrame(frame);
+        Assert.True(flyout.RevealSample!.AnimationSeconds > 0);
         owner.WindowState = WindowState.Minimized;
         Assert.False(flyout.IsAnimationRunning);
         Assert.False(flyout.IsOpen);
         owner.WindowState = WindowState.Normal;
+
+        foreach (var close in new[] { "hide", "escape", "complete", "owner" })
+        {
+            var host = new Window { Width = 500, Height = 650, ShowActivated = false };
+            host.Show();
+            using var animated = new SettingsAdjustmentFlyout(new AppSettings(), AdjustmentKind.FrameRate, _ => { }, new FixedDisplay());
+            animated.OpenAt(host);
+            Assert.True(animated.IsAnimationRunning);
+            switch (close)
+            {
+                case "hide": animated.Hide(); break;
+                case "escape": animated.View.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape }); break;
+                case "complete": animated.Complete(); break;
+                case "owner": host.Close(); break;
+            }
+            Assert.False(animated.IsAnimationRunning);
+            Assert.False(animated.IsOpen);
+            host.Close();
+        }
+        using var still = new SettingsAdjustmentFlyout(new AppSettings(), AdjustmentKind.Diameter, _ => { });
+        still.OpenAt(owner);
+        Assert.False(still.IsAnimationRunning);
+        still.Hide();
+    }
+
+    private static void VerifyPointerInteraction()
+    {
+        var anchor = new Button { Content = "Slider input probe", Width = 200, Height = 32, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top };
+        var owner = new Window { Content = anchor, Width = 500, Height = 750, ShowActivated = false };
+        owner.Show();
+        PumpUi(TimeSpan.FromMilliseconds(180));
+        try
+        {
+            foreach (var kind in Enum.GetValues<AdjustmentKind>().Where(k => k is not (AdjustmentKind.BlurLevel or AdjustmentKind.Shape)))
+            {
+                using var flyout = new SettingsAdjustmentFlyout(new AppSettings(), kind, _ => { }, new FixedDisplay());
+                flyout.OpenAt(anchor);
+                flyout.View.UpdateLayout();
+                Dispatcher.UIThread.RunJobs();
+                var slider = flyout.FrameRateSlider ?? flyout.NumberEditor!.Slider;
+                var track = slider.GetVisualDescendants().OfType<Track>().Single();
+                var left = slider.GetVisualDescendants().OfType<RepeatButton>().Single(b => b.Name == "StepDecreaseEnd");
+                var right = slider.GetVisualDescendants().OfType<RepeatButton>().Single(b => b.Name == "StepIncreaseEnd");
+                var top = TopLevel.GetTopLevel(slider)!;
+                PumpUi(TimeSpan.FromMilliseconds(180));
+                // Raw-input constructors are omitted from Avalonia's reference assembly. Drive its
+                // runtime input manager so hit testing, capture, hover and repeat buttons all run.
+                using var mouse = (MouseDevice)Activator.CreateInstance(typeof(MouseDevice), new object?[] { null })!;
+                var managerType = typeof(InputElement).Assembly.GetType("Avalonia.Input.InputManager")!;
+                var manager = managerType.GetProperty("Instance", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
+                ulong timestamp = 0;
+                void Send(RawPointerEventType type, double fraction, bool pressed, double y = 16, double? trackX = null, Control? expectedHit = null)
+                {
+                    flyout.View.UpdateLayout();
+                    if (type == RawPointerEventType.LeftButtonDown) PumpUi(TimeSpan.FromMilliseconds(100));
+                    var x = trackX ?? track.Thumb!.Bounds.Width / 2 + (track.Bounds.Width - track.Thumb.Bounds.Width) * fraction;
+                    var point = track.TranslatePoint(new Point(x, y), top)!.Value;
+                    var hit = top.InputHitTest(point);
+                    if (type == RawPointerEventType.LeftButtonDown)
+                    {
+                        bool Ready() => hit is Visual visual && visual.GetSelfAndVisualAncestors().Contains(expectedHit ?? slider);
+                        for (var attempt = 0; !Ready() && attempt < 20; attempt++)
+                        {
+                            PumpUi(TimeSpan.FromMilliseconds(25));
+                            flyout.View.UpdateLayout();
+                            point = track.TranslatePoint(new Point(x, y), top)!.Value;
+                            hit = top.InputHitTest(point);
+                        }
+                        Assert.True(Ready(), $"{kind} press must hit {expectedHit?.Name ?? "slider"}; hit {hit}, point {point}.");
+                    }
+                    var input = Activator.CreateInstance(typeof(RawPointerEventArgs), mouse, ++timestamp, (IInputRoot)top, type, point,
+                        pressed ? RawInputModifiers.LeftMouseButton : RawInputModifiers.None)!;
+                    typeof(RawPointerEventArgs).GetProperty("InputHitTestResult", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                        .SetValue(input, (hit, hit));
+                    managerType.GetMethod("ProcessInput")!.Invoke(manager, [input]);
+                    flyout.View.UpdateLayout();
+                }
+                double Expected(double fraction)
+                {
+                    var value = slider.Minimum + (slider.Maximum - slider.Minimum) * Math.Clamp(fraction, 0, 1);
+                    return kind == AdjustmentKind.FrameRate ? Math.Floor(value + 0.5) : Math.Round(value);
+                }
+                void AssertSelected(double expected)
+                {
+                    Assert.Equal(expected, slider.Value, 5);
+                    Assert.Equal(expected, SettingAdjustment.Read(flyout.Draft, kind), 5);
+                    if (flyout.NumberEditor is { } editor) Assert.Equal(expected, editor.Number.Value, 5);
+                }
+                // Only the two short ends use the original LargeChange click handlers.
+                foreach (var (button, direction, x) in new[] { (left, -1, 2d), (right, 1, track.Bounds.Width - 2) })
+                {
+                    Assert.Equal(32, button.Bounds.Width);
+                    slider.Value = Expected(0.5);
+                    for (var click = 0; click < 2; click++)
+                    {
+                        var expected = Math.Clamp(slider.Value + direction * slider.LargeChange, slider.Minimum, slider.Maximum);
+                        Send(RawPointerEventType.LeftButtonDown, 0, true, trackX: x, expectedHit: button);
+                        Send(RawPointerEventType.LeftButtonUp, 0, false, trackX: x);
+                        AssertSelected(expected);
+                    }
+                    slider.Value = direction < 0 ? slider.Minimum + 1 : slider.Maximum - 1;
+                    Send(RawPointerEventType.LeftButtonDown, 0, true, trackX: x, expectedHit: button);
+                    Send(RawPointerEventType.LeftButtonUp, 0, false, trackX: x);
+                    AssertSelected(direction < 0 ? slider.Minimum : slider.Maximum);
+                    // The original theme must give visible feedback on both end regions.
+                    slider.Value = Expected(0.5);
+                    Send(RawPointerEventType.Move, 0.5, false);
+                    PumpUi(TimeSpan.FromMilliseconds(30));
+                    var normal = RenderColors(button);
+                    Send(RawPointerEventType.Move, 0, false, trackX: x);
+                    PumpUi(TimeSpan.FromMilliseconds(30));
+                    Assert.True(button.IsPointerOver);
+                    Assert.False(normal.SequenceEqual(RenderColors(button)), $"{kind} {button.Name} must show hover feedback.");
+                    if (kind == AdjustmentKind.Diameter && Environment.GetEnvironmentVariable("GHOST_ADJUSTMENT_OUTPUT") is { Length: > 0 } output)
+                        RenderLayout(flyout, output, $"{button.Name}-hover");
+                }
+                // The middle keeps click-to-position behavior instead of stepping.
+                foreach (var fraction in new[] { 0.25, 0.75 })
+                {
+                    slider.Value = fraction < 0.5 ? slider.Maximum : slider.Minimum;
+                    Send(RawPointerEventType.LeftButtonDown, fraction, true);
+                    AssertSelected(Expected(fraction));
+                    Send(RawPointerEventType.LeftButtonUp, fraction, false);
+                    AssertSelected(Expected(fraction));
+                }
+                // The visible dot remains draggable even at the two limits, where it overlaps a step end.
+                foreach (var fraction in new[] { 0d, 1d, 0.5 })
+                {
+                    slider.Value = Expected(fraction);
+                    var thumbFraction = (slider.Value - slider.Minimum) / (slider.Maximum - slider.Minimum);
+                    Send(RawPointerEventType.LeftButtonDown, thumbFraction, true, y: 2, expectedHit: track.Thumb);
+                    foreach (var next in new[] { 0.75, 0.25, -0.2, 1.2, 0.5 })
+                    {
+                        Send(RawPointerEventType.Move, next, true, y: -12);
+                        AssertSelected(Expected(next));
+                    }
+                    Send(RawPointerEventType.LeftButtonUp, 0.5, false, y: -12);
+                    var released = slider.Value;
+                    Send(RawPointerEventType.Move, 0.1, false);
+                    AssertSelected(released);
+                }
+                // A middle-track press also supports native click-and-drag.
+                Send(RawPointerEventType.LeftButtonDown, 0.25, true);
+                Send(RawPointerEventType.Move, 0.75, true);
+                AssertSelected(Expected(0.75));
+                Send(RawPointerEventType.LeftButtonUp, 0.75, false);
+                slider.Focus();
+                foreach (var key in new[] { Key.Home, Key.End })
+                {
+                    slider.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = key });
+                    AssertSelected(Expected(key == Key.Home ? 0 : 1));
+                }
+                flyout.Hide();
+            }
+        }
+        finally { owner.Close(); }
+    }
+
+    private static SkiaSharp.SKColor[] RenderColors(Control control)
+    {
+        var root = TopLevel.GetTopLevel(control)!;
+        using var image = new RenderTargetBitmap(new PixelSize((int)Math.Ceiling(root.Bounds.Width), (int)Math.Ceiling(root.Bounds.Height)), new Vector(96, 96));
+        image.Render(root);
+        using var stream = new MemoryStream();
+        image.Save(stream);
+        stream.Position = 0;
+        using var pixels = SkiaSharp.SKBitmap.Decode(stream);
+        var origin = control.TranslatePoint(new Point(), root)!.Value;
+        return Enumerable.Range(0, (int)control.Bounds.Height)
+            .SelectMany(y => Enumerable.Range(0, (int)control.Bounds.Width).Select(x => pixels.GetPixel((int)origin.X + x, (int)origin.Y + y))).ToArray();
+    }
+
+    private static void VerifyFrameRateDescriptions(SettingsWindow owner)
+    {
+        foreach (var language in new[] { UiLanguage.Chinese, UiLanguage.English })
+        foreach (int? hertz in new int?[] { 60, 75, 240, null })
+        {
+            using var flyout = new SettingsAdjustmentFlyout(new AppSettings { Language = language }, AdjustmentKind.FrameRate, _ => { }, new FixedDisplay(hertz));
+            flyout.OpenAt(owner);
+            for (var index = 0; index < 4; index++)
+            {
+                flyout.FrameRateSlider!.Value = index;
+                var expected = Math.Min(hertz ?? 60, index == 0 ? 120 : (index + 1) * 30);
+                Assert.Equal(expected, flyout.Decision.TargetFramesPerSecond);
+                Assert.Equal(TimeSpan.FromSeconds(1d / expected), GetTimer(flyout).Interval);
+                var texts = flyout.View.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text).ToArray();
+                Assert.Contains(string.Format(UiText.Text(language, "adjustFpsSelection"), SettingAdjustment.Format(flyout.Draft, AdjustmentKind.FrameRate, language)), texts);
+                var status = string.Format(UiText.Text(language, "adjustFpsTarget"), expected) + " · " + (hertz is null
+                    ? UiText.Text(language, "adjustFpsFallback") : string.Format(UiText.Text(language, "adjustFpsDisplay"), hertz));
+                Assert.Contains(status, texts);
+                Assert.Contains(UiText.Text(language, "adjustFpsHint"), texts);
+                var labels = flyout.View.GetLogicalDescendants().OfType<Canvas>().Single().Children.OfType<TextBlock>().ToArray();
+                for (var tick = 0; tick < labels.Length; tick++)
+                    Assert.Equal(tick == index ? Avalonia.Media.FontWeight.SemiBold : Avalonia.Media.FontWeight.Normal, labels[tick].FontWeight);
+                Assert.DoesNotContain(flyout.View.GetLogicalDescendants().OfType<Button>(), button => button.Content is "播放动画" or "暂停动画" or "Play animation" or "Pause animation");
+            }
+            var directory = Environment.GetEnvironmentVariable("GHOST_ADJUSTMENT_OUTPUT");
+            if (hertz is null && !string.IsNullOrEmpty(directory))
+            {
+                flyout.View.Width = 220;
+                flyout.View.UpdateLayout();
+                RenderLayout(flyout, directory, $"FrameRate-fallback-{language}");
+            }
+            flyout.View.GetLogicalDescendants().OfType<Button>().Single(b => Equals(b.Content, UiText.Text(language, "resetSetting")))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(PeekFrameRateLimit.Auto, flyout.Draft.PeekFrameRateLimit);
+            Assert.True(flyout.IsAnimationRunning);
+            flyout.Hide();
+        }
+    }
+
+    private static DispatcherTimer GetTimer(SettingsAdjustmentFlyout flyout) => (DispatcherTimer)typeof(SettingsAdjustmentFlyout)
+        .GetField("_timer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(flyout)!;
+
+    private static void PumpUi(TimeSpan duration)
+    {
+        var frame = new DispatcherFrame();
+        DispatcherTimer.RunOnce(() => frame.Continue = false, duration);
+        Dispatcher.UIThread.PushFrame(frame);
     }
 
     private static void VerifyLocalizedLayouts(SettingsWindow owner)
@@ -240,21 +462,42 @@ public sealed class SettingsAdjustmentTests
             Dispatcher.UIThread.RunJobs();
             Assert.InRange(flyout.View.Bounds.Width, 220, 340);
             Assert.True(flyout.CompleteButton.Bounds.Width > 30);
-            if (!string.IsNullOrEmpty(directory) && kind is AdjustmentKind.DiameterStep or AdjustmentKind.SoftEdgeWidth or AdjustmentKind.NotificationWidth or AdjustmentKind.FrameRate or AdjustmentKind.BlurLevel)
+            if (kind == AdjustmentKind.FrameRate)
             {
-                Directory.CreateDirectory(directory);
-                var view = flyout.Presenter!;
-                foreach (var scale in new[] { 1d, 1.25, 1.5, 2 })
+                foreach (var width in new[] { 220d, 340 })
                 {
-                    using var bitmap = new RenderTargetBitmap(new PixelSize((int)(view.Bounds.Width * scale), (int)(view.Bounds.Height * scale)), new Vector(96 * scale, 96 * scale));
-                    bitmap.Render(view);
-                    bitmap.Save(System.IO.Path.Combine(directory, $"{kind}-{language}-{theme}-{scale}.png"));
+                    flyout.View.Width = width;
+                    flyout.View.UpdateLayout();
+                    var ticks = flyout.View.GetLogicalDescendants().OfType<Canvas>().Single();
+                    var labels = ticks.Children.OfType<TextBlock>().ToArray();
+                    Assert.Equal(4, labels.Length);
+                    for (var index = 0; index < labels.Length; index++)
+                    {
+                        Assert.InRange(labels[index].Bounds.X, 0, width - labels[index].Bounds.Width + 1);
+                        if (index > 0) Assert.True(labels[index - 1].Bounds.Right < labels[index].Bounds.Left);
+                    }
+                    if (!string.IsNullOrEmpty(directory))
+                        RenderLayout(flyout, directory, $"FrameRate-{language}-{theme}-{width}");
                 }
             }
+            if (!string.IsNullOrEmpty(directory) && kind is AdjustmentKind.DiameterStep or AdjustmentKind.SoftEdgeWidth or AdjustmentKind.NotificationWidth or AdjustmentKind.FrameRate or AdjustmentKind.BlurLevel)
+                RenderLayout(flyout, directory, $"{kind}-{language}-{theme}");
             flyout.Hide();
         }
         Assert.Equal("GhostSlacking", UiText.Text(UiLanguage.Chinese, "title"));
         Assert.Equal("GhostSlacking", UiText.Text(UiLanguage.English, "title"));
+    }
+
+    private static void RenderLayout(SettingsAdjustmentFlyout flyout, string directory, string name)
+    {
+        Directory.CreateDirectory(directory);
+        var view = flyout.Presenter!;
+        foreach (var scale in new[] { 1d, 1.25, 1.5, 2 })
+        {
+            using var bitmap = new RenderTargetBitmap(new PixelSize((int)(view.Bounds.Width * scale), (int)(view.Bounds.Height * scale)), new Vector(96 * scale, 96 * scale));
+            bitmap.Render(view);
+            bitmap.Save(System.IO.Path.Combine(directory, $"{name}-{scale}.png"));
+        }
     }
 
     private static void VerifyBlurContrast(SettingsWindow owner)
@@ -318,9 +561,9 @@ public sealed class SettingsAdjustmentTests
 
     private static AppSettings Current(SettingsWindow window) => (AppSettings)typeof(SettingsWindow)
         .GetMethod("GetSettings", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(window, null)!;
-    private sealed class FixedDisplay : IDisplayRefreshRateProvider
+    private sealed class FixedDisplay(int? hertz = 75) : IDisplayRefreshRateProvider
     {
-        public DisplayRefreshRateInfo? GetForPoint(System.Drawing.Point point) => new("test", 75);
+        public DisplayRefreshRateInfo? GetForPoint(System.Drawing.Point point) => hertz is { } rate ? new("test", rate) : null;
         public void Invalidate() { }
     }
 }

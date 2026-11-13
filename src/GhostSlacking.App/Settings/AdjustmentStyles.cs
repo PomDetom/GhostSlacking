@@ -6,7 +6,6 @@ using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
-using Avalonia.VisualTree;
 
 namespace GhostSlacking.App;
 
@@ -47,36 +46,69 @@ internal static class AdjustmentStyles
 
     internal static void Slider(Slider slider)
     {
-        slider.Height = 26;
-        slider.MinHeight = 26;
+        slider.Height = 32;
+        slider.MinHeight = 32;
         slider.Template = new FuncControlTemplate<Slider>((control, scope) =>
         {
             var palette = AdjustmentPalette.For(control.ActualThemeVariant);
-            var background = new Border { Height = 4, CornerRadius = new CornerRadius(2), Background = AdjustmentPalette.Brush(palette.Border), VerticalAlignment = VerticalAlignment.Center };
-            var progress = new Border { Height = 4, CornerRadius = new CornerRadius(2), Background = AdjustmentPalette.Brush(palette.Accent), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+            var background = new Border { Height = 4, Margin = new Thickness(12, 0), CornerRadius = new CornerRadius(2), Background = AdjustmentPalette.Brush(palette.Border), VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+            var progress = new Border { Height = 4, Margin = new Thickness(12, 0), CornerRadius = new CornerRadius(2), Background = AdjustmentPalette.Brush(palette.Accent), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+            var dot = new Border { Width = 12, Height = 12, Background = AdjustmentPalette.Brush(palette.Accent), CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             var thumb = new Thumb
             {
-                Width = 12, Height = 12, MinWidth = 12, MinHeight = 12,
-                Template = new FuncControlTemplate<Thumb>((_, _) => new Border { Background = AdjustmentPalette.Brush(palette.Accent), CornerRadius = new CornerRadius(6) })
+                Width = 24, Height = 32, MinWidth = 24, MinHeight = 32,
+                Template = new FuncControlTemplate<Thumb>((_, _) => new Grid { Background = Brushes.Transparent, Children = { dot } })
             };
-            var decrease = new RepeatButton { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Focusable = false };
-            var increase = new RepeatButton { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Focusable = false };
-            decrease.Click += (_, _) => control.Value -= control.LargeChange;
-            increase.Click += (_, _) => control.Value += control.LargeChange;
+            Button TrackButton(string name)
+            {
+                var button = new Button
+                {
+                    Name = name, Focusable = false, MinWidth = 0, MinHeight = 0, Padding = new Thickness(0),
+                    HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
+                    Template = new FuncControlTemplate<Button>((_, _) => new Border { Background = Brushes.Transparent })
+                };
+                scope.Register(name, button);
+                return button;
+            }
+            var decrease = TrackButton("PART_DecreaseButton");
+            var increase = TrackButton("PART_IncreaseButton");
             var track = new Track { Name = "PART_Track", Orientation = Orientation.Horizontal, Thumb = thumb, DecreaseButton = decrease, IncreaseButton = increase };
             scope.Register("PART_Track", track);
             track.Bind(Track.MinimumProperty, new Binding(nameof(control.Minimum)) { Source = control });
             track.Bind(Track.MaximumProperty, new Binding(nameof(control.Maximum)) { Source = control });
             track.Bind(Track.ValueProperty, new Binding(nameof(control.Value)) { Source = control, Mode = BindingMode.TwoWay });
-            var root = new Grid { Children = { background, progress, track } };
+            track.Bind(Track.IsDirectionReversedProperty, new Binding(nameof(control.IsDirectionReversed)) { Source = control });
+            // Preserve the original RepeatButton step and theme feedback, confined to short ends.
+            RepeatButton StepEnd(string name, HorizontalAlignment alignment) => new()
+            {
+                Name = name, Width = 32, Height = 32, MinWidth = 0, MinHeight = 0, Padding = new Thickness(0),
+                Background = Brushes.Transparent, BorderThickness = new Thickness(0), Focusable = false,
+                HorizontalAlignment = alignment, VerticalAlignment = VerticalAlignment.Center
+            };
+            var decreaseStep = StepEnd("StepDecreaseEnd", HorizontalAlignment.Left);
+            var increaseStep = StepEnd("StepIncreaseEnd", HorizontalAlignment.Right);
+            decreaseStep.Click += (_, _) => control.Value -= control.LargeChange;
+            increaseStep.Click += (_, _) => control.Value += control.LargeChange;
+            var root = new Grid { Children = { background, progress, track, decreaseStep, increaseStep } };
             void Refresh()
             {
                 var p = AdjustmentPalette.For(control.ActualThemeVariant);
                 background.Background = AdjustmentPalette.Brush(p.Border);
                 progress.Background = AdjustmentPalette.Brush(p.Accent);
-                if (thumb.GetVisualChildren().FirstOrDefault() is Border dot) dot.Background = AdjustmentPalette.Brush(p.Accent);
+                dot.Background = AdjustmentPalette.Brush(p.Accent);
                 var available = Math.Max(0, root.Bounds.Width - thumb.Width);
-                progress.Width = thumb.Width / 2 + available * Math.Clamp((control.Value - control.Minimum) / Math.Max(1, control.Maximum - control.Minimum), 0, 1);
+                var fraction = Math.Clamp((control.Value - control.Minimum) / Math.Max(1, control.Maximum - control.Minimum), 0, 1);
+                progress.Width = available * fraction;
+                // Leave the visible dot available for dragging, even when it overlaps an end.
+                var dotLeft = thumb.Width / 2 + available * fraction - dot.Width / 2;
+                foreach (var (button, left) in new[] { (decreaseStep, 0d), (increaseStep, Math.Max(0, root.Bounds.Width - increaseStep.Width)) })
+                {
+                    var hole = new Rect(dotLeft - left, 0, dot.Width, root.Bounds.Height);
+                    var area = new Rect(0, 0, button.Width, root.Bounds.Height);
+                    button.Clip = area.Intersects(hole)
+                        ? new CombinedGeometry(GeometryCombineMode.Exclude, new RectangleGeometry(area), new RectangleGeometry(hole))
+                        : null;
+                }
             }
             root.SizeChanged += (_, _) => Refresh();
             control.PropertyChanged += (_, args) =>

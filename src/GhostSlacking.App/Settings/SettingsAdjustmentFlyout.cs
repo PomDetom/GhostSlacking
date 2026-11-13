@@ -22,10 +22,11 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
     private readonly TextBlock _caption = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _scaleText = new() { FontSize = 12 };
     private readonly TextBlock _fpsText = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _fpsSelection = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly List<TextBlock> _fpsLabels = [];
     private readonly DispatcherTimer _timer = new();
     private readonly Stopwatch _clock = new();
     private readonly IDisplayRefreshRateProvider _displays;
-    private readonly Button? _play;
     private readonly List<Button> _choiceButtons = [];
     private readonly List<Button> _secondaryButtons = [];
     private readonly Border _separator = new() { Height = 1, Margin = new Thickness(0, 12, 0, 12) };
@@ -40,7 +41,6 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
     private FlyoutPresenter? _presenter;
     private bool _completed;
     private bool _disposed;
-    private bool _playing;
     private int _stepDirection = 1;
     private DateTime _lastDisplayCheck;
     private double _selection;
@@ -181,12 +181,28 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
             };
             AdjustmentStyles.Slider(FrameRateSlider);
             _body.Children.Add(FrameRateSlider);
-            _body.Children.Add(Note($"{T("peekFrameRateAuto")} · 60 · 90 · 120 FPS"));
+            var ticks = new Canvas { Height = 20, IsHitTestVisible = false, Margin = new Thickness(0, -8, 0, 0) };
+            foreach (var label in new[] { T("adjustFpsAuto"), "60 FPS", "90 FPS", "120 FPS" })
+            {
+                var text = new TextBlock { Text = label, FontSize = 11 };
+                text.SizeChanged += (_, _) => PositionLabels();
+                _fpsLabels.Add(text);
+                ticks.Children.Add(text);
+            }
+            ticks.SizeChanged += (_, _) => PositionLabels();
+            void PositionLabels()
+            {
+                for (var index = 0; index < _fpsLabels.Count; index++)
+                {
+                    var label = _fpsLabels[index];
+                    label.Measure(Size.Infinity);
+                    var center = 12 + Math.Max(0, ticks.Bounds.Width - 24) * index / 3;
+                    Canvas.SetLeft(label, Math.Clamp(center - label.DesiredSize.Width / 2, 0, Math.Max(0, ticks.Bounds.Width - label.DesiredSize.Width)));
+                }
+            }
+            _body.Children.Add(ticks);
+            _body.Children.Add(_fpsSelection);
             _body.Children.Add(_fpsText);
-            _play = new Button { Content = T("adjustPlay") };
-            _play.Click += (_, _) => SetPlaying(!_playing);
-            _secondaryButtons.Add(_play);
-            _body.Children.Add(_play);
         }
         else
         {
@@ -239,7 +255,11 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         }, RoutingStrategies.Tunnel);
         View.ActualThemeVariantChanged += (_, _) => ApplyPalette();
         _timer.Tick += OnTick;
-        Opened += (_, _) => RefreshPreview();
+        Opened += (_, _) =>
+        {
+            RefreshPreview();
+            if (_kind == AdjustmentKind.FrameRate) { _clock.Start(); _timer.Start(); }
+        };
         Closed += (_, _) => Dispose();
         RefreshPreview();
     }
@@ -306,6 +326,7 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
                 AdjustmentKind.DiameterStep => $"{T("adjustBeforeSolid")} {comparison.BeforeDiameter} px · {T("adjustAfterGhost")} {comparison.AfterDiameter} px ({comparison.AfterDiameter - comparison.BeforeDiameter:+0;-0;0} px)",
                 AdjustmentKind.SoftEdgeWidth => $"{T("adjustHardEdgeSolid")} · {T("adjustFeatherGhost")} {draft.RevealSoftEdgeWidthPx} px",
                 AdjustmentKind.BlurLevel => T("adjustBlurComparisonHint") + (draft.RevealSoftEdgeWidthPx == 0 ? " " + T("adjustBlurInactive") : string.Empty),
+                AdjustmentKind.FrameRate => T("adjustFpsHint"),
                 _ => T("adjustRevealHint")
             };
             _stepText.Text = $"{comparison.BeforeDiameter} → {comparison.AfterDiameter} px";
@@ -345,8 +366,9 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         var position = _owner?.PointToScreen(new Point(_owner.Bounds.Width / 2, _owner.Bounds.Height / 2)) ?? new PixelPoint();
         Decision = RevealFrameRatePolicy.Create(true, Draft.PeekFrameRateLimit, _displays.GetForPoint(new System.Drawing.Point(position.X, position.Y)));
         _timer.Interval = Decision.Interval;
-        _fpsText.Text = $"{SettingAdjustment.Format(Draft, _kind, _initial.Language)} → {Decision.TargetFramesPerSecond} FPS" +
-            (Decision.UsesFallback ? $" · {T("adjustFpsFallback")}" : $" · {Decision.DetectedRefreshRate} Hz");
+        _fpsSelection.Text = string.Format(T("adjustFpsSelection"), SettingAdjustment.Format(Draft, _kind, _initial.Language));
+        _fpsText.Text = string.Format(T("adjustFpsTarget"), Decision.TargetFramesPerSecond) + " · " +
+            (Decision.UsesFallback ? T("adjustFpsFallback") : string.Format(T("adjustFpsDisplay"), Decision.DetectedRefreshRate));
         _lastDisplayCheck = DateTime.UtcNow;
     }
 
@@ -355,14 +377,6 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         if (DateTime.UtcNow - _lastDisplayCheck > TimeSpan.FromSeconds(1)) RefreshFrameRate();
         RevealSample!.AnimationSeconds = _clock.Elapsed.TotalSeconds;
         RevealSample.InvalidateVisual();
-    }
-
-    internal void SetPlaying(bool playing)
-    {
-        _playing = playing;
-        if (_play is not null) _play.Content = T(playing ? "adjustPause" : "adjustPlay");
-        if (playing && IsOpen && !_disposed) { _clock.Start(); _timer.Start(); }
-        else { _clock.Stop(); _timer.Stop(); }
     }
 
     private void UpdateScale() => _scaleText.Text = _kind == AdjustmentKind.BlurLevel ? T("adjustBlurComparison") : $"{T("adjustSample")} · {RevealSample?.PreviewScale:P0}";
@@ -376,6 +390,11 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         _presenter.Foreground = AdjustmentPalette.Brush(palette.Text);
         _presenter.BorderBrush = AdjustmentPalette.Brush(palette.Border);
         _caption.Foreground = _scaleText.Foreground = _stepText.Foreground = AdjustmentPalette.Brush(palette.Muted);
+        for (var index = 0; index < _fpsLabels.Count; index++)
+        {
+            _fpsLabels[index].Foreground = AdjustmentPalette.Brush(index == (int)_selection ? palette.Accent : palette.Muted);
+            _fpsLabels[index].FontWeight = index == (int)_selection ? FontWeight.SemiBold : FontWeight.Normal;
+        }
         _separator.Background = AdjustmentPalette.Brush(palette.Border);
         if (_previewPanel is not null)
         {
