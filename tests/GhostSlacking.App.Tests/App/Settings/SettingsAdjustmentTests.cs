@@ -220,7 +220,7 @@ public sealed class SettingsAdjustmentTests
         flyout.FrameRateSlider!.Value = 2;
         Assert.Equal(75, flyout.Decision.TargetFramesPerSecond);
         var frame = new DispatcherFrame();
-        DispatcherTimer.RunOnce(() => frame.Continue = false, TimeSpan.FromMilliseconds(60));
+        using var stop = DispatcherTimer.RunOnce(() => frame.Continue = false, TimeSpan.FromMilliseconds(60), DispatcherPriority.Background);
         Dispatcher.UIThread.PushFrame(frame);
         Assert.True(flyout.RevealSample!.AnimationSeconds > 0);
         owner.WindowState = WindowState.Minimized;
@@ -257,7 +257,7 @@ public sealed class SettingsAdjustmentTests
         var anchor = new Button { Content = "Slider input probe", Width = 200, Height = 32, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top };
         var owner = new Window { Content = anchor, Width = 500, Height = 750, ShowActivated = false };
         owner.Show();
-        PumpUi(TimeSpan.FromMilliseconds(180));
+        UiSceneWait.Commit(owner, TimeSpan.FromMilliseconds(180));
         try
         {
             foreach (var kind in Enum.GetValues<AdjustmentKind>().Where(k => k is not (AdjustmentKind.BlurLevel or AdjustmentKind.Shape)))
@@ -271,7 +271,7 @@ public sealed class SettingsAdjustmentTests
                 var left = slider.GetVisualDescendants().OfType<RepeatButton>().Single(b => b.Name == "StepDecreaseEnd");
                 var right = slider.GetVisualDescendants().OfType<RepeatButton>().Single(b => b.Name == "StepIncreaseEnd");
                 var top = TopLevel.GetTopLevel(slider)!;
-                PumpUi(TimeSpan.FromMilliseconds(180));
+                UiSceneWait.Commit(flyout.View, TimeSpan.FromMilliseconds(180));
                 // Raw-input constructors are omitted from Avalonia's reference assembly. Drive its
                 // runtime input manager so hit testing, capture, hover and repeat buttons all run.
                 using var mouse = (MouseDevice)Activator.CreateInstance(typeof(MouseDevice), new object?[] { null })!;
@@ -281,14 +281,16 @@ public sealed class SettingsAdjustmentTests
                 void Send(RawPointerEventType type, double fraction, bool pressed, double y = 16, double? trackX = null, Control? expectedHit = null)
                 {
                     flyout.View.UpdateLayout();
-                    if (type == RawPointerEventType.LeftButtonDown) PumpUi(TimeSpan.FromMilliseconds(100));
+                    var inputBudget = System.Diagnostics.Stopwatch.StartNew();
+                    if (type == RawPointerEventType.LeftButtonDown)
+                        UiSceneWait.Commit(flyout.View, TimeSpan.FromMilliseconds(600));
                     var x = trackX ?? track.Thumb!.Bounds.Width / 2 + (track.Bounds.Width - track.Thumb.Bounds.Width) * fraction;
                     var point = track.TranslatePoint(new Point(x, y), top)!.Value;
                     var hit = top.InputHitTest(point);
                     if (type == RawPointerEventType.LeftButtonDown)
                     {
                         bool Ready() => hit is Visual visual && visual.GetSelfAndVisualAncestors().Contains(expectedHit ?? slider);
-                        for (var attempt = 0; !Ready() && attempt < 20; attempt++)
+                        for (var attempt = 0; !Ready() && attempt < 20 && inputBudget.Elapsed < TimeSpan.FromMilliseconds(600); attempt++)
                         {
                             PumpUi(TimeSpan.FromMilliseconds(25));
                             flyout.View.UpdateLayout();
@@ -334,14 +336,25 @@ public sealed class SettingsAdjustmentTests
                     // The original theme must give visible feedback on both end regions.
                     slider.Value = Expected(0.5);
                     Send(RawPointerEventType.Move, 0.5, false);
-                    PumpUi(TimeSpan.FromMilliseconds(30));
+                    // A prior press can leave the old hover color in the transition.
+                    // Verify normal state before using it as the pixel baseline.
+                    var feedbackBudget = System.Diagnostics.Stopwatch.StartNew();
+                    var presenter = button.GetVisualDescendants()
+                        .OfType<Avalonia.Controls.Presenters.ContentPresenter>()
+                        .Single(p => p.Name == "PART_ContentPresenter");
+                    while (presenter.Background is not Avalonia.Media.ISolidColorBrush { Color.A: 0 } &&
+                        feedbackBudget.Elapsed < TimeSpan.FromSeconds(1))
+                        PumpUi(TimeSpan.FromMilliseconds(25));
+                    Assert.False(button.IsPointerOver);
+                    Assert.True(presenter.Background is Avalonia.Media.ISolidColorBrush { Color.A: 0 },
+                        $"{kind} {button.Name} must return to transparent normal state; got {presenter.Background}.");
                     var normal = RenderColors(button);
                     Send(RawPointerEventType.Move, 0, false, trackX: x);
                     Assert.True(button.IsPointerOver);
                     // Pointer state changes synchronously, but the themed hover transition and
                     // compositor can take more than one frame on a busy Windows runner.
                     var hovered = normal;
-                    for (var attempt = 0; normal.SequenceEqual(hovered) && attempt < 40; attempt++)
+                    for (var attempt = 0; normal.SequenceEqual(hovered) && attempt < 40 && feedbackBudget.Elapsed < TimeSpan.FromSeconds(1); attempt++)
                     {
                         PumpUi(TimeSpan.FromMilliseconds(25));
                         hovered = RenderColors(button);
@@ -451,7 +464,7 @@ public sealed class SettingsAdjustmentTests
     private static void PumpUi(TimeSpan duration)
     {
         var frame = new DispatcherFrame();
-        DispatcherTimer.RunOnce(() => frame.Continue = false, duration);
+        using var stop = DispatcherTimer.RunOnce(() => frame.Continue = false, duration, DispatcherPriority.Background);
         Dispatcher.UIThread.PushFrame(frame);
     }
 

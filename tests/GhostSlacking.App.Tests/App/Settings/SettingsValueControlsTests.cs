@@ -219,11 +219,7 @@ internal static class SettingsValueControlsTests
 
     private static void Settle(Window window, int milliseconds = 60)
     {
-        window.UpdateLayout();
-        Dispatcher.UIThread.RunJobs();
-        using var settled = new CancellationTokenSource(TimeSpan.FromMilliseconds(milliseconds));
-        try { Dispatcher.UIThread.MainLoop(settled.Token); }
-        catch (OperationCanceledException) { }
+        UiSceneWait.Commit(window, TimeSpan.FromMilliseconds(milliseconds));
         window.UpdateLayout();
     }
 
