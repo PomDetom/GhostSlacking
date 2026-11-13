@@ -284,7 +284,8 @@ try {
 
         if (-not $selectedSkipTests) {
             Invoke-BuildStep -Name '运行 Release 自动化测试' -Action {
-                & $dotnetCommand.Source test $solutionPath --configuration Release --no-restore
+                & $powerShellExecutable -NoLogo -NoProfile -File `
+                    (Join-Path $repositoryRoot 'tests/Run-ReleaseTests.ps1') -NoRestore
             }
         }
         else {
