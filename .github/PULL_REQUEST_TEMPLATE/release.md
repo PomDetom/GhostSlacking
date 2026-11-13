@@ -17,7 +17,7 @@
 
 ## 验证 / Validation
 
-- `dotnet test GhostSlacking.sln --configuration Release`
+- `pwsh -NoProfile -File tests/Run-ReleaseTests.ps1`
 - Windows 手工验证（按 [验收矩阵](../../docs/quality/WINDOWS_MANUAL_MATRIX.md)，未测环境说明原因）：
 
 ## 风险 / Risks
