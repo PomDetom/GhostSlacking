@@ -225,14 +225,10 @@ internal sealed partial class SettingsWindow : AppWindow
         _revealItem = CreateNavigationItem(RevealPage, Symbol.View);
         _hotkeysItem = CreateNavigationItem(HotkeysPage, Symbol.Keyboard);
         _generalItem = CreateNavigationItem(GeneralPage, Symbol.Settings);
-        _notificationsItem = CreateNavigationItem(NotificationsPage, Symbol.Message);
+        _notificationsItem = CreateNavigationItem(NotificationsPage, Symbol.Alert);
+        _notificationsItem.IconSource = SettingsNavigationIcons.CreateSource(SettingsNavigationIcons.Notifications, _notificationsItem);
         _experimentsItem = CreateNavigationItem(ExperimentsPage, Symbol.Settings);
-        _experimentsItem.IconSource = new PathIconSource
-        {
-            Data = ExperimentNavigationIcon.Geometry,
-            Stretch = Stretch.Uniform
-        };
-        ExperimentNavigationIcon.FollowNavigationForeground(_experimentsItem);
+        _experimentsItem.IconSource = SettingsNavigationIcons.CreateSource(SettingsNavigationIcons.Experiments, _experimentsItem);
         _aboutItem = CreateNavigationItem(AboutPage, Symbol.Help);
         _navigation = new NavigationView
         {
