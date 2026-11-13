@@ -35,8 +35,8 @@ public sealed class AvaloniaStartupTests
                 var settingsWindow = new SettingsWindow(new AppSettings(), _ => true);
                 Assert.Same(AppIcon.TitleBarImage, settingsWindow.Icon);
                 AssertDefaultSettingsWindowLayout(settingsWindow);
-                stage = "experiment icon state and rendering";
-                AssertExperimentIconRendering();
+                stage = "navigation icon state and rendering";
+                AssertNavigationIconRendering();
                 AssertSaveBarFitsSingleLineMessages();
                 AssertSettingsCancelAndSaveLifecycle();
                 SettingsNotificationNavigationTests.VerifyUi();
@@ -207,12 +207,13 @@ public sealed class AvaloniaStartupTests
         Assert.False(saveBar.IsEnabled);
     }
 
-    private static void AssertExperimentIconRendering()
+    private static void AssertNavigationIconRendering()
     {
         var window = new SettingsWindow(new AppSettings(), _ => true) { ShowActivated = false };
         var navigation = GetPrivateField<NavigationView>(window, "_navigation");
         var items = navigation.MenuItems.Cast<NavigationViewItem>().ToArray();
         var experiment = items.Single(item => Equals(item.Tag, "experiments"));
+        var notification = items.Single(item => Equals(item.Tag, "notifications"));
         var reference = items.Single(item => Equals(item.Tag, "general"));
         var directory = Environment.GetEnvironmentVariable("GHOST_ICON_OUTPUT");
         window.Show();
@@ -226,7 +227,7 @@ public sealed class AvaloniaStartupTests
                 foreach (var state in new[] { "normal", "selected", "hover", "pressed", "disabled" })
                 {
                     IBrush? referenceBrush = null;
-                    foreach (var item in new[] { reference, experiment })
+                    foreach (var item in new[] { reference, experiment, notification })
                     {
                         navigation.SelectedItem = state == "selected" ? item : items[0];
                         item.IsEnabled = state != "disabled";
@@ -234,7 +235,7 @@ public sealed class AvaloniaStartupTests
                         ((IPseudoClasses)item.Classes).Set(":pressed", state == "pressed");
                         window.UpdateLayout();
                         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-                        var icon = item == experiment
+                        var icon = item != reference
                             ? item.GetVisualDescendants().OfType<FAPathIcon>().Cast<Control>().First()
                             : item.GetVisualDescendants().OfType<SymbolIcon>().Cast<Control>().First();
                         var host = icon.GetVisualAncestors().OfType<ContentPresenter>().First(parent => parent.Name == "Icon");
