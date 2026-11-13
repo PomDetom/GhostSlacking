@@ -14,7 +14,7 @@ pwsh -NoProfile -File tests/ReleaseMetadata.Tests.ps1
 pwsh -NoProfile -File tests/Installer.Tests.ps1
 ```
 
-Release 测试入口先构建，再在独立的后台 Windows desktop 中运行两个测试程序集，避免用户桌面的最小化、焦点和原生弹窗关闭事件干扰 UI 断言；不会切换用户桌面或终止进程。CI 保留 `.NET 8` 的 `Release tests` 门禁。日志和 TRX 默认写入 `artifacts/tests/release-*/run-*/`，任一轮失败都会使入口返回非零退出码。后台桌面自动化不替代真实前台窗口、用户目标或图形设备兼容性验收。
+Release 测试入口先构建，再在独立的后台 Windows desktop 中运行两个测试程序集，避免用户桌面的最小化、焦点和原生弹窗关闭事件干扰 UI 断言；不会切换用户桌面或终止进程。UI 功能探针固定使用软件渲染，保留真实 Win32 窗口和原生样式断言，正式 App 的图形后端不变。CI 保留 `.NET 8` 的 `Release tests` 门禁。日志和 TRX 默认写入 `artifacts/tests/release-*/run-*/`，任一轮失败都会使入口返回非零退出码。后台桌面自动化不替代真实前台窗口、用户目标或图形设备兼容性验收。
 
 输出被运行实例占用时，可给入口传 `-BaseOutputPath bin/Validation/`；直接 build/test 则传 `-p:BaseOutputPath=bin/Validation/`，不结束用户正在使用的实例。可用 `-Filter FullyQualifiedName~AvaloniaStartupTests -Repeat 10` 连续验证 UI；已构建时用 `-NoBuild`，已还原依赖时用 `-NoRestore`。生成文件只放 `bin/`、`obj/` 或 `artifacts/`。
 

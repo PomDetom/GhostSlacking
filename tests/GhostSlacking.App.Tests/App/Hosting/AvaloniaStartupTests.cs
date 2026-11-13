@@ -28,7 +28,11 @@ public sealed class AvaloniaStartupTests
         {
             try
             {
-                Program.BuildAvaloniaApp().SetupWithoutStarting();
+                // Functional UI probes keep real Win32 windows but avoid device/driver scheduling
+                // on the private test desktop. GPU and foreground compatibility need manual coverage.
+                Program.BuildAvaloniaApp()
+                    .With(new Avalonia.Win32PlatformOptions { RenderingMode = [Avalonia.Win32RenderingMode.Software] })
+                    .SetupWithoutStarting();
                 stage = "settings and update windows";
                 Assert.NotNull(AppIcon.Instance);
                 Assert.NotNull(AppIcon.TitleBarImage);
