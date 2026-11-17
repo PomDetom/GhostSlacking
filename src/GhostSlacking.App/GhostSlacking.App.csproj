@@ -30,6 +30,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="GhostSlacking.App.Tests" />
+    <InternalsVisibleTo Include="LiquidGlassSample" />
   </ItemGroup>
   <ItemGroup>
     <AvaloniaResource Include="Assets\GhostSlacking.ico" />

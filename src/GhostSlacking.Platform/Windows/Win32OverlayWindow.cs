@@ -101,7 +101,12 @@ public sealed class Win32OverlayWindow : IDisposable
     public NativeResult SetRingRegion(CircleRegion outer, CircleRegion inner)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (Handle == 0)
+        return SetRingRegion(Handle, outer, inner);
+    }
+
+    internal static NativeResult SetRingRegion(nint overlay, CircleRegion outer, CircleRegion inner)
+    {
+        if (overlay == 0)
         {
             return NativeResult.Failed("SetWindowRgn(RevealFeather)", 0, "The Reveal overlay window is unavailable.");
         }
@@ -126,7 +131,7 @@ public sealed class Win32OverlayWindow : IDisposable
                 return NativeResult.Failed("CombineRgn(RevealFeather)", Win32NativeMethods.LastError);
             }
 
-            if (!Win32NativeMethods.SetWindowRgn(Handle, outerHandle, true))
+            if (!Win32NativeMethods.SetWindowRgn(overlay, outerHandle, true))
             {
                 return NativeResult.Failed("SetWindowRgn(RevealFeather)", Win32NativeMethods.LastError);
             }

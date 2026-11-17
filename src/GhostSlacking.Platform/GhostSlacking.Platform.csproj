@@ -11,5 +11,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="GhostSlacking.App.Tests" />
     <InternalsVisibleTo Include="BackgroundInteractionProbe" />
+    <InternalsVisibleTo Include="LiquidGlassSample" />
   </ItemGroup>
 </Project>
