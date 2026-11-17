@@ -45,7 +45,6 @@ public sealed class Win32BackgroundInteraction : IDisposable
     {
         public Win32NativeMethods.MSLLHOOKSTRUCT Packet;
         public Point Cursor;
-        public BackgroundMouseMotion Motion;
         public bool Taken;
     }
     private static DateTimeOffset DrainClock => DateTimeOffset.UnixEpoch + Stopwatch.GetElapsedTime(0);
@@ -67,7 +66,6 @@ public sealed class Win32BackgroundInteraction : IDisposable
         Func<GhostWindowProfile?> profile,
         Action<Action> dispatch,
         ILogger? logger = null,
-        bool exclusiveInputBridge = false,
         RecoveryManager? recovery = null,
         Win32VisibilityBackend? visibility = null)
     {
@@ -76,8 +74,8 @@ public sealed class Win32BackgroundInteraction : IDisposable
         _profile = profile;
         _dispatch = dispatch;
         _logger = logger ?? NullLogger.Instance;
-        _backend = new Win32BackgroundInputBackend(windows, _logger, exclusiveInputBridge);
-        if (exclusiveInputBridge && recovery is not null && visibility is not null)
+        _backend = new Win32BackgroundInputBackend(windows, _logger);
+        if (recovery is not null && visibility is not null)
             _menuVisuals = new(windows, recovery, visibility);
         _session = new BackgroundInteractionSession(windows, _backend);
         _session.Stopped += reason =>
@@ -89,10 +87,6 @@ public sealed class Win32BackgroundInteraction : IDisposable
             _logger.Log(LogLevel.Info, $"BackgroundInputRejected reason={reason}");
             var generation = _generation;
             _dispatch(() => { if (generation == _generation && IsActive) InputRejected?.Invoke(reason); });
-        };
-        _session.PendingChanged += pending =>
-        {
-            if (IsActive && _session.IsActive && (pending || !_session.HasRejectedInput)) InputPending?.Invoke(pending);
         };
         _session.InputResumed += () =>
         {
@@ -119,12 +113,9 @@ public sealed class Win32BackgroundInteraction : IDisposable
     public event Action<int>? ShortcutPressed;
     public event Action<BackgroundInputRejectionReason>? InputRejected;
     public event Action? InputResumed;
-    public event Action<bool>? InputPending;
     public bool HasSeparateForeground => _profile() is { } profile && ForegroundStatus(_backend.ForegroundWindow, profile.Hwnd) == BackgroundArmStatus.Preparing;
     public bool ContainsInputPoint(Point cursor) => _profile() is { } profile &&
         _backend.ContainsInputPoint(profile.Original, profile.Original.ScreenBounds, cursor);
-    public bool IsOverMenu(Point cursor) => IsActive && _profile() is { } profile &&
-        _backend.IsCurrent(profile.Original) && _backend.IsOverMenu(cursor);
     public Rectangle? MenuSurfaceBounds()
     {
         if (!IsActive || _profile() is not { } profile) return null;
@@ -237,14 +228,13 @@ public sealed class Win32BackgroundInteraction : IDisposable
             _logger.Log(LogLevel.Warning, $"MenuRevealCleanup operation={menuCleanup.Operation} error={menuCleanup.ErrorCode}");
         if (_session.IsActive)
         {
-            var health = _backend.MaintainPrototype();
+            var health = _backend.MaintainBridge();
             if (!health.Success)
             {
                 _logger.Log(LogLevel.Warning, $"BackgroundInputLease operation={health.Operation} error={health.ErrorCode}");
                 Stop(BackgroundInteractionStopReason.DeliveryFailed);
             }
         }
-        foreach (var completion in _backend.DrainCompletions()) _session.CompleteInput(completion);
         // Hardware events have already been consumed. Only active-generation
         // work reaches the target, on the application thread rather than a hook.
         for (var count = 0; count < 256 && _inputQueue.TryDequeue(out var work); count++) work();
@@ -323,8 +313,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
         _phase = BackgroundInteractionPhase.Active;
         _logger.Log(LogLevel.Info, $"BackgroundInteraction active hwnd={_armedProfile?.Hwnd} foreground={_pendingForeground}");
         Started?.Invoke();
-        if (_backend.UsesPrototype)
-            ProcessMouse(default, _windows.GetCursorPosition(), null, false, true, false, 0x0200);
+        ProcessMouse(default, _windows.GetCursorPosition(), null, false, true, false, 0x0200);
         return true;
     }
 
@@ -536,13 +525,11 @@ public sealed class Win32BackgroundInteraction : IDisposable
         {
             if (!_inputBlocked && (IsActive || IsPending) && _backend.ForegroundWindow != _pendingForeground)
                 RequestStop(BackgroundInteractionStopReason.ForegroundChanged);
-            // Prototype menu windows may extend outside B. Resolve their live
+            // Owned menu windows may extend outside B. Resolve their live
             // scope on the UI queue; never block the low-level hook on a DLL call.
-            if (!_backend.UsesPrototype && !_inputBlocked && (IsActive || IsPending) && _armedProfile?.Original.ScreenBounds.Contains(cursor) != true)
-                RequestStop(BackgroundInteractionStopReason.CursorLeft);
-            // Prototype menus need button-free motion as well as owned drags.
+            // Menus need button-free motion as well as owned drags.
             // Motion is still passed to Windows below so Reveal follows it.
-            var route = _ownership.Mouse(button, up, move, forwardHover: _backend.WantsHover);
+            var route = _ownership.Mouse(button, up, move);
             if (_pendingHide && !move && route == BackgroundInputRoute.Foreground && (!up || wheel))
             {
                 if (button is { } blocked) _ownership.ConsumeMouse(blocked);
@@ -573,32 +560,30 @@ public sealed class Win32BackgroundInteraction : IDisposable
                 if (!pending.Taken)
                 {
                     pending.Packet = packet; pending.Cursor = cursor;
-                    pending.Motion = pending.Motion.Include(BackgroundMouseMotion.At(cursor));
                     return;
                 }
             }
         }
-        var next = new QueuedMove { Packet = packet, Cursor = cursor, Motion = BackgroundMouseMotion.At(cursor) };
+        var next = new QueuedMove { Packet = packet, Cursor = cursor };
         _queuedMove = next;
         EnqueueInput(() =>
         {
             Win32NativeMethods.MSLLHOOKSTRUCT latest;
             Point position;
-            BackgroundMouseMotion motion;
-            lock (next) { next.Taken = true; latest = next.Packet; position = next.Cursor; motion = next.Motion; }
-            ProcessMouse(latest, position, null, false, true, false, message, motion);
+            lock (next) { next.Taken = true; latest = next.Packet; position = next.Cursor; }
+            ProcessMouse(latest, position, null, false, true, false, message);
         });
     }
 
     private void ProcessMouse(Win32NativeMethods.MSLLHOOKSTRUCT packet, Point cursor, BackgroundMouseButton? button,
-        bool up, bool move, bool wheel, nint message, BackgroundMouseMotion? motion = null)
+        bool up, bool move, bool wheel, nint message)
     {
         if (!_session.Check(_state(), _profile(), cursor) || _profile() is not { } profile) return;
         if (move)
         {
-            if (_session.HasHeldMouseButtons) _session.HandleMouse(new(BackgroundMouseAction.Move, Motion: motion), cursor, 0);
-            else if (_backend.WantsHover && _backend.ResolveMouseTarget(profile.Original, cursor) is var hover && hover != 0)
-                _session.HandleMouse(new(BackgroundMouseAction.Move, Motion: motion), cursor, hover);
+            if (_session.HasHeldMouseButtons) _session.HandleMouse(new(BackgroundMouseAction.Move), cursor, 0);
+            else if (_backend.ResolveMouseTarget(profile.Original, cursor) is var hover && hover != 0)
+                _session.HandleMouse(new(BackgroundMouseAction.Move), cursor, hover);
             return;
         }
         var recipient = up ? 0 : _backend.ResolveMouseTarget(profile.Original, cursor);

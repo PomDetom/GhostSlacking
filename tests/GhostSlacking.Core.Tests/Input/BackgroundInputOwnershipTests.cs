@@ -109,28 +109,28 @@ public sealed class BackgroundInputOwnershipTests
     public void Hover_delivery_continues_after_context_button_release_without_owning_a_button()
     {
         var input = new BackgroundInputOwnership();
-        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true, forwardHover: true));
+        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true));
         input.Begin([], []);
-        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true, forwardHover: true));
+        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true));
         Assert.True(input.Activate());
-        Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(null, false, true, forwardHover: true));
+        Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(null, false, true));
         Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(BackgroundMouseButton.Right, false, false));
         Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(BackgroundMouseButton.Right, true, false));
         Assert.False(input.HasMouseDown);
         for (var move = 0; move < 3; move++)
-            Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(null, false, true, forwardHover: true));
+            Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(null, false, true));
         Assert.Equal(0, input.PendingCount);
         input.BeginDrain(DateTimeOffset.UnixEpoch);
-        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true, forwardHover: true));
+        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true));
         Assert.True(input.DrainFinished(DateTimeOffset.UnixEpoch, out _));
-        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true, forwardHover: true));
+        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true));
     }
 
     [Fact]
-    public void Mouse_move_is_only_delivered_for_an_active_owned_drag()
+    public void Mouse_move_is_delivered_for_an_active_session_and_stops_during_drain()
     {
         var input = new BackgroundInputOwnership(); input.Begin([], []); input.Activate();
-        Assert.Equal(BackgroundInputRoute.Foreground, input.Mouse(null, false, true));
+        Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(null, false, true));
         Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(BackgroundMouseButton.Left, false, false));
         Assert.Equal(BackgroundInputRoute.Deliver, input.Mouse(null, false, true));
         input.BeginDrain(DateTimeOffset.UnixEpoch);

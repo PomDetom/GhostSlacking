@@ -450,7 +450,7 @@ internal static class Program
             _ => null
         };
         var move = message == 0x0200;
-        Check(Ownership.Mouse(button, message is 0x0202 or 0x0205, move, forwardHover: true) == BackgroundInputRoute.Deliver,
+        Check(Ownership.Mouse(button, message is 0x0202 or 0x0205, move) == BackgroundInputRoute.Deliver,
             move && !Ownership.HasMouseDown ? "host-routes-button-free-hover-without-another-click" : "host-routes-mouse-input");
     }
     private static void Key(int key, bool down)

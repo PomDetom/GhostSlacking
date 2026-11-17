@@ -401,8 +401,7 @@ void PatchImports() {
     for (BOOL next = Module32FirstW(snapshot, &module); next; next = Module32NextW(snapshot, &module)) {
         // Patch only the application and non-Windows modules. Never user32,
         // system DLLs, our own imports, executable code, or another process.
-        if (module.hModule == self || _wcsnicmp(module.szModule, L"GhostSlacking.InputPrototype", wcslen(L"GhostSlacking.InputPrototype")) == 0 ||
-            _wcsnicmp(module.szModule, L"GhostSlacking.InputBridge", wcslen(L"GhostSlacking.InputBridge")) == 0 ||
+        if (module.hModule == self || _wcsnicmp(module.szModule, L"GhostSlacking.Input", wcslen(L"GhostSlacking.Input")) == 0 ||
             (length && _wcsnicmp(module.szExePath, windows, length) == 0 &&
             module.szExePath[length] == L'\\')) continue;
         HMODULE retained = nullptr;

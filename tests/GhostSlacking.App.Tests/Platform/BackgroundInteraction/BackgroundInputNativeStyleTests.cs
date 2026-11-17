@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 using GhostSlacking.Core;
 using GhostSlacking.Platform;
 
@@ -8,7 +8,47 @@ namespace GhostSlacking.App.Tests;
 public sealed class BackgroundInputNativeStyleTests
 {
     [Fact]
-    public void Native_language_switch_rejection_preserves_foreground_layout_and_reset_clears_modifiers()
+    public void Arbitrary_target_shortcuts_and_drag_packets_are_sent_only_to_the_bridge()
+    {
+        var hwnd = Win32NativeMethods.CreateWindowEx(0, "STATIC", "Bridge routing test", Win32NativeMethods.WS_POPUP,
+            -20000, -20000, 100, 100, 0, 0, Win32NativeMethods.GetModuleHandle(null), 0);
+        Assert.NotEqual(0, hwnd);
+        var windows = new Win32WindowApi();
+        var snapshot = windows.CaptureSnapshot(new TargetWindow
+        {
+            Hwnd = hwnd, ProcessId = (uint)Environment.ProcessId, ScreenBounds = new(-20000, -20000, 100, 100)
+        }).Value!;
+        var bridge = new TestBridge();
+        using var backend = new Win32BackgroundInputBackend(windows, NullLogger.Instance, bridge);
+        try
+        {
+            Assert.True(backend.SetNoActivate(snapshot, false).Success);
+            foreach (var (key, down) in new[] { (0xA2, true), (0x41, true), (0x41, false), (0x43, true), (0x43, false), (0x56, true), (0x56, false), (0xA2, false) })
+            {
+                var input = new BackgroundKeyInput(key, 30, down, false, false);
+                backend.UpdateKeyboardState(input);
+                var result = backend.DispatchKey(snapshot, hwnd, input);
+                Assert.True(result.Result.Success);
+                Assert.Equal(BackgroundInputCategory.RawKey, result.Category);
+            }
+            Assert.Equal(8, bridge.Messages.Count);
+            Assert.All(bridge.Messages.Skip(1).Take(6), item => Assert.NotEqual(0, item.Keyboard[0x11] & 0x80));
+            var point = new Point(-19980, -19980);
+            Assert.True(backend.DispatchMouse(snapshot, hwnd, new(BackgroundMouseAction.Down, BackgroundMouseButton.Left), point).Result.Success);
+            Assert.True(backend.DispatchMouse(snapshot, hwnd, new(BackgroundMouseAction.Move), point + new Size(10, 0)).Result.Success);
+            Assert.True(backend.DispatchMouse(snapshot, hwnd, new(BackgroundMouseAction.Up, BackgroundMouseButton.Left), point).Result.Success);
+            Assert.Equal(new uint[] { 0x0201, 0x0200, 0x0202 }, bridge.Messages.Skip(8).Select(item => item.Message));
+            Assert.Equal(new nint[] { 1, 1, 0 }, bridge.Messages.Skip(8).Select(item => item.Flags));
+        }
+        finally
+        {
+            backend.SetNoActivate(snapshot, true);
+            Win32NativeMethods.DestroyWindow(hwnd);
+        }
+    }
+
+    [Fact]
+    public void Bridge_composition_chord_rejection_preserves_foreground_layout_and_reset_clears_modifiers()
     {
         var hwnd = Win32NativeMethods.CreateWindowEx(0, "STATIC", "GhostSlacking input test", Win32NativeMethods.WS_POPUP,
             -20000, -20000, 100, 100, 0, 0, Win32NativeMethods.GetModuleHandle(null), 0);
@@ -22,7 +62,7 @@ public sealed class BackgroundInputNativeStyleTests
             });
             Assert.True(captured.Success, captured.Error);
             var snapshot = captured.Value!;
-            using var backend = new Win32BackgroundInputBackend(windows, NullLogger.Instance);
+            using var backend = new Win32BackgroundInputBackend(windows, NullLogger.Instance, new TestBridge());
             var foreground = backend.ForegroundWindow;
             var foregroundThread = Win32NativeMethods.GetWindowThreadProcessId(foreground, out _);
             var foregroundLayout = Win32BackgroundInputNative.GetKeyboardLayout(foregroundThread);
@@ -31,11 +71,11 @@ public sealed class BackgroundInputNativeStyleTests
 
             foreach (var shift in new[] { 0xA0, 0xA1 })
             {
-                Assert.Equal(BackgroundInputCategory.Modifier, Key(shift, true).Category);
-                AssertCompositionRejected(Key(shift, false));
-                // Shift used in a chord is not a language-switch request.
+                Assert.Equal(BackgroundInputCategory.RawKey, Key(shift, true).Category);
+                Assert.Equal(BackgroundInputCategory.RawKey, Key(shift, false).Category);
+                // Shift and shifted keys use the same raw bridge path.
                 Key(shift, true);
-                Assert.Equal(BackgroundInputCategory.Character, Key(0x41, true).Category);
+                Assert.Equal(BackgroundInputCategory.RawKey, Key(0x41, true).Category);
                 Key(0x41, false);
                 Assert.Null(Key(shift, false).Rejection);
             }
@@ -49,9 +89,9 @@ public sealed class BackgroundInputNativeStyleTests
                 // must not inherit a chord or a foreground text context.
                 backend.ResetInputState();
                 backend.ResetInputState();
-                Assert.Equal(BackgroundInputCategory.Character, Key(0x41, true).Category);
+                Assert.Equal(BackgroundInputCategory.RawKey, Key(0x41, true).Category);
                 Key(0x41, false);
-                Assert.Null(Key(modifier, false).Rejection);
+                Assert.Equal(modifier is 0x5B or 0x5C ? BackgroundInputRejectionReason.SystemShortcut : (BackgroundInputRejectionReason?)null, Key(modifier, false).Rejection);
             }
 
             Assert.True(backend.SetNoActivate(snapshot, restore: true).Success);
@@ -99,7 +139,7 @@ public sealed class BackgroundInputNativeStyleTests
             }, new RevealSettings());
             Assert.True(captured.Success, captured.Error);
             var snapshot = captured.Value!.Original;
-            using var backend = new Win32BackgroundInputBackend(windows, NullLogger.Instance);
+            using var backend = new Win32BackgroundInputBackend(windows, NullLogger.Instance, new TestBridge());
             var foreground = backend.ForegroundWindow;
 
             // Simulate the existing Ghost style, applied after recovery registration.
@@ -142,7 +182,7 @@ public sealed class BackgroundInputNativeStyleTests
                 Hwnd = hwnd, ProcessId = (uint)Environment.ProcessId, ScreenBounds = new Rectangle(-20000, -20000, 100, 100)
             });
             Assert.True(captured.Success, captured.Error);
-            using var backend = new Win32BackgroundInputBackend(windows, NullLogger.Instance);
+            using var backend = new Win32BackgroundInputBackend(windows, NullLogger.Instance, new TestBridge());
             Assert.True(backend.SetNoActivate(captured.Value!, restore: false).Success);
             Assert.True(backend.SetNoActivate(captured.Value!, restore: true).Success);
             Assert.NotEqual(0, (long)Win32NativeMethods.GetWindowLongPtr(hwnd, Win32NativeMethods.GWL_EXSTYLE) & Win32NativeMethods.WS_EX_NOACTIVATE);
@@ -151,5 +191,22 @@ public sealed class BackgroundInputNativeStyleTests
         {
             Win32NativeMethods.DestroyWindow(hwnd);
         }
+    }
+    private sealed class TestBridge : IExclusiveInputBridge
+    {
+        public List<(uint Message, nint Flags, byte[] Keyboard)> Messages { get; } = [];
+        public NativeResult Start(WindowSnapshot snapshot, nint foreground) => NativeResult.Ok("Fixture");
+        public NativeResult Renew() => NativeResult.Ok("Fixture");
+        public nint MenuAt(Point cursor) => 0;
+        public bool IsMenu(nint window) => false;
+        public bool HasMenus => false;
+        public nint[] Menus() => [];
+        public NativeResult PresentMenus(IReadOnlyList<nint> menus) => NativeResult.Ok("Fixture");
+        public NativeResult Send(nint recipient, uint message, nint wparam, nint lparam, byte[] keyboard, Point cursor)
+        {
+            Messages.Add((message, wparam, (byte[])keyboard.Clone()));
+            return NativeResult.Ok("Fixture");
+        }
+        public void Dispose() { }
     }
 }

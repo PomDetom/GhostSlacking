@@ -106,9 +106,9 @@ jobs:
       - name: Test input bridge lifecycle
         shell: pwsh
         run: |
-          .\tools\ExclusiveInputPrototype\build.ps1 -NativeOnly
+          .\tools\InputBridgeProbe\build.ps1 -NativeOnly
           if ($LASTEXITCODE -ne 0) { throw 'Input bridge fixture build failed.' }
-          Push-Location artifacts/tools/ExclusiveInputPrototype/packaged-input
+          Push-Location artifacts/tools/InputBridgeProbe/packaged-input
           try {
               .\BridgeFixture.exe --self-test
               if ($LASTEXITCODE -ne 0) { throw 'Input bridge fixture failed.' }

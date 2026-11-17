@@ -86,8 +86,8 @@ public sealed class RevealMenuRegressionTests
     {
         using var fixture = new Windows();
         var snapshot = fixture.Api.CaptureSnapshot(fixture.Target).Value!;
-        using var prototype = new FakePrototype(fixture.Menu);
-        using var backend = new Win32BackgroundInputBackend(fixture.Api, NullLogger.Instance, prototype: prototype);
+        using var bridge = new FakeBridge(fixture.Menu);
+        using var backend = new Win32BackgroundInputBackend(fixture.Api, NullLogger.Instance, bridge: bridge);
         try
         {
             Assert.True(backend.SetNoActivate(snapshot, false).Success);
@@ -98,8 +98,8 @@ public sealed class RevealMenuRegressionTests
             if (destroy) Win32NativeMethods.DestroyWindow(fixture.Menu);
             else Win32NativeMethods.ShowWindow(fixture.Menu, Win32NativeMethods.SW_HIDE);
             Assert.True(backend.DispatchMouse(snapshot, recipient, new(BackgroundMouseAction.Up, BackgroundMouseButton.Left), point).Result.Success);
-            Assert.Equal(new uint[] { 0x0201, 0x0202 }, prototype.Messages.Select(item => item.Message));
-            Assert.All(prototype.Messages, item => Assert.Equal(recipient, item.Recipient));
+            Assert.Equal(new uint[] { 0x0201, 0x0202 }, bridge.Messages.Select(item => item.Message));
+            Assert.All(bridge.Messages, item => Assert.Equal(recipient, item.Recipient));
         }
         finally { backend.SetNoActivate(snapshot, true); }
     }
@@ -179,7 +179,7 @@ public sealed class RevealMenuRegressionTests
         public OperationResult<WindowSnapshot> CaptureSnapshot(TargetWindow target) => target.Hwnd == FailCapture
             ? OperationResult<WindowSnapshot>.Failed("Fixture capture rejected", 5) : inner.CaptureSnapshot(target);
     }
-    private sealed class FakePrototype(nint menu) : IExclusiveInputBridge
+    private sealed class FakeBridge(nint menu) : IExclusiveInputBridge
     {
         public List<(nint Recipient, uint Message)> Messages { get; } = [];
         public NativeResult Start(WindowSnapshot snapshot, nint foreground) => NativeResult.Ok("Fixture");

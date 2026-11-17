@@ -329,7 +329,7 @@ int Check() {
 }
 int IsolatedCheck() {
     wchar_t name[100]{};
-    swprintf_s(name, L"GhostSlacking.InputPrototype.Tests.%lu.%llu", GetCurrentProcessId(), GetTickCount64());
+    swprintf_s(name, L"GhostSlacking.InputBridgeProbe.Tests.%lu.%llu", GetCurrentProcessId(), GetTickCount64());
     // No DESKTOP_SWITCHDESKTOP and never call SwitchDesktop.
     HDESK desktop = CreateDesktopW(name, nullptr, nullptr, 0,
         DESKTOP_CREATEWINDOW | DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_ENUMERATE | DESKTOP_HOOKCONTROL, nullptr);

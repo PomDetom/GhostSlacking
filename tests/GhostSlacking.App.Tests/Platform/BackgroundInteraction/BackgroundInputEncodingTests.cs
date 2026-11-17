@@ -15,16 +15,6 @@ public sealed class BackgroundInputEncodingTests
     }
 
     [Fact]
-    public void Composition_layouts_are_not_treated_as_verified_plain_character_input()
-    {
-        Assert.True(Win32BackgroundInputBackend.IsCompositionLayout((nint)0x08040804));
-        Assert.True(Win32BackgroundInputBackend.IsCompositionLayout((nint)0x04110411));
-        Assert.True(Win32BackgroundInputBackend.IsCompositionLayout((nint)0x04120412));
-        Assert.False(Win32BackgroundInputBackend.IsCompositionLayout((nint)0x04090409));
-        Assert.False(Win32BackgroundInputBackend.IsCompositionLayout((nint)0x04070407));
-    }
-
-    [Fact]
     public void Sided_hook_modifier_codes_are_translated_to_window_message_modifier_codes()
     {
         foreach (var key in new[] { 0xA0, 0xA1 }) Assert.Equal(0x10, Win32BackgroundInputBackend.MessageVirtualKey(key));
