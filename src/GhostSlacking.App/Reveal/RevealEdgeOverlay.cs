@@ -135,6 +135,10 @@ internal sealed class RevealEdgeOverlay : IRevealVisualHost, IDisposable
     }
 
     void IRevealVisualHost.Hide() => HideVisual();
+    public NativeResult RefreshStacking()
+    {
+        return _window?.IsVisible == true ? _window.ShowTopmostNoActivate() : NativeResult.Ok("MenuRevealNoOverlay");
+    }
 
     public void InvalidateGeometry()
     {

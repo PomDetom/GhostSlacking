@@ -6,6 +6,49 @@ namespace GhostSlacking.Core.Tests;
 public sealed class CoordinatorTests
 {
     [Fact]
+    public void Popup_surface_keeps_reveal_following_cursor_outside_root_with_correct_local_coordinates()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var host = new FakeRevealVisualHost();
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend), revealVisualHost: host);
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        var surface = new Rectangle(-100, 100, 1000, 500);
+        coordinator.UpdatePeek(new Point(-50, 200), true, surface);
+        Assert.Equal(GhostState.Reveal, coordinator.State);
+        Assert.Equal(-150, backend.LastReveal!.Value.CenterX);
+        Assert.Equal(50, host.LastVisual!.CoreRegion.CenterX);
+        Assert.Equal(surface, host.LastVisual.WindowBounds);
+        Assert.Equal(host.LastVisual.ContentRegion.DiameterPx, backend.LastReveal.Value.DiameterPx);
+        coordinator.UpdatePeek(new Point(-40, 205), true, surface);
+        Assert.Equal(-140, backend.LastReveal.Value.CenterX);
+        Assert.Equal(60, host.LastVisual.CoreRegion.CenterX);
+        coordinator.UpdatePeek(new Point(-40, 205), true);
+        Assert.Equal(GhostState.Ghost, coordinator.State);
+        Assert.Null(coordinator.CurrentRevealVisual);
+    }
+
+    [Fact]
+    public void Popup_surface_change_refreshes_overlay_even_with_stationary_cursor()
+    {
+        var api = new FakeWindowApi();
+        var backend = new FakeVisibilityBackend();
+        var recovery = new RecoveryManager(api, backend);
+        var host = new FakeRevealVisualHost();
+        var coordinator = new GhostCoordinator(api, recovery, new VisibilityEngine(backend), revealVisualHost: host);
+        Assert.True(coordinator.SelectWindow(api.Target, new RevealSettings()));
+        var point = new Point(200, 200);
+        coordinator.UpdatePeek(point, true);
+        coordinator.UpdatePeek(point, true, new Rectangle(100, 100, 900, 500));
+        Assert.Equal(2, host.PrepareCalls);
+        Assert.Equal(new Rectangle(100, 100, 900, 500), host.LastVisual!.WindowBounds);
+        coordinator.UpdatePeek(point, true);
+        Assert.Equal(3, host.PrepareCalls);
+        Assert.Equal(api.Target.ScreenBounds, host.LastVisual.WindowBounds);
+    }
+
+    [Fact]
     public void Reveal_only_updates_when_cursor_or_window_geometry_changes()
     {
         var api = new FakeWindowApi();

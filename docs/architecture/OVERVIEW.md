@@ -1,6 +1,6 @@
 # 运行结构与职责
 
-GhostSlacking 面向 Windows 10/11 x64，使用 .NET 8、Avalonia/FluentAvalonia 和 Win32。当前只管理一个活动目标窗口；不提供多窗口规则系统、窗口截图、录制或目标进程注入。通用后台交互是后续研究目标，当前实现不代表所有程序均兼容。
+GhostSlacking 面向 Windows 10/11 x64，使用 .NET 8、Avalonia/FluentAvalonia 和 Win32。当前只管理一个活动目标窗口；默认路径不提供多窗口规则系统、窗口截图、录制或目标进程注入。实验后台交互已选定目标线程内独占输入桥接方向，目前通过专用构建显式启用；[技术路线状态](REVEAL_INPUT.md#技术路线状态)维护选型结论与入口边界，不能将可行性结论推广为所有程序兼容。
 
 ```text
 托盘 / 快捷键 / 设置 → App → Core 协调器 → Platform → 目标窗口

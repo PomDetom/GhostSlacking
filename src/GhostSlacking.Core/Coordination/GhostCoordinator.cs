@@ -15,6 +15,7 @@ public sealed partial class GhostCoordinator
     private GhostState _stateBeforePicking = GhostState.Idle;
     private Point? _lastCursor;
     private Rectangle? _lastBounds;
+    private Rectangle? _lastSurfaceBounds;
     private CircleRegion? _lastReveal;
     private bool _featherActive;
     private int _consecutiveRevealValidationFailures;
@@ -39,6 +40,7 @@ public sealed partial class GhostCoordinator
 
     public GhostState State => _state;
     public GhostWindowProfile? CurrentProfile => _current;
+    public RevealVisualState? CurrentRevealVisual { get; private set; }
     public event EventHandler<StateChangedEventArgs>? StateChanged;
     public event EventHandler<string>? UserError;
     public event EventHandler<UserErrorEventArgs>? UserErrorOccurred;
@@ -126,7 +128,7 @@ public sealed partial class GhostCoordinator
         return true;
     }
 
-    public void UpdatePeek(Point cursorScreen, bool peekDown)
+    public void UpdatePeek(Point cursorScreen, bool peekDown, Rectangle? inputSurfaceBounds = null)
     {
         if (_state == GhostState.Restoring)
         {
@@ -182,14 +184,17 @@ public sealed partial class GhostCoordinator
             }
         }
         else _placementCorrections = 0;
-        var geometryChanged = _lastBounds != observation.ScreenBounds;
+        var surfaceBounds = inputSurfaceBounds is { } surface && surface.Contains(observation.ScreenBounds)
+            ? surface : observation.ScreenBounds;
+        var geometryChanged = _lastBounds != observation.ScreenBounds || _lastSurfaceBounds != surfaceBounds;
         var cursorChanged = _lastCursor != cursorScreen;
         _lastBounds = observation.ScreenBounds;
+        _lastSurfaceBounds = surfaceBounds;
         _lastCursor = cursorScreen;
 
         // Ghost mode intentionally hides the target with SW_HIDE, so IsVisible is
         // expected to be false while we are still allowed to reveal it here.
-        if (!peekDown || observation.IsMinimized || !observation.ScreenBounds.Contains(cursorScreen))
+        if (!peekDown || observation.IsMinimized || !surfaceBounds.Contains(cursorScreen))
         {
             if (_state == GhostState.Reveal && (cursorChanged || geometryChanged || !peekDown))
             {
@@ -224,12 +229,16 @@ public sealed partial class GhostCoordinator
 
         var visual = RevealGeometry.CreateVisualState(
             _current.Hwnd,
-            observation.ScreenBounds,
-            region,
+            surfaceBounds,
+            RevealGeometry.CreateReveal(surfaceBounds, cursorScreen, _current.Reveal),
             _current.Reveal.SoftEdgeWidthPx,
             _current.Reveal.BlurLevel);
         var useFeather = TryPrepareRevealVisual(visual);
-        var appliedRegion = useFeather ? visual.ContentRegion : visual.CoreRegion;
+        var appliedRegion = useFeather ? region with
+        {
+            DiameterPx = visual.ContentRegion.DiameterPx,
+            CornerRadiusPx = visual.ContentRegion.CornerRadiusPx
+        } : region;
         var requiresFullReveal = _state != GhostState.Reveal || !observation.IsVisible;
         var revealed = requiresFullReveal
             ? _visibility.ApplyReveal(_current, appliedRegion)
@@ -245,7 +254,7 @@ public sealed partial class GhostCoordinator
                         LogLevel.Warning,
                         $"Reveal feather presentation failed; using hard edge. operation={presented.Operation} error={presented.ErrorCode} {presented.ErrorMessage}");
                     HideRevealVisual();
-                    revealed = _visibility.UpdateReveal(_current, visual.CoreRegion);
+                    revealed = _visibility.UpdateReveal(_current, region);
                     useFeather = false;
                 }
             }
@@ -259,6 +268,7 @@ public sealed partial class GhostCoordinator
             }
 
             _lastReveal = region;
+            CurrentRevealVisual = useFeather ? visual : visual with { ContentRegion = visual.CoreRegion, FeatherWidthPx = 0 };
             _consecutiveRevealValidationFailures = 0;
             _featherActive = useFeather;
             SetState(GhostState.Reveal);
@@ -606,6 +616,7 @@ public sealed partial class GhostCoordinator
 
     private void HideRevealVisual()
     {
+        CurrentRevealVisual = null;
         _revealVisualHost?.Hide();
         _featherActive = false;
     }

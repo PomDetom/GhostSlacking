@@ -56,7 +56,7 @@ internal sealed partial class GhostApplicationController : IDisposable
                 ResetPeekIntent();
                 show = false;
             }
-            else if (!_peekDown || _coordinator.CurrentProfile?.Original.ScreenBounds.Contains(cursor) != true)
+            else if (!_peekDown || !_backgroundInteraction.ContainsInputPoint(cursor))
             {
                 _backgroundInteraction.Stop(_peekDown ? BackgroundInteractionStopReason.CursorLeft : BackgroundInteractionStopReason.RevealEnded);
                 if (!_peekDown) ClearBackgroundStartWait();
@@ -89,7 +89,7 @@ internal sealed partial class GhostApplicationController : IDisposable
                 show = _peekDown && (_backgroundInteraction.IsReady || _backgroundInteraction.IsActive);
             }
         }
-        _coordinator.UpdatePeek(cursor, show);
+        _coordinator.UpdatePeek(cursor, show, show ? _backgroundInteraction.MenuSurfaceBounds() : null);
         if (continuous && show && _backgroundInteraction.IsReady && !_backgroundInteraction.ActivateReveal())
         {
             // A new event arrived while the target was being shown. Keep it gated,
@@ -98,6 +98,8 @@ internal sealed partial class GhostApplicationController : IDisposable
             _coordinator.UpdatePeek(cursor, false);
         }
         _backgroundInteraction.Poll();
+        if (_coordinator.CurrentRevealVisual is { } visual)
+            _backgroundInteraction.UpdateMenuVisuals(visual, _revealOverlay.RefreshStacking);
         var revealActive = _peekDown && _coordinator.State == GhostState.Reveal;
         UpdateRevealFrameRate(cursor, revealActive);
         var updateDuration = Stopwatch.GetElapsedTime(startedAt);
