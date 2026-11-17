@@ -33,6 +33,7 @@
   </ItemGroup>
   <ItemGroup>
     <AvaloniaResource Include="Assets\GhostSlacking.ico" />
+    <AvaloniaResource Include="Assets\Icons\*.svg" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="$(PkgMicrosoft_VCRTForwarders_140)\runtimes\win-x64\native\release\*.dll">

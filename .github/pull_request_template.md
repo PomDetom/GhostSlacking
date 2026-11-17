@@ -31,9 +31,12 @@
 ## 验证 / Validation
 
 - 自动化测试：
-- Windows 手工验证（如适用）：
+- Windows 手工验证（按 [验收矩阵](../docs/quality/WINDOWS_MANUAL_MATRIX.md)，区分自有 HWND、隔离 UI 与真实应用；未测环境说明原因）：
 
 ## 风险与回滚 / Risks and rollback
 
 - Win32、DPI、权限、恢复、安装升级或兼容性风险：
 - 回滚或禁用方式：
+
+
+工程约定与知识归属见[开发导航](../docs/README.md)。验证结果保存在本 PR，只有长期能力或限制变化才更新权威知识。

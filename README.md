@@ -1,93 +1,55 @@
-# GhostSlacking
+<div align="center">
+  <img src="src/GhostSlacking.App/Assets/GhostSlacking.svg" width="96" height="96" alt="GhostSlacking 幽灵图标">
+  <h1>GhostSlacking</h1>
+  <p><strong>一键隐藏窗口，随时局部查看。</strong></p>
+  <p>
+    <a href="https://github.com/PomDetom/GhostSlacking/releases"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078D4?style=flat-square" alt="Windows 10 / 11 x64"></a>
+    <a href="https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0"><img src="https://img.shields.io/badge/.NET-8-512BD4?style=flat-square" alt=".NET 8"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-1CB2A5?style=flat-square" alt="MIT License"></a>
+  </p>
+  <p>
+    <a href="https://github.com/PomDetom/GhostSlacking/releases"><strong>下载安装</strong></a> ·
+    <a href="docs/product/USAGE.md">使用指南</a> ·
+    <a href="https://github.com/PomDetom/GhostSlacking/issues">反馈问题</a>
+  </p>
+</div>
 
-GhostSlacking 是一款适用于 Windows 10/11 的轻量级窗口隐藏与局部查看工具。它可以隐藏指定窗口，并在鼠标附近临时显示一块可交互区域，方便查看、点击或滚动内容，而不必完整恢复窗口。
+---
 
-```text
-选择窗口 → 隐藏窗口 → 局部查看（Peek）→ 恢复窗口
-```
+GhostSlacking 是适用于 Windows 10/11 的窗口隐藏与局部查看工具。选中一个窗口后，你可以将它隐藏，再通过快捷键在鼠标附近临时显示一小块内容，按需查看、点击或滚动。
+
+应用常驻系统托盘，一次管理一个目标窗口。查看结束后，可以收起局部区域继续隐藏，也可以随时恢复完整窗口。
 
 ## 主要功能
 
-- 通过全局快捷键或系统托盘选择、隐藏和恢复窗口。
-- 在鼠标附近显示圆形、矩形或圆角矩形 Reveal 区域。
-- Reveal 区域支持羽化、模糊、点击和滚动操作。
-- 支持按住显示和按键切换两种 Peek 模式。
-- 支持自定义快捷键、Reveal 外观、界面语言和主题。
-- 启动时检查稳定版更新，并在独立窗口中显示更新内容。
-- 内置 Watchdog，在程序异常终止后尝试安全恢复受控窗口。
-- 不截取窗口内容，也不向目标进程注入代码。
+- **快捷隐藏与显示**：通过全局快捷键或托盘菜单选择目标窗口，随时切换隐藏与显示。
+- **跟随鼠标的局部查看**：在窗口原有范围内打开局部可见区域（Reveal），查看内容并进行点击、滚动。支持圆形、矩形和圆角矩形，以及按住显示或按下切换两种 Peek 方式。
+- **恢复完整窗口**：不再需要隐藏时，一键结束窗口控制，将窗口恢复原有状态。
 
-## 系统要求
+## 下载与安装
 
-- Windows 10 或 Windows 11，x64。
-- [.NET 8 Runtime](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。
-- 控制以管理员身份运行的窗口时，GhostSlacking 通常也需要以相同权限运行。
+需要 **Windows 10/11 x64** 和 **[.NET 8 Runtime x64](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)**。安装包不包含运行时，请先确认已安装。
 
-## 安装
+从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载 `GhostSlacking-<版本>-win-x64-setup.exe`，按向导完成安装。默认仅安装到当前用户，无需管理员权限。
 
-从 [GitHub Releases](https://github.com/PomDetom/GhostSlacking/releases) 下载最新的 `GhostSlacking-<完整版本>-win-x64-setup.exe`，然后按照安装向导完成安装。安装默认仅属于当前用户，程序位于 `%LOCALAPPDATA%\Programs\GhostSlacking\app`，无需为 GhostSlacking 安装或更新授予管理员权限。
-
-旧 MSI 用户须先安全退出程序，在 Windows“已安装的应用”中卸载所有旧版本，再运行新 EXE；用户设置和日志保留。旧 MSI 卸载仍可能出现原有等待，新安装器不会自动调用它。首次安装仍需系统 .NET 8 Runtime x64，安装器不捆绑或自动下载运行时。
-
-GhostSlacking 启动后常驻系统托盘，不显示普通主窗口。
+启动后，应用会常驻系统托盘；点击幽灵图标或使用快捷键即可开始。详细安装说明与旧版本迁移方法见[使用指南](docs/product/USAGE.md)。
 
 ## 快速开始
 
-1. 按 `Ctrl+Alt+P`，或单击托盘图标进入窗口选择状态。
-2. 单击需要控制的窗口；按 `Esc` 可取消选择。
-3. 按 `Ctrl+Alt+G` 隐藏或显示当前窗口。
-4. 按 `Alt` 在鼠标附近显示或隐藏 Reveal 区域。
-5. 按 `Ctrl+Alt+R` 恢复当前窗口。
-6. 按 `Ctrl+Alt+S` 打开设置并调整快捷键或显示效果。
+1. **选择窗口**：按 `Ctrl+Alt+P`，单击要控制的窗口；按 `Esc` 可取消选择。
+2. **隐藏窗口**：按 `Ctrl+Alt+G` 隐藏所选窗口，再次按下可显示。
+3. **局部查看**：将鼠标移到窗口原有范围内，按 `Alt` 打开局部查看区域，再次按下收起。
+4. **恢复窗口**：按 `Ctrl+Alt+R` 结束控制，恢复窗口原有状态。
 
-### 默认快捷键
+更多操作与快捷键说明见[使用指南](docs/product/USAGE.md)。
 
-| 功能 | 默认快捷键 |
-| --- | --- |
-| 选择窗口 | `Ctrl+Alt+P` |
-| 隐藏/显示窗口 | `Ctrl+Alt+G` |
-| Peek / Reveal | `Alt` |
-| 恢复当前窗口 | `Ctrl+Alt+R` |
-| 紧急恢复全部窗口 | `Ctrl+Shift+Alt+R` |
-| 打开设置 | `Ctrl+Alt+S` |
-| 退出应用 | `Ctrl+Alt+Q` |
+## 文档
 
-所有快捷键均可在设置中修改。建议通过托盘菜单或退出快捷键正常关闭程序，以便恢复受控窗口。
+- [使用指南](docs/product/USAGE.md)：安装、日常操作、快捷键与设置说明。
+- [实验性后台交互](docs/product/EXPERIMENTAL_BACKGROUND_INTERACTION.md)：默认关闭的后台交互功能，包含开启方式与能力边界。
+- [兼容性与限制](docs/quality/KNOWN_LIMITATIONS.md)：已知问题、实际应用反馈与未验证范围。
+- [开发文档](docs/README.md)：项目架构、开发约定与发布流程的文档入口。
 
-## 软件更新
+## 开源许可
 
-应用默认只检查稳定版 GitHub Releases。可以在“关于”页开启测试通道以接收 beta/RC 版本；发现新版本时，可点击通知、托盘入口或“关于”页查看中英双语更新说明。点击“下载并安装”后，应用会自动完成下载、校验、安装和重新启动；更新先验证发布签名和安装包 SHA256，再恢复受控窗口、等待 App 与 Watchdog 安全退出，以被动进度安装并确认新版本启动。正在以管理员身份运行时，请退出后以普通用户运行安装器。
-
-## Git 与发布
-
-日常开发通过独立功能 PR 合入 `dev`，稳定发布通过 `dev` → `master` 发布 PR。测试版只在需要时从 `dev` 创建 `v0.2.0-beta.1` 标签，稳定版在 `master` 上创建 `v0.2.0` 标签；标签工作流才会构建并发布签名 EXE。
-
-完整流程见 [Git 与发布流程](docs/DEVELOPMENT_WORKFLOW.md)。
-
-## 从源码运行
-
-需要 Windows 10/11 x64、Git 和 [.NET 8 或更新版本的 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0)。CI 使用 .NET 8 验证最低支持版本。
-
-```powershell
-git clone https://github.com/PomDetom/GhostSlacking.git
-cd GhostSlacking
-dotnet restore GhostSlacking.sln
-dotnet build GhostSlacking.sln --configuration Debug
-dotnet run --project src/GhostSlacking.App --configuration Debug
-```
-
-运行测试：
-
-```powershell
-dotnet test GhostSlacking.sln --configuration Debug
-```
-
-## 开发导航
-
-- [AGENTS.md](AGENTS.md)：仓库规则、项目职责和改动面对应的检查。
-- [技术架构](docs/ARCHITECTURE.md)：当前运行结构、模块边界和恢复不变量。
-- [实施状态](docs/IMPLEMENTATION_STATUS.md)：已实现能力与尚未验证的事项。
-- [实施计划](docs/IMPLEMENTATION_PLAN.md)：阶段目标、验收条件和 Windows 手工矩阵。
-- [Git 与发布流程](docs/DEVELOPMENT_WORKFLOW.md)：分支、PR、仓库设置与版本发布规则。
-
-配置和日志位于 `%LOCALAPPDATA%\GhostSlacking`。遇到异常时，请先按 `Ctrl+Shift+Alt+R` 尝试恢复全部窗口。
+本项目采用 [MIT License](LICENSE)。
