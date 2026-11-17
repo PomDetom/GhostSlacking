@@ -7,6 +7,7 @@ internal static class Win32NativeMethods
     internal const uint GA_ROOT = 2;
     internal const int GWL_STYLE = -16;
     internal const int GWL_EXSTYLE = -20;
+    internal const nint WS_VISIBLE = 0x10000000;
     internal const nint WS_CAPTION = 0x00C00000;
     internal const nint WS_THICKFRAME = 0x00040000;
     internal const nint WS_MINIMIZEBOX = 0x00020000;
