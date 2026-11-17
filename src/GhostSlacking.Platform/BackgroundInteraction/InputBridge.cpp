@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cwchar>
 #include <deque>
+#include <type_traits>
 
 // Experimental input bridge: x64, one registered window and one UI thread. No global
 // injection, system input, clipboard access or persistent input diagnostics.
@@ -36,6 +37,7 @@ struct Shared {
     volatile LONG errorStage;
     InputPacket queue[QueueCapacity];
 };
+static_assert(std::is_trivial_v<Shared> && std::is_standard_layout_v<Shared>);
 struct Patch { void** slot; void* original; void* replacement; };
 struct DelayImports { DWORD attributes, name, module, iat, names, bound, unload, timestamp; };
 Shared* host = nullptr;
@@ -779,7 +781,9 @@ extern "C" __declspec(dllexport) DWORD GS_Begin(HWND root, HWND foreground, DWOR
     if (!hostMapping) { const DWORD error = GetLastError(); GS_End(); return error; }
     host = static_cast<Shared*>(MapViewOfFile(hostMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Shared)));
     if (!host) { const DWORD error = GetLastError(); GS_End(); return error; }
-    *host = {};
+    // Clear the unpublished POD mapping in place. The large aggregate assignment
+    // triggers MSVC's /O2 internal compiler error on the VS 2026 CI image.
+    std::memset(host, 0, sizeof(*host));
     host->magic = Magic; host->ownerPid = GetCurrentProcessId(); host->targetPid = pid; host->threadId = thread;
     host->ownerStart = StartTime(GetCurrentProcess()); host->targetStart = targetStart;
     host->root = root; host->foreground = foreground; host->command = 1; host->sequence = 1;
