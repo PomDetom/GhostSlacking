@@ -417,10 +417,13 @@ public sealed class Win32VisibilityBackend : IVisibilityBackend
     {
         var changed = false;
         var currentStyle = Win32NativeMethods.GetWindowLongPtr(hwnd, Win32NativeMethods.GWL_STYLE);
-        if (currentStyle != snapshot.Styles.Style)
+        // Leave visibility to the placement/show calls so the target receives SWP_SHOWWINDOW.
+        var restoredStyle = (snapshot.Styles.Style & ~Win32NativeMethods.WS_VISIBLE) |
+            (currentStyle & Win32NativeMethods.WS_VISIBLE);
+        if (currentStyle != restoredStyle)
         {
             Win32NativeMethods.SetLastError(0);
-            Win32NativeMethods.SetWindowLongPtr(hwnd, Win32NativeMethods.GWL_STYLE, snapshot.Styles.Style);
+            Win32NativeMethods.SetWindowLongPtr(hwnd, Win32NativeMethods.GWL_STYLE, restoredStyle);
             var styleError = Win32NativeMethods.LastError;
             if (styleError != 0)
             {
