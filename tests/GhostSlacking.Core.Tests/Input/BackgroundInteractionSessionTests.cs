@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 using GhostSlacking.Core;
 
 namespace GhostSlacking.Core.Tests;
@@ -115,7 +115,7 @@ public sealed class BackgroundInteractionSessionTests
         var fixture = new Fixture();
         fixture.Start();
         fixture.Session.HandleKey(Key(0x41, true), fixture.Cursor);
-        fixture.Session.MouseDown(BackgroundMouseButton.Left, 7, fixture.Cursor);
+        fixture.Session.HandleMouse(new(BackgroundMouseAction.Down, BackgroundMouseButton.Left), fixture.Cursor, 7);
         fixture.Backend.ForegroundWindow = 999;
         Assert.False(fixture.Check());
         Assert.Equal(BackgroundInteractionStopReason.ForegroundChanged, fixture.Stopped);
@@ -153,15 +153,16 @@ public sealed class BackgroundInteractionSessionTests
         var fixture = new Fixture();
         fixture.Start();
         fixture.Session.HandleKey(Key(0x41, true), fixture.Cursor);
-        fixture.Session.MouseDown(BackgroundMouseButton.Right, 7, fixture.Cursor);
+        fixture.Session.HandleMouse(new(BackgroundMouseAction.Down, BackgroundMouseButton.Right), fixture.Cursor, 7);
         fixture.Windows.IdentityMatches = false;
         Assert.False(fixture.Check());
         Assert.Equal(BackgroundInteractionStopReason.TargetChanged, fixture.Stopped);
         Assert.Single(fixture.Backend.Keys);
         Assert.Empty(fixture.Backend.MouseReleases);
         Assert.Equal([false], fixture.Backend.StyleChanges);
-        Assert.True(fixture.Session.ConsumeKeyTail(Key(0x41, false)));
-        Assert.True(fixture.Session.MouseUp(BackgroundMouseButton.Right));
+        Assert.True(fixture.Session.HandleKey(Key(0x41, false), fixture.Cursor));
+        Assert.True(fixture.Session.HasPendingReleases);
+        fixture.Session.DiscardReleaseTails();
         Assert.False(fixture.Session.HasPendingReleases);
     }
 
@@ -185,16 +186,14 @@ public sealed class BackgroundInteractionSessionTests
         var fixture = new Fixture();
         fixture.Start();
         fixture.Session.HandleKey(Key(0xA2, true), fixture.Cursor);
-        fixture.Session.SuppressKeyUntilRelease(0x49);
-        fixture.Session.MouseDown(BackgroundMouseButton.Left, 7, fixture.Cursor);
+        fixture.Session.HandleMouse(new(BackgroundMouseAction.Down, BackgroundMouseButton.Left), fixture.Cursor, 7);
         fixture.Session.Stop(BackgroundInteractionStopReason.User);
         fixture.Session.Stop(BackgroundInteractionStopReason.User);
         Assert.False(fixture.Session.Start(fixture.Profile).Success);
         Assert.True(fixture.Session.HandleKey(Key(0xA2, true), fixture.Cursor));
         Assert.True(fixture.Session.HandleKey(Key(0xA2, false), fixture.Cursor));
-        Assert.True(fixture.Session.HandleKey(Key(0x49, false), fixture.Cursor));
-        Assert.True(fixture.Session.ConsumeMouseTail(BackgroundMouseButton.Left));
-        Assert.True(fixture.Session.MouseUp(BackgroundMouseButton.Left));
+        Assert.True(fixture.Session.HasPendingReleases);
+        fixture.Session.DiscardReleaseTails();
         Assert.False(fixture.Session.HandleKey(Key(0x42, true), fixture.Cursor));
         Assert.False(fixture.Session.HasPendingReleases);
         Assert.Equal(2, fixture.Backend.Keys.Count);
@@ -243,19 +242,6 @@ public sealed class BackgroundInteractionSessionTests
     }
 
     [Fact]
-    public void Character_only_delivery_does_not_create_a_native_key_release_on_stop()
-    {
-        var fixture = new Fixture();
-        fixture.Backend.DispatchCategory = BackgroundInputCategory.Character;
-        fixture.Start();
-        Assert.True(fixture.Session.HandleKey(Key(0x41, true), fixture.Cursor));
-        fixture.Session.Stop(BackgroundInteractionStopReason.User);
-        Assert.Single(fixture.Backend.Keys);
-        Assert.True(fixture.Session.ConsumeKeyTail(Key(0x41, false)));
-        Assert.False(fixture.Session.HasPendingReleases);
-    }
-
-    [Fact]
     public void Rejected_input_consumes_its_repeat_and_release_without_ending_the_session()
     {
         var fixture = new Fixture();
@@ -268,7 +254,6 @@ public sealed class BackgroundInteractionSessionTests
         Assert.Equal(BackgroundInputRejectionReason.ImeComposition, Assert.Single(fixture.Rejections));
         Assert.Empty(fixture.Backend.Keys);
         fixture.Backend.RejectKey = null;
-        fixture.Backend.DispatchCategory = BackgroundInputCategory.Character;
         fixture.Session.HandleKey(Key(0x41, true), fixture.Cursor);
         Assert.Equal(1, fixture.ResumeCount);
     }
@@ -280,17 +265,6 @@ public sealed class BackgroundInteractionSessionTests
         fixture.Backend.ApplyStyleFails = true;
         fixture.Backend.RestoreStyleFails = true;
         Assert.Equal("BackgroundInteractionCleanup", fixture.Session.Start(fixture.Profile).Operation);
-    }
-
-    [Fact]
-    public void A_blocked_mouse_down_consumes_its_repeats_and_release()
-    {
-        var fixture = new Fixture();
-        fixture.Session.SuppressMouseUntilRelease(BackgroundMouseButton.X1);
-        Assert.True(fixture.Session.HasPendingReleases);
-        Assert.True(fixture.Session.ConsumeMouseTail(BackgroundMouseButton.X1));
-        Assert.True(fixture.Session.MouseUp(BackgroundMouseButton.X1));
-        Assert.False(fixture.Session.HasPendingReleases);
     }
 
     [Fact]
@@ -306,20 +280,6 @@ public sealed class BackgroundInteractionSessionTests
         Assert.Equal(1, fixture.Backend.ResetCount);
         fixture.Session.Stop(BackgroundInteractionStopReason.User);
         Assert.Equal(1, fixture.Backend.ResetCount);
-    }
-
-    [Fact]
-    public void Lost_release_notifications_can_be_reconciled_without_discarding_held_inputs()
-    {
-        var fixture = new Fixture();
-        fixture.Session.SuppressKeyUntilRelease(0xA2);
-        fixture.Session.SuppressMouseUntilRelease(BackgroundMouseButton.Left);
-        fixture.Session.ReconcileReleasedInputs(_ => true, _ => false);
-        Assert.True(fixture.Session.HasPendingReleases);
-        Assert.False(fixture.Session.ConsumeMouseTail(BackgroundMouseButton.Left));
-        fixture.Session.ReconcileReleasedInputs(_ => false, _ => false);
-        Assert.False(fixture.Session.HasPendingReleases);
-        Assert.False(fixture.Session.HandleKey(Key(0x41, true), fixture.Cursor));
     }
 
     private static BackgroundKeyInput Key(int key, bool down) => new(key, 30, down, false, false);
@@ -350,94 +310,6 @@ public sealed class BackgroundInteractionSessionTests
         Assert.Equal(BackgroundArmStatus.Preparing, BackgroundStartPolicy.ForegroundStatus(99, 42));
         Assert.True(BackgroundArmResult.Waiting(BackgroundArmStatus.AwaitingForeground).Success);
         Assert.False(BackgroundArmResult.Reject(BackgroundArmRejection.TargetChanged).Success);
-    }
-
-    [Fact]
-    public void Pending_input_only_completes_in_its_own_live_generation()
-    {
-        var fixture = new Fixture(); fixture.Start();
-        fixture.Backend.KeyDispatches.Enqueue(BackgroundInputDispatchResult.Pending(100, BackgroundInputCategory.EditCommand));
-        var changes = new List<bool>(); fixture.Session.PendingChanged += changes.Add;
-        fixture.Session.HandleKey(Key(0x43, true), fixture.Cursor);
-        var oldGeneration = fixture.Session.Generation;
-        Assert.True(fixture.Session.HasPendingOperations);
-        fixture.Session.Stop(BackgroundInteractionStopReason.User);
-        fixture.Session.ConsumeKeyTail(Key(0x43, false));
-        fixture.Start();
-        fixture.Backend.KeyDispatches.Enqueue(BackgroundInputDispatchResult.Pending(100, BackgroundInputCategory.EditCommand));
-        fixture.Session.HandleKey(Key(0x43, true), fixture.Cursor);
-        fixture.Session.CompleteInput(new(oldGeneration, 100, BackgroundOperationDeadlines.Timeout(true)));
-        Assert.True(fixture.Session.IsActive);
-        Assert.True(fixture.Session.HasPendingOperations);
-        fixture.Session.CompleteInput(new(fixture.Session.Generation, 100, BackgroundInputDispatchResult.Accepted(BackgroundInputCategory.EditCommand)));
-        Assert.False(fixture.Session.HasPendingOperations);
-        Assert.Equal(new[] { true, false, true, false }, changes);
-    }
-
-    [Fact]
-    public void Read_only_discovery_timeout_rejects_one_operation_while_an_issued_timeout_stops_the_session()
-    {
-        var fixture = new Fixture(); fixture.Start();
-        fixture.Backend.KeyDispatches.Enqueue(BackgroundInputDispatchResult.Pending(1, BackgroundInputCategory.EditCommand));
-        fixture.Session.HandleKey(Key(0x43, true), fixture.Cursor);
-        fixture.Session.CompleteInput(new(fixture.Session.Generation, 1, BackgroundOperationDeadlines.Timeout(false)));
-        Assert.True(fixture.Session.IsActive);
-        Assert.Contains(BackgroundInputRejectionReason.DiscoveryUnavailable, fixture.Rejections);
-        fixture.Backend.KeyDispatches.Enqueue(BackgroundInputDispatchResult.Pending(2, BackgroundInputCategory.EditCommand));
-        fixture.Session.HandleKey(Key(0x56, true), fixture.Cursor);
-        fixture.Session.CompleteInput(new(fixture.Session.Generation, 2, BackgroundOperationDeadlines.Timeout(true)));
-        Assert.False(fixture.Session.IsActive);
-        Assert.Equal(BackgroundInteractionStopReason.DeliveryFailed, fixture.Stopped);
-        Assert.Equal(TimeSpan.FromMilliseconds(1500), BackgroundOperationDeadlines.Discovery);
-        Assert.Equal(TimeSpan.FromMilliseconds(500), BackgroundOperationDeadlines.Mutation);
-    }
-
-    [Fact]
-    public void Coalesced_mouse_excursions_survive_session_gesture_assignment()
-    {
-        var fixture = new Fixture(); fixture.Start();
-        var motion = BackgroundMouseMotion.At(fixture.Cursor)
-            .Include(BackgroundMouseMotion.At(new(fixture.Cursor.X + 20, fixture.Cursor.Y)))
-            .Include(BackgroundMouseMotion.At(fixture.Cursor));
-        fixture.Session.HandleMouse(new(BackgroundMouseAction.Down, BackgroundMouseButton.Left), fixture.Cursor, 7);
-        fixture.Session.HandleMouse(new(BackgroundMouseAction.Move, Motion: motion), fixture.Cursor, 0);
-        fixture.Session.HandleMouse(new(BackgroundMouseAction.Up, BackgroundMouseButton.Left), fixture.Cursor, 0);
-        Assert.Equal(motion, fixture.Backend.MouseInputs[1].Motion);
-        Assert.Equal(fixture.Backend.MouseInputs[0].GestureId, fixture.Backend.MouseInputs[1].GestureId);
-        Assert.Equal(fixture.Cursor.X + 20, fixture.Backend.MouseInputs[1].Motion!.Value.Maximum.X);
-    }
-
-    [Fact]
-    public void An_old_pending_mouse_down_rejection_does_not_clear_a_newer_drag()
-    {
-        var fixture = new Fixture(); fixture.Start();
-        fixture.Backend.MouseDispatches.Enqueue(BackgroundInputDispatchResult.Pending(1, BackgroundInputCategory.EditCommand));
-        fixture.Backend.MouseDispatches.Enqueue(BackgroundInputDispatchResult.Pending(2, BackgroundInputCategory.EditCommand));
-        fixture.Backend.MouseDispatches.Enqueue(BackgroundInputDispatchResult.Pending(3, BackgroundInputCategory.EditCommand));
-        fixture.Session.HandleMouse(new(BackgroundMouseAction.Down, BackgroundMouseButton.Left), fixture.Cursor, 7);
-        fixture.Session.HandleMouse(new(BackgroundMouseAction.Up, BackgroundMouseButton.Left), fixture.Cursor, 0);
-        fixture.Session.HandleMouse(new(BackgroundMouseAction.Down, BackgroundMouseButton.Left), fixture.Cursor, 7);
-        var sent = fixture.Backend.MouseInputs;
-        Assert.Equal(sent[0].GestureId, sent[1].GestureId);
-        Assert.NotEqual(sent[0].GestureId, sent[2].GestureId);
-        fixture.Session.CompleteInput(new(fixture.Session.Generation, 1, BackgroundOperationDeadlines.Timeout(false)));
-        Assert.True(fixture.Session.HasHeldMouseButtons);
-    }
-
-    [Fact]
-    public void A_key_blocked_only_by_pending_text_work_resumes_after_the_last_receipt()
-    {
-        var fixture = new Fixture(); fixture.Start();
-        fixture.Backend.MouseDispatches.Enqueue(BackgroundInputDispatchResult.Pending(1, BackgroundInputCategory.EditCommand));
-        fixture.Session.HandleMouse(new(BackgroundMouseAction.Down, BackgroundMouseButton.Left), fixture.Cursor, 7);
-        fixture.Backend.KeyDispatches.Enqueue(BackgroundInputDispatchResult.Rejected(BackgroundInputRejectionReason.PendingTextOperation));
-        fixture.Session.HandleKey(Key(0x41, true), fixture.Cursor);
-        Assert.True(fixture.Session.HasRejectedInput);
-        fixture.Session.CompleteInput(new(fixture.Session.Generation, 1, BackgroundInputDispatchResult.Accepted(BackgroundInputCategory.Ignored)));
-        Assert.True(fixture.Session.IsActive);
-        Assert.False(fixture.Session.HasPendingOperations);
-        Assert.False(fixture.Session.HasRejectedInput);
-        Assert.Equal(1, fixture.ResumeCount);
     }
 
     private sealed class Fixture
@@ -489,20 +361,17 @@ public sealed class BackgroundInteractionSessionTests
             targetBounds.Contains(cursor) || PopupBounds.Contains(cursor);
         public nint ForegroundWindow { get; set; } = 99;
         public nint Recipient { get; set; } = 7;
-        public Queue<BackgroundInputDispatchResult> KeyDispatches { get; } = [];
-        public Queue<BackgroundInputDispatchResult> MouseDispatches { get; } = [];
         public List<BackgroundMouseInput> MouseInputs { get; } = [];
         public BackgroundInputDispatchResult DispatchMouse(WindowSnapshot snapshot, nint recipient, BackgroundMouseInput input, Point cursor)
         {
             MouseInputs.Add(input);
-            return MouseDispatches.TryDequeue(out var result) ? result : BackgroundInputDispatchResult.Accepted(BackgroundInputCategory.Mouse);
+            return BackgroundInputDispatchResult.Accepted(BackgroundInputCategory.Mouse);
         }
         public int ResetCount { get; private set; }
         public void ResetInputState() => ResetCount++;
         public bool ApplyStyleFails { get; set; }
         public bool RestoreStyleFails { get; set; }
         public string? FailNextKey { get; set; }
-        public BackgroundInputCategory DispatchCategory { get; set; } = BackgroundInputCategory.RawKey;
         public BackgroundInputRejectionReason? RejectKey { get; set; }
         public List<bool> StyleChanges { get; } = [];
         public List<(nint Recipient, BackgroundKeyInput Input)> Keys { get; } = [];
@@ -515,14 +384,13 @@ public sealed class BackgroundInteractionSessionTests
         public nint ResolveKeyboardTarget(WindowSnapshot snapshot, Point cursor) => Recipient;
         public BackgroundInputDispatchResult DispatchKey(WindowSnapshot snapshot, nint recipient, BackgroundKeyInput input)
         {
-            if (KeyDispatches.TryDequeue(out var pending)) return pending;
             if (RejectKey is { } reason)
                 return input.IsDown ? BackgroundInputDispatchResult.Rejected(reason)
                     : BackgroundInputDispatchResult.Accepted(BackgroundInputCategory.Ignored);
-            return new(PostKey(snapshot, recipient, input), DispatchCategory,
-                input.IsDown && DispatchCategory == BackgroundInputCategory.RawKey);
+            return new(SendKey(input, recipient), BackgroundInputCategory.RawKey, input.IsDown);
         }
-        public NativeResult PostKey(WindowSnapshot snapshot, nint recipient, BackgroundKeyInput input)
+        public NativeResult ReleaseKey(WindowSnapshot snapshot, nint recipient, BackgroundKeyInput input) => SendKey(input, recipient);
+        private NativeResult SendKey(BackgroundKeyInput input, nint recipient)
         {
             Keys.Add((recipient, input));
             var failure = FailNextKey;

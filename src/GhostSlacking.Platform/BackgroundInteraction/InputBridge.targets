@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <InputBridgeSource>$(MSBuildThisFileDirectory)InputBridge.cpp</InputBridgeSource>
+    <InputBridgeBuildScript>$(MSBuildThisFileDirectory)..\..\..\scripts\build-input-bridge.ps1</InputBridgeBuildScript>
+    <InputBridgeIntermediateRoot Condition="$([System.IO.Path]::IsPathRooted('$(BaseIntermediateOutputPath)'))">$(BaseIntermediateOutputPath)</InputBridgeIntermediateRoot>
+    <InputBridgeIntermediateRoot Condition="'$(InputBridgeIntermediateRoot)' == ''">$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)</InputBridgeIntermediateRoot>
+    <InputBridgeOutputDirectory>$([System.IO.Path]::GetFullPath('$(InputBridgeIntermediateRoot)input-bridge\$(Configuration)\win-x64'))</InputBridgeOutputDirectory>
+    <InputBridgeBinary>$(InputBridgeOutputDirectory)\GhostSlacking.InputBridge.dll</InputBridgeBinary>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="$(InputBridgeBinary)" Link="GhostSlacking.InputBridge.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+  <Target Name="BuildInputBridge" BeforeTargets="PrepareForBuild;GetCopyToOutputDirectoryItems"
+          Condition="'$(DesignTimeBuild)' != 'true'"
+          Inputs="$(InputBridgeSource);$(InputBridgeBuildScript);$(MSBuildThisFileFullPath)" Outputs="$(InputBridgeBinary)">
+    <Exec Command="pwsh -NoProfile -File &quot;$(InputBridgeBuildScript)&quot; -OutputDirectory &quot;$(InputBridgeOutputDirectory)&quot; -Configuration &quot;$(Configuration)&quot;" />
+    <Error Condition="!Exists('$(InputBridgeBinary)')" Text="The x64 input bridge was not built." />
+  </Target>
+</Project>

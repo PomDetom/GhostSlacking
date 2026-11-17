@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 
 namespace GhostSlacking.Core;
 
@@ -29,19 +29,8 @@ public readonly record struct BackgroundMouseInput(
     BackgroundMouseAction Action,
     BackgroundMouseButton? Button = null,
     int WheelDelta = 0,
-    bool DoubleClick = false,
-    long GestureId = 0,
-    BackgroundMouseMotion? Motion = null);
+    bool DoubleClick = false);
 
-// Both hook and accessibility queues may coalesce moves. Retain excursions so
-// a fast drag out and back cannot become a semantic button click.
-public readonly record struct BackgroundMouseMotion(Point Minimum, Point Maximum)
-{
-    public static BackgroundMouseMotion At(Point point) => new(point, point);
-    public BackgroundMouseMotion Include(BackgroundMouseMotion other) => new(
-        new(Math.Min(Minimum.X, other.Minimum.X), Math.Min(Minimum.Y, other.Minimum.Y)),
-        new(Math.Max(Maximum.X, other.Maximum.X), Math.Max(Maximum.Y, other.Maximum.Y)));
-}
 public enum BackgroundMouseButton
 {
     Left,
@@ -57,17 +46,11 @@ public interface IBackgroundInteractionBackend
     bool ContainsInputPoint(WindowSnapshot snapshot, Rectangle targetBounds, Point cursor) => targetBounds.Contains(cursor);
     NativeResult SetNoActivate(WindowSnapshot snapshot, bool restore);
     nint ResolveKeyboardTarget(WindowSnapshot snapshot, Point cursor);
-    NativeResult PostKey(WindowSnapshot snapshot, nint recipient, BackgroundKeyInput input);
+    NativeResult ReleaseKey(WindowSnapshot snapshot, nint recipient, BackgroundKeyInput input);
     void UpdateKeyboardState(BackgroundKeyInput input) { }
     void ResetInputState() { }
-    void BeginInputSession(long generation) { }
-    IEnumerable<BackgroundInputCompletion> DrainCompletions() => [];
-    BackgroundInputDispatchResult DispatchKey(WindowSnapshot snapshot, nint recipient, BackgroundKeyInput input) =>
-        new(PostKey(snapshot, recipient, input), BackgroundInputCategory.RawKey, input.IsDown);
-    NativeResult PostMouse(WindowSnapshot snapshot, nint recipient, BackgroundMouseInput input, Point cursor) =>
-        NativeResult.Failed("UnsupportedBackgroundInput", 0, "Mouse message forwarding is unavailable.");
-    BackgroundInputDispatchResult DispatchMouse(WindowSnapshot snapshot, nint recipient, BackgroundMouseInput input, Point cursor) =>
-        new(PostMouse(snapshot, recipient, input, cursor), BackgroundInputCategory.Mouse);
+    BackgroundInputDispatchResult DispatchKey(WindowSnapshot snapshot, nint recipient, BackgroundKeyInput input);
+    BackgroundInputDispatchResult DispatchMouse(WindowSnapshot snapshot, nint recipient, BackgroundMouseInput input, Point cursor);
     NativeResult ReleaseMouseButton(WindowSnapshot snapshot, nint recipient, BackgroundMouseButton button, Point cursor);
 }
 
@@ -83,16 +66,6 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
     private GhostWindowProfile? _profile;
     private nint _foreground;
     private bool _inputRejected;
-    private bool _pendingOnlyRejection;
-    private long _generation;
-    private bool _pendingReported;
-    private long _gestureSerial;
-    private readonly Dictionary<BackgroundMouseButton, long> _gestures = [];
-    private readonly Dictionary<long, (BackgroundMouseButton? Button, long Gesture, bool Down, bool Move)> _pending = [];
-    public long Generation => _generation;
-    public bool HasRejectedInput => _inputRejected;
-    public bool HasPendingOperations => _pending.Count != 0;
-    public event Action<bool>? PendingChanged;
 
     public (int PostedKeys, int MouseButtons) LastCleanup { get; private set; }
     public bool IsActive => _profile is not null;
@@ -120,7 +93,6 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
         if (observation.IsMinimized) return NativeResult.Failed("BackgroundTargetMinimized", 0, "The target is minimized.");
         if (!allowHidden && !observation.IsVisible) return NativeResult.Failed("BackgroundTargetHidden", 0, "A visible Reveal is required.");
 
-        backend.BeginInputSession(++_generation);
         LastCleanup = default;
         var applied = backend.SetNoActivate(profile.Original, restore: false);
         if (!applied.Success)
@@ -198,20 +170,12 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
             {
                 _keys[input.VirtualKey] = (recipient, input, true);
             }
-            if (dispatched.PendingOperation != 0)
-            {
-                RegisterPending(dispatched.PendingOperation, null, 0, false, false);
-            }
-            else if (dispatched.Rejection is { } rejected)
+            if (dispatched.Rejection is { } rejected)
             {
                 if (input.IsDown && !input.IsRepeat)
                 {
                     _rejectedKeys.Add(input.VirtualKey);
                     RejectInput(rejected);
-                }
-                else if (!input.IsDown && rejected == BackgroundInputRejectionReason.ImeComposition)
-                {
-                    RejectInput(rejected); // A standalone Shift language switch completes on key-up.
                 }
             }
             else if (!dispatched.Result.Success)
@@ -230,7 +194,7 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
         return true;
     }
 
-    public bool ConsumeKeyTail(BackgroundKeyInput input)
+    private bool ConsumeKeyTail(BackgroundKeyInput input)
     {
         if (!_keyTails.Contains(input.VirtualKey))
         {
@@ -269,7 +233,6 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
         {
             // The physical down is consumed. Retain its tail even if posting fails.
             _buttonTails.Add(pressed);
-            _gestures[pressed] = ++_gestureSerial;
             if (recipient != 0) _buttons[pressed] = (recipient, cursor);
         }
         if (recipient == 0)
@@ -278,21 +241,8 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
         }
         else
         {
-            var gestureButton = input.Button ?? _buttons.Keys.FirstOrDefault();
-            input = input with { GestureId = _gestures.GetValueOrDefault(gestureButton) };
             var dispatched = backend.DispatchMouse(profile.Original, recipient, input, cursor);
-            if (dispatched.PendingOperation != 0)
-            {
-                RegisterPending(dispatched.PendingOperation, input.Button, input.GestureId,
-                    input.Action == BackgroundMouseAction.Down, input.Action == BackgroundMouseAction.Move);
-            }
-            else if (dispatched.Rejection is { } rejected)
-            {
-                if (input.Action == BackgroundMouseAction.Down && input.Button is { } blocked)
-                    _buttons.Remove(blocked);
-                if (input.Action != BackgroundMouseAction.Move) RejectInput(rejected);
-            }
-            else if (!dispatched.Result.Success)
+            if (!dispatched.Result.Success)
             {
                 Stop(FailureReason(dispatched.Result));
             }
@@ -301,7 +251,7 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
                 _buttons.Remove(completed);
                 _buttonTails.Remove(completed);
             }
-            if (dispatched.PendingOperation == 0 && dispatched.Result.Success) ResumeInput(dispatched.Category);
+            if (dispatched.Result.Success) ResumeInput(dispatched.Category);
         }
         if (input.Action == BackgroundMouseAction.Up && input.Button is { } finished)
         {
@@ -311,57 +261,6 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
         return true;
     }
 
-    private void RegisterPending(long operation, BackgroundMouseButton? button, long gesture, bool down, bool move)
-    {
-        _pending[operation] = (button, gesture, down, move);
-        UpdatePendingStatus();
-    }
-
-    private void UpdatePendingStatus()
-    {
-        var pending = _pending.Count != 0;
-        if (!pending && _pendingOnlyRejection && IsActive)
-        {
-            _pendingOnlyRejection = _inputRejected = false;
-            InputResumed?.Invoke();
-        }
-        if (pending == _pendingReported) return;
-        _pendingReported = pending;
-        PendingChanged?.Invoke(pending);
-    }
-
-    public void CompleteInput(BackgroundInputCompletion completion)
-    {
-        if (!IsActive || completion.SessionGeneration != _generation || !_pending.Remove(completion.Operation, out var pending)) return;
-        var dispatched = completion.Dispatch;
-        if (dispatched.Rejection is { } rejected)
-        {
-            if (pending.Down && pending.Button is { } button && _gestures.GetValueOrDefault(button) == pending.Gesture)
-                _buttons.Remove(button);
-            if (!pending.Move) RejectInput(rejected);
-        }
-        else if (!dispatched.Result.Success) Stop(FailureReason(dispatched.Result));
-        else ResumeInput(dispatched.Category);
-        UpdatePendingStatus();
-    }
-
-    public void SuppressKeyUntilRelease(int virtualKey) => _keyTails.Add(virtualKey);
-    public void SuppressMouseUntilRelease(BackgroundMouseButton button) => _buttonTails.Add(button);
-
-    public void MouseDown(BackgroundMouseButton button, nint recipient, Point cursor)
-    {
-        if (IsActive)
-        {
-            _buttons[button] = (recipient, cursor);
-        }
-    }
-
-    public bool MouseUp(BackgroundMouseButton button)
-    {
-        _buttons.Remove(button);
-        return _buttonTails.Remove(button);
-    }
-
     public void DiscardReleaseTails()
     {
         if (IsActive) return;
@@ -369,19 +268,16 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
         _buttonTails.Clear();
     }
 
-    public bool ConsumeMouseTail(BackgroundMouseButton button) => _buttonTails.Contains(button);
-
     private void RejectInput(BackgroundInputRejectionReason reason)
     {
         _inputRejected = true;
-        _pendingOnlyRejection = reason == BackgroundInputRejectionReason.PendingTextOperation;
         InputRejected?.Invoke(reason);
     }
 
     private void ResumeInput(BackgroundInputCategory category)
     {
-        if (!_inputRejected || category is BackgroundInputCategory.Ignored or BackgroundInputCategory.Modifier) return;
-        _pendingOnlyRejection = _inputRejected = false;
+        if (!_inputRejected || category == BackgroundInputCategory.Ignored) return;
+        _inputRejected = false;
         InputResumed?.Invoke();
     }
 
@@ -393,15 +289,6 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
         _ => BackgroundInteractionStopReason.DeliveryFailed
     };
 
-    public void ReconcileReleasedInputs(Func<int, bool> keyIsDown, Func<BackgroundMouseButton, bool> buttonIsDown)
-    {
-        if (IsActive) return;
-        // Recover from a lost release notification (e.g. a desktop switch). Only
-        // discard tails whose physical inputs have actually been released.
-        _keyTails.RemoveWhere(key => !keyIsDown(key));
-        _buttonTails.RemoveWhere(button => !buttonIsDown(button));
-    }
-
     public void Stop(BackgroundInteractionStopReason reason)
     {
         if (_profile is not { } profile)
@@ -409,10 +296,6 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
             return;
         }
         _profile = null;
-        ++_generation;
-        _pending.Clear();
-        _gestures.Clear();
-        UpdatePendingStatus();
 
         // Never send cleanup to a reused HWND. The same check is repeated by the backend.
         var observation = windows.Observe(profile.Hwnd);
@@ -421,7 +304,7 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
         LastCleanup = (_keys.Values.Count(key => key.NeedsRelease), _buttons.Count);
         foreach (var (recipient, input, needsRelease) in _keys.Values)
         {
-            if (same && needsRelease && !backend.PostKey(profile.Original, recipient, input with { IsDown = false }).Success)
+            if (same && needsRelease && !backend.ReleaseKey(profile.Original, recipient, input with { IsDown = false }).Success)
             {
                 cleanupFailed = true;
             }

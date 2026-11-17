@@ -119,7 +119,7 @@ internal sealed partial class GhostApplicationController : IDisposable
         {
             BackgroundInteractionStopReason.ForegroundChanged => "backgroundForegroundChanged",
             BackgroundInteractionStopReason.UnsupportedInput or BackgroundInteractionStopReason.TargetChanged => "backgroundUnsupported",
-            BackgroundInteractionStopReason.DeliveryFailed => "backgroundFailed",
+            BackgroundInteractionStopReason.DeliveryFailed => _backgroundInteraction.InputComponentUnavailable ? "backgroundComponentUnavailable" : "backgroundFailed",
             BackgroundInteractionStopReason.CleanupFailed => "backgroundCleanupFailed",
             _ => "backgroundStopped"
         };
@@ -134,19 +134,9 @@ internal sealed partial class GhostApplicationController : IDisposable
         if (_isExiting || !_backgroundInteraction.IsActive) return;
         var key = reason switch
         {
-            BackgroundInputRejectionReason.PendingTextOperation => "backgroundStarting",
-            BackgroundInputRejectionReason.DiscoveryUnavailable => "backgroundDiscoveryRejected",
-            BackgroundInputRejectionReason.PasteUnavailable => "backgroundPasteRejected",
-            BackgroundInputRejectionReason.PasteRequiresEmptyEditor => "backgroundEmptyEditorRequired",
-            BackgroundInputRejectionReason.RichContentUnverified => "backgroundRichContentRejected",
-            BackgroundInputRejectionReason.ClipboardUnavailable => "backgroundClipboardRejected",
-            BackgroundInputRejectionReason.ControlUnavailable => "backgroundControlRejected",
-            BackgroundInputRejectionReason.NoInputRecipient => "backgroundClickEditor",
+            BackgroundInputRejectionReason.NoInputRecipient => "backgroundClickTarget",
             BackgroundInputRejectionReason.ImeComposition => "backgroundImeRejected",
-            BackgroundInputRejectionReason.DeadKey => "backgroundDeadKeyRejected",
             BackgroundInputRejectionReason.SystemShortcut => "backgroundSystemKeyRejected",
-            BackgroundInputRejectionReason.UnsupportedMouse => "backgroundMouseRejected",
-            BackgroundInputRejectionReason.OutsideEditor => "backgroundTextOnly",
             _ => "backgroundKeyRejected"
         };
         _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, key));

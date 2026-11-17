@@ -40,6 +40,8 @@ GitHub、应用、NSIS EXE 文件名、卸载注册和发布清单均使用完�
 
 本地打包要求 PowerShell 7、.NET SDK 8 或更新版本，以及 Visual Studio Desktop development with C++ Build Tools。`installer/get-nsis.ps1` 从 Tauri 维护的 GitHub 二进制镜像获取 NSIS 3.11，并验证固定文件大小与 SHA256；原生辅助程序静态链接 CRT，不依赖安装在系统中的 .NET 8。
 
+正常 App publish 自动构建并携带 `GhostSlacking.InputBridge.dll`，安装包必须包含该组件；无需额外调用研究原型构建脚本。组件使用 x64、静态 CRT、`/W4 /WX` 和 ASLR/DEP，随既有 NSIS payload 升级和卸载。运行时从独立校验缓存加载，避免目标进程占用安装原件，生命周期由[安装架构](../architecture/INSTALLATION_UPDATES.md#输入组件分发与加载)维护。
+
 ```powershell
 pwsh ./scripts/release/build-release.ps1 -Version 0.1.4-beta.7 -SigningKeyPath "$env:LOCALAPPDATA\GhostSlacking.ReleaseSigning\private-key.pem"
 pwsh ./tests/Installer.Tests.ps1

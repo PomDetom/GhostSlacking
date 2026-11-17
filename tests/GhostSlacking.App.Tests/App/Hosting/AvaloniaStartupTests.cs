@@ -1,4 +1,4 @@
-﻿using GhostSlacking.App;
+using GhostSlacking.App;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -519,8 +519,7 @@ public sealed class AvaloniaStartupTests
         foreach (var language in Enum.GetValues<UiLanguage>())
         foreach (var key in new[] { "backgroundStarting", "backgroundPending", "backgroundActive", "backgroundStopped",
                      "backgroundForegroundChanged", "backgroundUnsupported", "backgroundFailed", "backgroundCleanupFailed",
-                     "backgroundUnavailable", "backgroundToggleRequired", "backgroundClickEditor", "backgroundTextOnly",
-                     "backgroundImeRejected", "backgroundDeadKeyRejected", "backgroundSystemKeyRejected", "backgroundMouseRejected", "backgroundFocusFirst", "backgroundDiscoveryRejected" })
+                     "backgroundUnavailable", "backgroundToggleRequired", "backgroundClickTarget", "backgroundImeRejected", "backgroundSystemKeyRejected", "backgroundFocusFirst", })
         {
             window.Update(UiText.Text(language, key), UserNotificationSeverity.Info, false);
             window.Configure(new NotificationHudSettings { Width = 100, Height = 32 });

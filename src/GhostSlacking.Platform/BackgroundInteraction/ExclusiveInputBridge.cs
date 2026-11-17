@@ -5,7 +5,7 @@ using GhostSlacking.Core;
 
 namespace GhostSlacking.Platform;
 
-internal interface IExclusiveInputPrototype : IDisposable
+internal interface IExclusiveInputBridge : IDisposable
 {
     NativeResult Start(WindowSnapshot snapshot, nint foreground);
     NativeResult Renew();
@@ -17,9 +17,9 @@ internal interface IExclusiveInputPrototype : IDisposable
     NativeResult Send(nint recipient, uint message, nint wparam, nint lparam, byte[] keyboard, Point cursor);
 }
 
-// Explicit opt-in research backend. The gate serializes native mapping access
+// Experimental target-thread input backend. The gate serializes native mapping access
 // with its UI-loop lease and disposal; no text or key data is logged.
-internal sealed class ExclusiveInputPrototype : IExclusiveInputPrototype
+internal sealed class ExclusiveInputBridge : IExclusiveInputBridge
 {
     private readonly object _gate = new();
     private bool _active;
@@ -30,18 +30,19 @@ internal sealed class ExclusiveInputPrototype : IExclusiveInputPrototype
         {
             try
             {
+                InputBridgeLibrary.EnsureLoaded();
                 if (!long.TryParse(snapshot.ProcessStartIdentity, NumberStyles.None, CultureInfo.InvariantCulture, out var start) ||
                     start < DateTime.FromFileTimeUtc(0).Ticks)
-                    return NativeResult.Failed("ExclusiveInputPrototypeIdentity", 0, "The captured process start identity is invalid.");
+                    return NativeResult.Failed("ExclusiveInputBridgeIdentity", 0, "The captured process start identity is invalid.");
                 var fileTime = (ulong)(start - DateTime.FromFileTimeUtc(0).Ticks);
                 var error = Begin(snapshot.Hwnd, foreground, snapshot.ProcessId, fileTime);
-                if (error != 0) return NativeResult.Failed("ExclusiveInputPrototypeStart", (int)error, "The x64 target-thread bridge could not be prepared.");
+                if (error != 0) return NativeResult.Failed("ExclusiveInputBridgeStart", (int)error, "The x64 target-thread bridge could not be prepared.");
                 _active = true;
-                return NativeResult.Ok("ExclusiveInputPrototypeStart");
+                return NativeResult.Ok("ExclusiveInputBridgeStart");
             }
-            catch (Exception error) when (error is DllNotFoundException or BadImageFormatException or EntryPointNotFoundException)
+            catch (Exception error) when (error is DllNotFoundException or BadImageFormatException or EntryPointNotFoundException or IOException or UnauthorizedAccessException)
             {
-                return NativeResult.Failed("ExclusiveInputPrototypeMissing", 0, "Build the exclusive input prototype before using its launch switch.");
+                return NativeResult.Failed("ExclusiveInputBridgeUnavailable", error.HResult, "The installed input bridge could not be loaded. Repair the installation before trying again.");
             }
         }
     }
@@ -50,10 +51,10 @@ internal sealed class ExclusiveInputPrototype : IExclusiveInputPrototype
     {
         lock (_gate)
         {
-            if (!_active) return NativeResult.Ok("ExclusiveInputPrototypeIdle");
+            if (!_active) return NativeResult.Ok("ExclusiveInputBridgeIdle");
             var error = Heartbeat();
-            return error == 0 ? NativeResult.Ok("ExclusiveInputPrototypeLease")
-                : Failure("ExclusiveInputPrototypeLease", error);
+            return error == 0 ? NativeResult.Ok("ExclusiveInputBridgeLease")
+                : Failure("ExclusiveInputBridgeLease", error);
         }
     }
 
@@ -95,10 +96,10 @@ internal sealed class ExclusiveInputPrototype : IExclusiveInputPrototype
     {
         lock (_gate)
         {
-            if (!_active) return NativeResult.Failed("ExclusiveInputPrototypeInactive", 0, "The target-thread bridge is not active.");
+            if (!_active) return NativeResult.Failed("ExclusiveInputBridgeInactive", 0, "The target-thread bridge is not active.");
             var error = Dispatch(recipient, message, wparam, lparam, keyboard, cursor.X, cursor.Y);
-            return error == 0 ? NativeResult.Ok("ExclusiveInputPrototypeDispatch")
-                : Failure("ExclusiveInputPrototypeDispatch", error);
+            return error == 0 ? NativeResult.Ok("ExclusiveInputBridgeDispatch")
+                : Failure("ExclusiveInputBridgeDispatch", error);
         }
     }
 
@@ -120,26 +121,26 @@ internal sealed class ExclusiveInputPrototype : IExclusiveInputPrototype
         }
     }
 
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_Begin", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_Begin", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint Begin(nint root, nint foreground, uint expectedPid, ulong expectedStart);
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_Dispatch", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_Dispatch", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint Dispatch(nint recipient, uint message, nint wparam, nint lparam, [In] byte[] keyboard, int x, int y);
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_Heartbeat", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_Heartbeat", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint Heartbeat();
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_End", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_End", CallingConvention = CallingConvention.Cdecl)]
     private static extern void End();
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_MenuAt", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_MenuAt", CallingConvention = CallingConvention.Cdecl)]
     private static extern nint FindMenu(int x, int y);
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_IsMenu", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_IsMenu", CallingConvention = CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CheckMenu(nint window);
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_HasMenus", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_HasMenus", CallingConvention = CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool AnyMenus();
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_GetMenus", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_GetMenus", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint GetMenus([Out] nint[] windows, uint capacity);
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_PresentMenus", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_PresentMenus", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint Present([In] nint[] menus, uint count);
-    [DllImport("GhostSlacking.InputPrototype.MenuHover.dll", EntryPoint = "GS_ErrorStage", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(InputBridgeLibrary.LibraryName, EntryPoint = "GS_ErrorStage", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint ErrorStage();
 }
