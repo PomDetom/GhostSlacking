@@ -29,7 +29,7 @@
 
 临时工具窗口样式会改变 placement 坐标约定；Platform 将运行期读取的位置换算回原始样式约定，保留无位置的 (-1,-1) 哨兵。保持最大化/最小化 placement 时则反向转换到当前样式约定，避免顶部/左侧任务栏导致坐标偏移。依据 Windows 的 [WINDOWPLACEMENT 坐标约定](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-windowplacement)。实际单屏缩放和混合 DPI 验收边界见[质量边界](../quality/KNOWN_LIMITATIONS.md)。
 
-Restore 恢复 region、style/ex-style、DWM 属性、TopMost、placement 和原始可见性。异步恢复要求连续三次观测匹配，最多纠正十次以容纳浏览器延迟漂移；失败保留恢复资料。同步 Restore All 逐项返回成功、失败或跳过结果。
+Restore 恢复 region、style/ex-style、DWM 属性、TopMost、placement 和原始可见性。写回普通样式时保留目标当下的 `WS_VISIBLE` 位，由后续 placement 和显隐调用恢复原始可见性。提前写回该位会让隐藏窗口跳过显示通知，导致浏览器等目标的外框已经可见，页面内容仍然空白。异步恢复要求连续三次观测匹配，最多纠正十次以容纳浏览器延迟漂移；失败保留恢复资料。同步 Restore All 逐项返回成功、失败或跳过结果。
 
 最大化恢复由 Windows 按当前工作区及 DPI 决定外框，不能强制重放旧缩放的像素矩形。Platform 在身份验证后检查原生最大化状态、目标显示器及工作区覆盖，允许的外扩只取窗口/显示器 DPI 对应的系统缩放边框；原始工具窗口也允许其显示器全区域。合法的新几何先登记并同步清单，再由异步/同步恢复使用同一基准完成三次稳定观测、清除恢复资料和菜单状态。普通窗口仍要求精确矩形，错误显示器、未最大化或异常外框不能仅因可见而算成功。Watchdog 的原生恢复共用此最大化验证，schema 不变。日志区分 RestoreApplied（已执行）与 RestoreVerified（稳定验证完成）。
 
