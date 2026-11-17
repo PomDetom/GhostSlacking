@@ -111,6 +111,7 @@ public sealed class Win32VisibilityBackend : IVisibilityBackend
 
         return ApplyRevealRegion(hwnd, region);
     }
+    internal bool RetainsRevealRegion(nint hwnd, CircleRegion region) => ValidateRegion(hwnd, RevealGeometry.GetBounds(region)).Success;
 
     public NativeResult EnsureWindowPlacement(nint hwnd, WindowSnapshot snapshot)
     {
@@ -180,6 +181,24 @@ public sealed class Win32VisibilityBackend : IVisibilityBackend
 
     public NativeResult Restore(nint hwnd, WindowSnapshot snapshot)
     {
+        var regionResult = RestoreRegionOnly(hwnd, snapshot);
+        if (!regionResult.Success) return regionResult;
+
+        var restoredStyle = RestoreOriginalStyle(hwnd, snapshot);
+        if (!restoredStyle.Success)
+        {
+            return restoredStyle;
+        }
+
+        RestoreSystemBackdrop(hwnd, snapshot.OriginalSystemBackdropType);
+        RestoreNonClientRendering(hwnd, snapshot.OriginalNonClientRenderingPolicy);
+        RestoreWindowDecorations(hwnd, snapshot.OriginalWindowCornerPreference, snapshot.OriginalBorderColor);
+
+        return RestoreVisibilityAndPlacement(hwnd, snapshot);
+    }
+
+    internal NativeResult RestoreRegionOnly(nint hwnd, WindowSnapshot snapshot)
+    {
         if (snapshot.OriginalRegionData is null)
         {
             if (!Win32NativeMethods.SetWindowRgn(hwnd, 0, true))
@@ -202,15 +221,11 @@ public sealed class Win32VisibilityBackend : IVisibilityBackend
             }
         }
 
-        var restoredStyle = RestoreOriginalStyle(hwnd, snapshot);
-        if (!restoredStyle.Success)
-        {
-            return restoredStyle;
-        }
+        return NativeResult.Ok("RestoreRegionOnly");
+    }
 
-        RestoreSystemBackdrop(hwnd, snapshot.OriginalSystemBackdropType);
-        RestoreNonClientRendering(hwnd, snapshot.OriginalNonClientRenderingPolicy);
-        RestoreWindowDecorations(hwnd, snapshot.OriginalWindowCornerPreference, snapshot.OriginalBorderColor);
+    private NativeResult RestoreVisibilityAndPlacement(nint hwnd, WindowSnapshot snapshot)
+    {
 
         var placement = ToNativePlacement(snapshot.Placement);
         if (!Win32NativeMethods.SetWindowPlacement(hwnd, ref placement))

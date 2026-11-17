@@ -18,6 +18,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
     private readonly Action<Action> _dispatch;
     private readonly ILogger _logger;
     private readonly Win32BackgroundInputBackend _backend;
+    private readonly Win32RevealMenuHost? _menuVisuals;
     private readonly BackgroundInteractionSession _session;
     private readonly Win32NativeMethods.HookProc _keyboardCallback;
     private readonly Win32NativeMethods.HookProc _mouseCallback;
@@ -65,14 +66,19 @@ public sealed class Win32BackgroundInteraction : IDisposable
         Func<GhostState> state,
         Func<GhostWindowProfile?> profile,
         Action<Action> dispatch,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        bool exclusiveInputPrototype = false,
+        RecoveryManager? recovery = null,
+        Win32VisibilityBackend? visibility = null)
     {
         _windows = windows;
         _state = state;
         _profile = profile;
         _dispatch = dispatch;
         _logger = logger ?? NullLogger.Instance;
-        _backend = new Win32BackgroundInputBackend(windows, _logger);
+        _backend = new Win32BackgroundInputBackend(windows, _logger, exclusiveInputPrototype);
+        if (exclusiveInputPrototype && recovery is not null && visibility is not null)
+            _menuVisuals = new(windows, recovery, visibility);
         _session = new BackgroundInteractionSession(windows, _backend);
         _session.Stopped += reason =>
         {
@@ -114,6 +120,38 @@ public sealed class Win32BackgroundInteraction : IDisposable
     public event Action? InputResumed;
     public event Action<bool>? InputPending;
     public bool HasSeparateForeground => _profile() is { } profile && ForegroundStatus(_backend.ForegroundWindow, profile.Hwnd) == BackgroundArmStatus.Preparing;
+    public bool ContainsInputPoint(Point cursor) => _profile() is { } profile &&
+        _backend.ContainsInputPoint(profile.Original, profile.Original.ScreenBounds, cursor);
+    public bool IsOverMenu(Point cursor) => IsActive && _profile() is { } profile &&
+        _backend.IsCurrent(profile.Original) && _backend.IsOverMenu(cursor);
+    public Rectangle? MenuSurfaceBounds()
+    {
+        if (!IsActive || _profile() is not { } profile) return null;
+        var menus = _backend.MenuWindows;
+        if (menus.Length == 0) return null;
+        var bounds = profile.Original.ScreenBounds;
+        foreach (var menu in menus)
+            if (_windows.Observe(menu) is { } observed) bounds = Rectangle.Union(bounds, observed.ScreenBounds);
+        return bounds;
+    }
+    public void UpdateMenuVisuals(RevealVisualState visual, Func<NativeResult> prepareOverlay)
+    {
+        if (_menuVisuals is null || !IsActive || _profile() is not { } profile) return;
+        var menus = _backend.MenuWindows;
+        var result = _menuVisuals.Synchronize(profile.Original, visual, menus, _backend.IsLiveMenu);
+        if (result.Success && _menuVisuals.ReadyMenus.Count != 0)
+        {
+            // Raise our own optional visual before the hidden menus are shown.
+            // The injected target never receives the overlay HWND.
+            result = prepareOverlay();
+            if (result.Success) result = _backend.PresentMenus(_menuVisuals.ReadyMenus);
+        }
+        if (!result.Success)
+        {
+            _logger.Log(LogLevel.Warning, $"MenuReveal operation={result.Operation} error={result.ErrorCode}");
+            Stop(BackgroundInteractionStopReason.DeliveryFailed);
+        }
+    }
 
     public BackgroundArmResult Arm(IReadOnlyDictionary<int, HotkeyBinding> shortcuts, IReadOnlySet<int> sessionPreservingShortcuts, bool prepareHidden = false, int peekVirtualKey = 0)
     {
@@ -192,6 +230,18 @@ public sealed class Win32BackgroundInteraction : IDisposable
     public void Poll()
     {
         if (_disposed) return;
+        var menuCleanup = _menuVisuals?.CleanupHidden(_session.IsActive ? _backend.MenuWindows : []);
+        if (menuCleanup is { Success: false })
+            _logger.Log(LogLevel.Warning, $"MenuRevealCleanup operation={menuCleanup.Operation} error={menuCleanup.ErrorCode}");
+        if (_session.IsActive)
+        {
+            var health = _backend.MaintainPrototype();
+            if (!health.Success)
+            {
+                _logger.Log(LogLevel.Warning, $"BackgroundInputLease operation={health.Operation} error={health.ErrorCode}");
+                Stop(BackgroundInteractionStopReason.DeliveryFailed);
+            }
+        }
         foreach (var completion in _backend.DrainCompletions()) _session.CompleteInput(completion);
         // Hardware events have already been consumed. Only active-generation
         // work reaches the target, on the application thread rather than a hook.
@@ -270,6 +320,8 @@ public sealed class Win32BackgroundInteraction : IDisposable
         _phase = BackgroundInteractionPhase.Active;
         _logger.Log(LogLevel.Info, $"BackgroundInteraction active hwnd={_armedProfile?.Hwnd} foreground={_pendingForeground}");
         Started?.Invoke();
+        if (_backend.UsesPrototype)
+            ProcessMouse(default, _windows.GetCursorPosition(), null, false, true, false, 0x0200);
         return true;
     }
 
@@ -481,9 +533,13 @@ public sealed class Win32BackgroundInteraction : IDisposable
         {
             if (!_inputBlocked && (IsActive || IsPending) && _backend.ForegroundWindow != _pendingForeground)
                 RequestStop(BackgroundInteractionStopReason.ForegroundChanged);
-            if (!_inputBlocked && (IsActive || IsPending) && _armedProfile?.Original.ScreenBounds.Contains(cursor) != true)
+            // Prototype menu windows may extend outside B. Resolve their live
+            // scope on the UI queue; never block the low-level hook on a DLL call.
+            if (!_backend.UsesPrototype && !_inputBlocked && (IsActive || IsPending) && _armedProfile?.Original.ScreenBounds.Contains(cursor) != true)
                 RequestStop(BackgroundInteractionStopReason.CursorLeft);
-            var route = _ownership.Mouse(button, up, move);
+            // Prototype menus need button-free motion as well as owned drags.
+            // Motion is still passed to Windows below so Reveal follows it.
+            var route = _ownership.Mouse(button, up, move, forwardHover: _backend.WantsHover);
             if (_pendingHide && !move && route == BackgroundInputRoute.Foreground && (!up || wheel))
             {
                 if (button is { } blocked) _ownership.ConsumeMouse(blocked);
@@ -538,6 +594,8 @@ public sealed class Win32BackgroundInteraction : IDisposable
         if (move)
         {
             if (_session.HasHeldMouseButtons) _session.HandleMouse(new(BackgroundMouseAction.Move, Motion: motion), cursor, 0);
+            else if (_backend.WantsHover && _backend.ResolveMouseTarget(profile.Original, cursor) is var hover && hover != 0)
+                _session.HandleMouse(new(BackgroundMouseAction.Move, Motion: motion), cursor, hover);
             return;
         }
         var recipient = up ? 0 : _backend.ResolveMouseTarget(profile.Original, cursor);

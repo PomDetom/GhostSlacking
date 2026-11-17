@@ -144,7 +144,9 @@ internal sealed partial class GhostApplicationController : IDisposable
             _settings, _windows.SetNotificationClickThrough);
         _backgroundInteraction = new Win32BackgroundInteraction(
             _windows, () => _coordinator.State, () => _coordinator.CurrentProfile,
-            action => Dispatcher.UIThread.Post(action), _logger);
+            action => Dispatcher.UIThread.Post(action), _logger,
+            exclusiveInputPrototype: lifetime.Args?.Contains("--exclusive-input-prototype", StringComparer.Ordinal) == true,
+            recovery: _recovery, visibility: backend);
         _backgroundInteraction.Preparing += waiting =>
             _backgroundHud.ShowPersistent(UiText.Text(_settings.Language, waiting ? "backgroundPending" : "backgroundStarting"));
         _backgroundInteraction.Started += () =>

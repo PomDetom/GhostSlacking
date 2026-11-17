@@ -93,11 +93,12 @@ public sealed class BackgroundInputOwnership
         }
     }
 
-    public BackgroundInputRoute Mouse(BackgroundMouseButton? button, bool up, bool move)
+    public BackgroundInputRoute Mouse(BackgroundMouseButton? button, bool up, bool move, bool forwardHover = false)
     {
         lock (_gate)
         {
-            if (move) return _active && _consumedButtons.Count != 0 ? BackgroundInputRoute.Deliver : BackgroundInputRoute.Foreground;
+            if (move) return _active && (_consumedButtons.Count != 0 || forwardHover)
+                ? BackgroundInputRoute.Deliver : BackgroundInputRoute.Foreground;
             if (button is { } held && _foregroundButtons.Contains(held))
             {
                 if (!up) return BackgroundInputRoute.Consume;

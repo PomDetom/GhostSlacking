@@ -4,10 +4,14 @@ using GhostSlacking.Core;
 
 namespace GhostSlacking.Platform;
 
-internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger logger) : IBackgroundInteractionBackend, IDisposable
+internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger logger, bool exclusiveInputPrototype = false,
+    IExclusiveInputPrototype? prototype = null) : IBackgroundInteractionBackend, IDisposable
 {
+    private readonly IExclusiveInputPrototype? _prototype = prototype ?? (exclusiveInputPrototype ? new ExclusiveInputPrototype() : null);
+    private Point _prototypeCursor;
     private readonly byte[] _keyboard = new byte[256];
     private readonly ConcurrentDictionary<nint, (uint Process, uint Thread, string Class)> _recipients = [];
+    private readonly HashSet<nint> _menuRecipients = [];
     private readonly Dictionary<nint, IBackgroundControlAdapter> _adapters = [];
     private readonly Dictionary<int, (nint Recipient, BackgroundKeyInput Input)> _rawKeys = [];
     private nint _clicked;
@@ -24,6 +28,14 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
     private (nint Recipient, BackgroundInputCategory Category, BackgroundInputRejectionReason? Rejection)? _lastTrace;
 
     public nint ForegroundWindow => Win32BackgroundInputNative.GetForegroundWindow();
+    internal bool UsesPrototype => _prototype is not null;
+    internal bool WantsHover => _prototype is not null;
+    internal nint[] MenuWindows => _prototype?.Menus() ?? [];
+    internal NativeResult PresentMenus(IReadOnlyList<nint> menus) => _prototype?.PresentMenus(menus) ?? NativeResult.Ok("MenuRevealIdle");
+    internal bool IsOverMenu(Point cursor) => _prototype?.MenuAt(cursor) is { } menu && menu != 0;
+    internal bool IsLiveMenu(nint hwnd) => _prototype?.IsMenu(hwnd) == true;
+    public bool ContainsInputPoint(WindowSnapshot snapshot, Rectangle targetBounds, Point cursor) =>
+        targetBounds.Contains(cursor) || (IsCurrent(snapshot) && _prototype?.MenuAt(cursor) is { } menu && menu != 0);
 
     internal bool IsCurrent(WindowSnapshot snapshot)
     {
@@ -33,6 +45,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
 
     public NativeResult SetNoActivate(WindowSnapshot snapshot, bool restore)
     {
+        if (restore) _prototype?.Dispose();
         if (!IsCurrent(snapshot))
         {
             return NativeResult.Failed("BackgroundStyleIdentity", 0, "The registered target identity changed.");
@@ -57,6 +70,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
             _keyboard[0x14] = (byte)(Win32BackgroundInputNative.GetKeyState(0x14) & 1);
             _keyboard[0x90] = (byte)(Win32BackgroundInputNative.GetKeyState(0x90) & 1);
             _recipients.Clear();
+            _menuRecipients.Clear();
             _adapters.Clear();
             _rawKeys.Clear();
             _lastTrace = null;
@@ -68,6 +82,16 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
             _layout = BackgroundEnglishKeyboard.FindLoadedUsLayout();
             _scintillaTarget = false;
             _semanticTarget = UsesSemanticText(ClassName(hwnd));
+            if (_prototype is not null)
+            {
+                _semanticTarget = false;
+                _prototypeCursor = windows.GetCursorPosition();
+                RememberRecipient(hwnd);
+                var started = _prototype.Start(snapshot, _protectedForeground);
+                logger.Log(started.Success ? LogLevel.Info : LogLevel.Warning,
+                    $"ExclusiveInputPrototype hwnd={hwnd} success={started.Success} operation={started.Operation} error={started.ErrorCode}");
+                return started;
+            }
             RememberRecipient(hwnd);
             if (_semanticTarget)
             {
@@ -95,7 +119,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
         }
         // Resolve inside the registered window's child tree, independent of the
         // last frame's region. WindowFromPoint can hit A while Reveal catches up.
-        var recipient = snapshot.Hwnd;
+        var recipient = _prototype?.MenuAt(cursor) is { } menu && menu != 0 ? menu : snapshot.Hwnd;
         for (var depth = 0; depth < 32; depth++)
         {
             if (!TryClientPoint(recipient, cursor, out var local) ||
@@ -108,7 +132,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
                 RememberRecipient(recipient);
                 return recipient;
             }
-            if (!BelongsToTarget(snapshot, child)) return 0;
+            if (!BelongsToInputTarget(snapshot, child)) return 0;
             recipient = child;
         }
         return 0;
@@ -117,14 +141,14 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
     internal bool HasUnmanagedPopup(WindowSnapshot snapshot)
     {
         var popup = Win32BackgroundInputNative.GetLastActivePopup(snapshot.Hwnd);
-        if (popup != 0 && popup != snapshot.Hwnd && Win32NativeMethods.IsWindowVisible(popup)) return true;
+        if (popup != 0 && popup != snapshot.Hwnd && Win32NativeMethods.IsWindowVisible(popup) && _prototype?.IsMenu(popup) != true) return true;
         if (!Win32BackgroundInputNative.IsWindowEnabled(snapshot.Hwnd)) return true;
         var thread = Win32NativeMethods.GetWindowThreadProcessId(snapshot.Hwnd, out _);
         var info = new Win32BackgroundInputNative.GuiThreadInfo
         {
             Size = (uint)System.Runtime.InteropServices.Marshal.SizeOf<Win32BackgroundInputNative.GuiThreadInfo>()
         };
-        return Win32BackgroundInputNative.GetGUIThreadInfo(thread, ref info) && (info.Flags & 0x1C) != 0;
+        return Win32BackgroundInputNative.GetGUIThreadInfo(thread, ref info) && (info.Flags & 0x1C) != 0 && _prototype?.HasMenus != true;
     }
 
     internal void HideTargetAfterStop(WindowSnapshot snapshot)
@@ -201,6 +225,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
         var valid = GuardRecipient(snapshot, recipient, input.IsDown);
         if (!valid.Success) return new(valid, BackgroundInputCategory.RawKey);
         var key = input.VirtualKey;
+        if (_prototype is not null) return DispatchPrototypeKey(recipient, input);
         if (!input.IsDown)
         {
             if (key is 0xA0 or 0xA1 && _shiftTap)
@@ -303,6 +328,18 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
 
     private BackgroundInputDispatchResult DispatchMouseCore(WindowSnapshot snapshot, nint recipient, BackgroundMouseInput input, Point cursor)
     {
+        if (_prototype is not null && input.Action == BackgroundMouseAction.Up && input.Button is { } released &&
+            _menuRecipients.Contains(recipient) && IsCurrent(snapshot) && !ValidRecipient(snapshot, recipient))
+        {
+            _mouseFlags &= ~MouseButtonMask(released);
+            var closedMessage = released switch
+            {
+                BackgroundMouseButton.Left => 0x0202U, BackgroundMouseButton.Right => 0x0205U,
+                BackgroundMouseButton.Middle => 0x0208U, _ => 0x020CU
+            };
+            var closedFlags = _mouseFlags | (released == BackgroundMouseButton.X1 ? 1U << 16 : released == BackgroundMouseButton.X2 ? 2U << 16 : 0);
+            return new(_prototype.Send(recipient, closedMessage, (nint)closedFlags, 0, _keyboard, cursor), BackgroundInputCategory.Mouse);
+        }
         var valid = GuardRecipient(snapshot, recipient, input.Action != BackgroundMouseAction.Up);
         if (!valid.Success) return new(valid, BackgroundInputCategory.Mouse);
         if (input.Action != BackgroundMouseAction.Up && HasUnmanagedPopup(snapshot)) return new(Unsupported(), BackgroundInputCategory.Mouse);
@@ -311,7 +348,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
         var buttonMask = input.Button is { } button ? MouseButtonMask(button) : 0;
         if (input.Action == BackgroundMouseAction.Down) _mouseFlags |= buttonMask;
         if (input.Action == BackgroundMouseAction.Up) _mouseFlags &= ~buttonMask;
-        if (Adapter(recipient) is { } adapter)
+        if (_prototype is null && Adapter(recipient) is { } adapter)
         {
             if (!TryClientPoint(recipient, cursor, out var client))
                 return new(DeliveryFailure("BackgroundMouseCoordinates"), BackgroundInputCategory.Mouse);
@@ -366,6 +403,11 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
             if (input.Button is BackgroundMouseButton.X1 or BackgroundMouseButton.X2)
                 flags |= (input.Button == BackgroundMouseButton.X1 ? 1U : 2U) << 16;
         }
+        if (_prototype is not null)
+        {
+            _prototypeCursor = cursor;
+            return new(_prototype.Send(recipient, message, (nint)flags, parameter, _keyboard, cursor), BackgroundInputCategory.Mouse);
+        }
         return new(Win32BackgroundInputNative.PostMessage(recipient, message, (nint)flags, parameter)
             ? NativeResult.Ok("BackgroundMouse") : DeliveryFailure("BackgroundMouse"), BackgroundInputCategory.Mouse);
     }
@@ -383,6 +425,13 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
 
     public NativeResult ReleaseMouseButton(WindowSnapshot snapshot, nint recipient, BackgroundMouseButton button, Point cursor)
     {
+        if (_prototype is not null)
+        {
+            // Native teardown cancels menus before releasing delivered downs.
+            // Enqueuing an ordinary up here could activate a pressed menu item.
+            _mouseFlags &= ~MouseButtonMask(button);
+            return NativeResult.Ok("ExclusiveInputPrototypeDeferredRelease");
+        }
         if (!IsCurrent(snapshot) || !ValidRecipient(snapshot, recipient))
             return NativeResult.Failed("BackgroundMouseIdentity", 0, "The cleanup recipient changed.");
         if (Adapter(recipient) is { } adapter)
@@ -419,13 +468,19 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
         (recipient == snapshot.Hwnd || Win32BackgroundInputNative.IsChild(snapshot.Hwnd, recipient)) &&
         Win32NativeMethods.GetAncestor(recipient, Win32NativeMethods.GA_ROOT) == snapshot.Hwnd;
 
+    private bool BelongsToInputTarget(WindowSnapshot snapshot, nint recipient) =>
+        BelongsToTarget(snapshot, recipient) || _prototype?.IsMenu(recipient) == true;
+
     private void RememberRecipient(nint recipient)
     {
         var thread = Win32NativeMethods.GetWindowThreadProcessId(recipient, out var process);
         var name = ClassName(recipient);
         if (_recipients.TryGetValue(recipient, out var previous) && previous == (process, thread, name)) return;
         _recipients[recipient] = (process, thread, name);
+        _menuRecipients.Remove(recipient);
+        if (_prototype?.IsMenu(recipient) == true) _menuRecipients.Add(recipient);
         _adapters.Remove(recipient);
+        if (_prototype is not null) return;
         if (name == "Scintilla") _adapters[recipient] = new ScintillaBackgroundControlAdapter();
         else if (name == "Edit") _adapters[recipient] = new EditBackgroundControlAdapter();
         else if (name.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase))
@@ -442,7 +497,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
 
     private bool ValidRecipient(WindowSnapshot snapshot, nint recipient)
     {
-        if (!BelongsToTarget(snapshot, recipient) || !_recipients.TryGetValue(recipient, out var identity)) return false;
+        if (!BelongsToInputTarget(snapshot, recipient) || !_recipients.TryGetValue(recipient, out var identity)) return false;
         var thread = Win32NativeMethods.GetWindowThreadProcessId(recipient, out var process);
         return thread == identity.Thread && process == identity.Process && ClassName(recipient) == identity.Class;
     }
@@ -472,10 +527,13 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
 
     public void BeginInputSession(long generation) => _inputGeneration = generation;
     public IEnumerable<BackgroundInputCompletion> DrainCompletions() => _automation.DrainCompletions();
+    internal NativeResult MaintainPrototype() => _prototype?.Renew() ?? NativeResult.Ok("BackgroundInputLease");
 
     public void ResetInputState()
     {
+        _prototype?.Dispose();
         Interlocked.Increment(ref _inputEpoch);
+        _menuRecipients.Clear();
         if (_diagnosticSnapshot is { } snapshot) TraceInputState(snapshot, "reset");
         _diagnosticSnapshot = null;
         Array.Clear(_keyboard);
@@ -501,7 +559,30 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
             $"targetFocus={(observed ? info.Focus : 0)} layout={Win32BackgroundInputNative.GetKeyboardLayout(thread)} imeWindow={ime} imeQueryAvailable={known} imeOpen={open} engine=US-English");
     }
 
-    public void Dispose() => _automation.Dispose();
+    public void Dispose()
+    {
+        _prototype?.Dispose();
+        _automation.Dispose();
+    }
+
+    private BackgroundInputDispatchResult DispatchPrototypeKey(nint recipient, BackgroundKeyInput input)
+    {
+        var key = input.VirtualKey;
+        if (key is < 1 or > 255) return BackgroundInputDispatchResult.Rejected(BackgroundInputRejectionReason.UnsupportedKey);
+        if (key is 0xE5 or 0xE7 or 0x15 or 0x19 or 0x1C or 0x1D ||
+            key == 0x20 && (Modifiers.HasFlag(ShortcutModifiers.Control) || (_keyboard[0x5B] & 0x80) != 0 || (_keyboard[0x5C] & 0x80) != 0))
+            return BackgroundInputDispatchResult.Rejected(BackgroundInputRejectionReason.ImeComposition);
+        if (key is 0x5B or 0x5C || Modifiers.HasFlag(ShortcutModifiers.Alt))
+            return BackgroundInputDispatchResult.Rejected(BackgroundInputRejectionReason.SystemShortcut);
+        var raw = _prototype!.Send(recipient, input.IsDown ? 0x0100U : 0x0101U,
+            MessageVirtualKey(key), KeyMessageParameter(input, input.IsRepeat, false), _keyboard, _prototypeCursor);
+        if (!raw.Success) return new(raw, BackgroundInputCategory.RawKey, input.IsDown);
+        if (input.IsDown) _rawKeys[key] = (recipient, input);
+        else _rawKeys.Remove(key);
+        // Character translation now happens only if the target message loop
+        // calls TranslateMessage. Accelerator-consumed keys produce no WM_CHAR.
+        return new(raw, BackgroundInputCategory.RawKey, input.IsDown);
+    }
 
     private NativeResult GuardRecipient(WindowSnapshot snapshot, nint recipient, bool protectForeground = true)
     {

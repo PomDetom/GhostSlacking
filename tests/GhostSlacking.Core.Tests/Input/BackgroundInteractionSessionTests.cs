@@ -6,6 +6,34 @@ namespace GhostSlacking.Core.Tests;
 public sealed class BackgroundInteractionSessionTests
 {
     [Fact]
+    public void Owned_popup_scope_extends_bounds_only_while_live_and_never_overrides_foreground_protection()
+    {
+        var fixture = new Fixture(); fixture.Start();
+        var outside = new Point(20, 100);
+        fixture.Backend.PopupBounds = new(0, 80, 80, 80);
+        Assert.True(fixture.Session.Check(GhostState.Reveal, fixture.Profile, outside));
+        fixture.Backend.ForegroundWindow = 999;
+        Assert.False(fixture.Session.Check(GhostState.Reveal, fixture.Profile, outside));
+        Assert.Equal(BackgroundInteractionStopReason.ForegroundChanged, fixture.Stopped);
+
+        var closed = new Fixture(); closed.Start();
+        closed.Backend.PopupBounds = new(0, 80, 80, 80);
+        Assert.True(closed.Session.Check(GhostState.Reveal, closed.Profile, outside));
+        closed.Backend.PopupBounds = Rectangle.Empty;
+        Assert.False(closed.Session.Check(GhostState.Reveal, closed.Profile, outside));
+        Assert.Equal(BackgroundInteractionStopReason.CursorLeft, closed.Stopped);
+    }
+
+    [Fact]
+    public void Hover_without_a_pressed_button_is_delivered_without_creating_a_release_ledger()
+    {
+        var fixture = new Fixture(); fixture.Start();
+        fixture.Session.HandleMouse(new(BackgroundMouseAction.Move), fixture.Cursor, 7);
+        Assert.Equal(BackgroundMouseAction.Move, Assert.Single(fixture.Backend.MouseInputs).Action);
+        Assert.False(fixture.Session.HasHeldMouseButtons);
+        Assert.False(fixture.Session.HasPendingReleases);
+    }
+    [Fact]
     public void Old_settings_keep_background_input_disabled_and_new_settings_round_trip()
     {
         var old = AppSettingsJson.Deserialize("{\"SchemaVersion\":8}");
@@ -456,6 +484,9 @@ public sealed class BackgroundInteractionSessionTests
 
     private sealed class FakeBackend : IBackgroundInteractionBackend
     {
+        public Rectangle PopupBounds { get; set; }
+        public bool ContainsInputPoint(WindowSnapshot snapshot, Rectangle targetBounds, Point cursor) =>
+            targetBounds.Contains(cursor) || PopupBounds.Contains(cursor);
         public nint ForegroundWindow { get; set; } = 99;
         public nint Recipient { get; set; } = 7;
         public Queue<BackgroundInputDispatchResult> KeyDispatches { get; } = [];

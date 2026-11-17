@@ -89,7 +89,7 @@ public sealed class Win32OverlayWindow : IDisposable
                 bounds.Top,
                 bounds.Width,
                 bounds.Height,
-                Win32NativeMethods.SWP_NOACTIVATE))
+                Win32NativeMethods.SWP_NOACTIVATE | Win32NativeMethods.SWP_NOOWNERZORDER))
         {
             return NativeResult.Failed("SetWindowPos(RevealFeatherBounds)", Win32NativeMethods.LastError);
         }
@@ -159,6 +159,7 @@ public sealed class Win32OverlayWindow : IDisposable
             Win32NativeMethods.SWP_NOSIZE |
             Win32NativeMethods.SWP_NOMOVE |
             Win32NativeMethods.SWP_NOACTIVATE |
+            Win32NativeMethods.SWP_NOOWNERZORDER |
             Win32NativeMethods.SWP_SHOWWINDOW)
             ? NativeResult.Ok("SetWindowPos(RevealFeather)")
             : NativeResult.Failed("SetWindowPos(RevealFeather)", Win32NativeMethods.LastError);

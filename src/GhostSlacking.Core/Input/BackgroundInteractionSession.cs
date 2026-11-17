@@ -54,6 +54,7 @@ public enum BackgroundMouseButton
 public interface IBackgroundInteractionBackend
 {
     nint ForegroundWindow { get; }
+    bool ContainsInputPoint(WindowSnapshot snapshot, Rectangle targetBounds, Point cursor) => targetBounds.Contains(cursor);
     NativeResult SetNoActivate(WindowSnapshot snapshot, bool restore);
     nint ResolveKeyboardTarget(WindowSnapshot snapshot, Point cursor);
     NativeResult PostKey(WindowSnapshot snapshot, nint recipient, BackgroundKeyInput input);
@@ -155,7 +156,7 @@ public sealed class BackgroundInteractionSession(IWindowApi windows, IBackground
             : backend.ForegroundWindow != _foreground ? BackgroundInteractionStopReason.ForegroundChanged
             : state != GhostState.Reveal && !(allowHidden && state == GhostState.Ghost) ? BackgroundInteractionStopReason.RevealEnded
             : (!allowHidden && !observation.IsVisible) || observation.IsMinimized ? BackgroundInteractionStopReason.RevealEnded
-            : !observation.ScreenBounds.Contains(cursor) ? BackgroundInteractionStopReason.CursorLeft
+            : !backend.ContainsInputPoint(profile.Original, observation.ScreenBounds, cursor) ? BackgroundInteractionStopReason.CursorLeft
             : (BackgroundInteractionStopReason?)null;
         if (reason is { } stopped)
         {

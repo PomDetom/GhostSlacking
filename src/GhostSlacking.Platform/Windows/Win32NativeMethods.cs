@@ -57,6 +57,7 @@ internal static class Win32NativeMethods
     internal const uint SWP_NOACTIVATE = 0x0010;
     internal const uint SWP_FRAMECHANGED = 0x0020;
     internal const uint SWP_SHOWWINDOW = 0x0040;
+    internal const uint SWP_NOOWNERZORDER = 0x0200;
     internal const int VK_MENU = 0x12;
     internal const uint MOD_ALT = 0x0001;
     internal const uint MOD_CONTROL = 0x0002;
