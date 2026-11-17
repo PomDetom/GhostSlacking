@@ -9,7 +9,7 @@
 #include <cwchar>
 #include <deque>
 
-// Research bridge: x64, one registered window and one UI thread. No global
+// Experimental input bridge: x64, one registered window and one UI thread. No global
 // injection, system input, clipboard access or persistent input diagnostics.
 namespace {
 constexpr DWORD Magic = 0x47534931;
@@ -83,14 +83,14 @@ ULONGLONG StartTime(HANDLE process) {
     value.LowPart = start.dwLowDateTime; value.HighPart = start.dwHighDateTime;
     return value.QuadPart;
 }
-UINT Message() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputPrototype.queue.v6"); return value; }
-UINT InputMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputPrototype.input.v6"); return value; }
-UINT StopMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputPrototype.stop.v6"); return value; }
-UINT CharacterMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputPrototype.character.v6"); return value; }
-UINT BarrierMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputPrototype.barrier.v6"); return value; }
-UINT MenuReadyMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputPrototype.menu-ready.v6"); return value; }
+UINT Message() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputBridge.queue.v1"); return value; }
+UINT InputMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputBridge.input.v1"); return value; }
+UINT StopMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputBridge.stop.v1"); return value; }
+UINT CharacterMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputBridge.character.v1"); return value; }
+UINT BarrierMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputBridge.barrier.v1"); return value; }
+UINT MenuReadyMessage() { static const UINT value = RegisterWindowMessageW(L"GhostSlacking.ExclusiveInputBridge.menu-ready.v1"); return value; }
 void MappingName(wchar_t (&name)[100], DWORD pid, DWORD key) {
-    swprintf_s(name, L"Local\\GhostSlacking.InputPrototype.MenuHover.%lu.%08lx", pid, key);
+    swprintf_s(name, L"Local\\GhostSlacking.InputBridge.%lu.%08lx", pid, key);
 }
 bool HostIdentity() {
     DWORD pid = 0;
@@ -401,7 +401,8 @@ void PatchImports() {
     for (BOOL next = Module32FirstW(snapshot, &module); next; next = Module32NextW(snapshot, &module)) {
         // Patch only the application and non-Windows modules. Never user32,
         // system DLLs, our own imports, executable code, or another process.
-        if (module.hModule == self || _wcsnicmp(module.szModule, L"GhostSlacking.InputPrototype", 27) == 0 ||
+        if (module.hModule == self || _wcsnicmp(module.szModule, L"GhostSlacking.InputPrototype", wcslen(L"GhostSlacking.InputPrototype")) == 0 ||
+            _wcsnicmp(module.szModule, L"GhostSlacking.InputBridge", wcslen(L"GhostSlacking.InputBridge")) == 0 ||
             (length && _wcsnicmp(module.szExePath, windows, length) == 0 &&
             module.szExePath[length] == L'\\')) continue;
         HMODULE retained = nullptr;
@@ -745,6 +746,7 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK GS_Hook(int code, WPARAM wpara
     return CallNextHookEx(nullptr, code, wparam, lparam);
 }
 
+extern "C" __declspec(dllexport) DWORD GS_ABIVersion() { return 1; }
 extern "C" __declspec(dllexport) void GS_End() {
     if (host && HostIdentity()) {
         InterlockedExchange(&host->stopping, 1);

@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
@@ -67,7 +67,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
         Func<GhostWindowProfile?> profile,
         Action<Action> dispatch,
         ILogger? logger = null,
-        bool exclusiveInputPrototype = false,
+        bool exclusiveInputBridge = false,
         RecoveryManager? recovery = null,
         Win32VisibilityBackend? visibility = null)
     {
@@ -76,8 +76,8 @@ public sealed class Win32BackgroundInteraction : IDisposable
         _profile = profile;
         _dispatch = dispatch;
         _logger = logger ?? NullLogger.Instance;
-        _backend = new Win32BackgroundInputBackend(windows, _logger, exclusiveInputPrototype);
-        if (exclusiveInputPrototype && recovery is not null && visibility is not null)
+        _backend = new Win32BackgroundInputBackend(windows, _logger, exclusiveInputBridge);
+        if (exclusiveInputBridge && recovery is not null && visibility is not null)
             _menuVisuals = new(windows, recovery, visibility);
         _session = new BackgroundInteractionSession(windows, _backend);
         _session.Stopped += reason =>
@@ -110,6 +110,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
     public bool IsPending => _phase is BackgroundInteractionPhase.Preparing or BackgroundInteractionPhase.Ready;
     public bool IsReady => _phase == BackgroundInteractionPhase.Ready;
     public bool IsDraining => _phase == BackgroundInteractionPhase.Draining;
+    public bool InputComponentUnavailable { get; private set; }
     private volatile bool _blocksReveal;
     public bool BlocksReveal { get => _blocksReveal; private set => _blocksReveal = value; }
     public event Action<bool>? Preparing;
@@ -171,6 +172,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
             return LogStart(BackgroundArmResult.Waiting(BackgroundArmStatus.AwaitingForeground), foreground, profile);
 
         _generation++;
+        InputComponentUnavailable = false;
         _shortcuts = shortcuts;
         _sessionPreservingShortcuts = sessionPreservingShortcuts;
         _prepareHidden = prepareHidden;
@@ -280,6 +282,7 @@ public sealed class Win32BackgroundInteraction : IDisposable
                 }
                 else if (generation == _generation && _phase == BackgroundInteractionPhase.Preparing)
                 {
+                    InputComponentUnavailable = result.Operation == "ExclusiveInputBridgeUnavailable";
                     _logger.Log(LogLevel.Warning, $"BackgroundInteraction start failed operation={result.Operation} error={result.ErrorCode}");
                     NotifyStopped(result.Operation switch
                     {

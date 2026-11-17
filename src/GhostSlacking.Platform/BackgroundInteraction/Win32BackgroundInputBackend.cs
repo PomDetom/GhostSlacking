@@ -4,10 +4,10 @@ using GhostSlacking.Core;
 
 namespace GhostSlacking.Platform;
 
-internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger logger, bool exclusiveInputPrototype = false,
-    IExclusiveInputPrototype? prototype = null) : IBackgroundInteractionBackend, IDisposable
+internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger logger, bool exclusiveInputBridge = false,
+    IExclusiveInputBridge? prototype = null) : IBackgroundInteractionBackend, IDisposable
 {
-    private readonly IExclusiveInputPrototype? _prototype = prototype ?? (exclusiveInputPrototype ? new ExclusiveInputPrototype() : null);
+    private readonly IExclusiveInputBridge? _prototype = prototype ?? (exclusiveInputBridge ? new ExclusiveInputBridge() : null);
     private Point _prototypeCursor;
     private readonly byte[] _keyboard = new byte[256];
     private readonly ConcurrentDictionary<nint, (uint Process, uint Thread, string Class)> _recipients = [];
@@ -89,7 +89,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
                 RememberRecipient(hwnd);
                 var started = _prototype.Start(snapshot, _protectedForeground);
                 logger.Log(started.Success ? LogLevel.Info : LogLevel.Warning,
-                    $"ExclusiveInputPrototype hwnd={hwnd} success={started.Success} operation={started.Operation} error={started.ErrorCode}");
+                    $"ExclusiveInputBridge hwnd={hwnd} success={started.Success} operation={started.Operation} error={started.ErrorCode}");
                 return started;
             }
             RememberRecipient(hwnd);
@@ -430,7 +430,7 @@ internal sealed class Win32BackgroundInputBackend(IWindowApi windows, ILogger lo
             // Native teardown cancels menus before releasing delivered downs.
             // Enqueuing an ordinary up here could activate a pressed menu item.
             _mouseFlags &= ~MouseButtonMask(button);
-            return NativeResult.Ok("ExclusiveInputPrototypeDeferredRelease");
+            return NativeResult.Ok("ExclusiveInputBridgeDeferredRelease");
         }
         if (!IsCurrent(snapshot) || !ValidRecipient(snapshot, recipient))
             return NativeResult.Failed("BackgroundMouseIdentity", 0, "The cleanup recipient changed.");

@@ -1,4 +1,4 @@
-﻿using GhostSlacking.Core;
+using GhostSlacking.Core;
 
 namespace GhostSlacking.App;
 
@@ -49,7 +49,8 @@ internal static class UiText
         "continuousToggleRequired" => "请在“显示”中将 Peek 改为“按键切换”，再保存持续交互设置。",
         "backgroundInteractionSection" => "交互",
         "backgroundInteraction" => "后台交互",
-        "backgroundInteractionDescription" => "操作 Reveal 时保留前台焦点。",
+        "backgroundInteractionDescription" => "向目标加载交互组件，在 Reveal 中操作并保留前台焦点。",
+        "backgroundComponentUnavailable" => "交互组件不可用，请修复或重新安装。",
         "backgroundInteractionHotkey" => "交互快捷键",
         "backgroundInteractionHotkeyDescription" => "开始或结束当前交互。",
         "backgroundPending" => "松开按键",
@@ -327,7 +328,8 @@ internal static class UiText
         "continuousToggleRequired" => "Set Peek to Toggle on the Reveal page before saving continuous interaction.",
         "backgroundInteractionSection" => "INTERACTION",
         "backgroundInteraction" => "Background interaction",
-        "backgroundInteractionDescription" => "Keep the foreground focused while using Reveal.",
+        "backgroundInteractionDescription" => "Load an input component into the target to interact in Reveal while keeping the foreground focused.",
+        "backgroundComponentUnavailable" => "Input component unavailable. Repair or reinstall the app.",
         "backgroundInteractionHotkey" => "Interaction shortcut",
         "backgroundInteractionHotkeyDescription" => "Start or end the current interaction.",
         "backgroundPending" => "Release",

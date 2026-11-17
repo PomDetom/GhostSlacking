@@ -66,6 +66,9 @@ dotnet publish $appProject --configuration Release --runtime win-x64 --self-cont
     -p:Version=$Version -p:AssemblyVersion=$assemblyVersion -p:FileVersion=$fileVersion `
     -p:InformationalVersion=$InformationalVersion -p:PublishTrimmed=false -p:DebugSymbols=false -p:DebugType=None
 if ($LASTEXITCODE -ne 0) { throw 'Application publication failed.' }
+if (-not (Test-Path -LiteralPath (Join-Path $publishDirectory 'GhostSlacking.InputBridge.dll'))) {
+    throw 'Application publication did not include the x64 input bridge.'
+}
 Copy-Item -LiteralPath $helper.FullName -Destination (Join-Path $publishDirectory 'GhostSlacking.InstallHelper.exe') -Force
 foreach ($relative in @('GhostSlacking.App', 'GhostSlacking.Watchdog', 'Updater/GhostSlacking.Updater')) {
     $config = Get-Content -LiteralPath (Join-Path $publishDirectory "$relative.runtimeconfig.json") -Raw | ConvertFrom-Json

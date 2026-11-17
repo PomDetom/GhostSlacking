@@ -119,7 +119,7 @@ internal sealed partial class GhostApplicationController : IDisposable
         {
             BackgroundInteractionStopReason.ForegroundChanged => "backgroundForegroundChanged",
             BackgroundInteractionStopReason.UnsupportedInput or BackgroundInteractionStopReason.TargetChanged => "backgroundUnsupported",
-            BackgroundInteractionStopReason.DeliveryFailed => "backgroundFailed",
+            BackgroundInteractionStopReason.DeliveryFailed => _backgroundInteraction.InputComponentUnavailable ? "backgroundComponentUnavailable" : "backgroundFailed",
             BackgroundInteractionStopReason.CleanupFailed => "backgroundCleanupFailed",
             _ => "backgroundStopped"
         };

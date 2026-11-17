@@ -147,7 +147,7 @@ int Check() {
     using Send = DWORD (*)(HWND, UINT, WPARAM, LPARAM, const BYTE*, LONG, LONG);
     using End = void (*)();
     using Flush = DWORD (*)(DWORD);
-    HMODULE library = LoadLibraryW(L"GhostSlacking.InputPrototype.MenuHover.dll");
+    HMODULE library = LoadLibraryW(L"GhostSlacking.InputBridge.dll");
     if (!library) return 10;
     auto begin = reinterpret_cast<Begin>(GetProcAddress(library, "GS_Begin"));
     auto send = reinterpret_cast<Send>(GetProcAddress(library, "GS_Dispatch"));

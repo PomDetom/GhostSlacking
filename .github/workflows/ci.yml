@@ -102,3 +102,15 @@ jobs:
       - name: Run Release tests
         shell: pwsh
         run: .\tests\Run-ReleaseTests.ps1 -NoRestore
+
+      - name: Test input bridge lifecycle
+        shell: pwsh
+        run: |
+          .\tools\ExclusiveInputPrototype\build.ps1 -NativeOnly
+          if ($LASTEXITCODE -ne 0) { throw 'Input bridge fixture build failed.' }
+          Push-Location artifacts/tools/ExclusiveInputPrototype/packaged-input
+          try {
+              .\BridgeFixture.exe --self-test
+              if ($LASTEXITCODE -ne 0) { throw 'Input bridge fixture failed.' }
+              Get-Content bridge-self-test.log
+          } finally { Pop-Location }

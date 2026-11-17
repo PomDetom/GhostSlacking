@@ -27,6 +27,7 @@
     <ProjectReference Include="..\GhostSlacking.Core\GhostSlacking.Core.csproj" />
     <ProjectReference Include="..\GhostSlacking.Platform\GhostSlacking.Platform.csproj" />
     <ProjectReference Include="..\GhostSlacking.Watchdog\GhostSlacking.Watchdog.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\GhostSlacking.Updater\GhostSlacking.Updater.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="GhostSlacking.App.Tests" />
@@ -82,4 +83,5 @@
       DestinationFiles="@(UpdaterPublishArtifact->'$(PublishDir)Updater\%(RecursiveDir)%(Filename)%(Extension)')"
       SkipUnchangedFiles="true" />
   </Target>
+  <Import Project="..\GhostSlacking.Platform\BackgroundInteraction\InputBridge.targets" />
 </Project>

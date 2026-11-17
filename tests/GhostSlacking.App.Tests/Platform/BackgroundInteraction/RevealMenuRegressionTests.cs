@@ -179,7 +179,7 @@ public sealed class RevealMenuRegressionTests
         public OperationResult<WindowSnapshot> CaptureSnapshot(TargetWindow target) => target.Hwnd == FailCapture
             ? OperationResult<WindowSnapshot>.Failed("Fixture capture rejected", 5) : inner.CaptureSnapshot(target);
     }
-    private sealed class FakePrototype(nint menu) : IExclusiveInputPrototype
+    private sealed class FakePrototype(nint menu) : IExclusiveInputBridge
     {
         public List<(nint Recipient, uint Message)> Messages { get; } = [];
         public NativeResult Start(WindowSnapshot snapshot, nint foreground) => NativeResult.Ok("Fixture");

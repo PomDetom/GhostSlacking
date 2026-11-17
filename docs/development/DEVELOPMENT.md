@@ -4,6 +4,8 @@
 
 从仓库根目录使用 Windows、.NET SDK 8 或更新版本。CI 使用 .NET 8 验证最低支持版本。生产项目将编译警告视为错误。
 
+正常 App 构建还需要 PowerShell 7 和 Visual Studio Desktop C++ Build Tools。App 导入 Platform 的 `InputBridge.targets`，经 `scripts/build-input-bridge.ps1` 增量编译 x64 原生组件，并自动复制到 build/publish 输出；没有独立的“启用注入”构建参数。Platform、Core 和独立恢复程序仍保持各自依赖边界，实验设置决定运行时是否启用交互组件。
+
 ```powershell
 dotnet restore GhostSlacking.sln
 dotnet build GhostSlacking.sln --configuration Debug

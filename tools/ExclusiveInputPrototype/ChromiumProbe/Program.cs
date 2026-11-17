@@ -14,7 +14,7 @@ using GhostSlacking.Platform;
 // and inspects our blank fixture. All tested actions use the injected queue.
 internal static class Program
 {
-    private const string Library = "GhostSlacking.InputPrototype.MenuHover.dll";
+    private const string Library = "GhostSlacking.InputBridge.dll";
     private static readonly byte[] Keys = new byte[256];
     private static readonly BackgroundInputOwnership Ownership = new();
     private static int _serial;
@@ -31,6 +31,8 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        NativeLibrary.SetDllImportResolver(typeof(Program).Assembly, (name, _, _) =>
+            name == Library ? InputBridgeLibrary.EnsureLoaded() : 0);
         if (args.Length != 2 || args[0] is not ("--browser" or "--worker")) return 2;
         if (args[0] == "--browser") return Isolate(args[1]);
         Console.SetOut(new StreamWriter(Path.Combine(AppContext.BaseDirectory, "chromium-probe.log"), false) { AutoFlush = true });
@@ -155,6 +157,8 @@ internal static class Program
             var startError = Begin(_root, foreground, pid, (ulong)target.StartTime.ToUniversalTime().ToFileTimeUtc());
             Console.WriteLine($"bridge-start-error={startError}");
             Check(startError == 0, "headed-chromium-bridge-starts");
+            using (File.Open(Path.Combine(AppContext.BaseDirectory, Library), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Check(true, "installed-payload-is-not-pinned-by-host-or-target");
             _attached = true;
             Ownership.Begin([], []);
             Check(Ownership.Activate(), "host-input-ownership-activated");
