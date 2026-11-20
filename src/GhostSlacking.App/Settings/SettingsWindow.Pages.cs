@@ -83,7 +83,7 @@ internal sealed partial class SettingsWindow : AppWindow
             CreateSection(language, "peekBehavior",
             [
                 CreateAdjustmentRow(language, AdjustmentKind.FrameRate, "peekFrameRateLimitDescription"),
-                CreateSettingRow(language, "peekMode", "peekModeDescription", CreateResettable(_peekMode, () => SelectChoice(_peekMode, DefaultSettings.PeekTrigger))),
+                CreateSettingRow(language, "peekMode", "peekModeDescription", CreateResettable(_peekMode, () => SelectChoice(_peekMode, DefaultSettings.PeekTrigger), out _)),
                 CreateSettingRow(language, "peekKey", "peekKeyDescription", CreatePeekKeyEditor())
             ])
         ]);

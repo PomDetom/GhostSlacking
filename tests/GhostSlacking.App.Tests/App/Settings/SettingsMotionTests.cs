@@ -145,7 +145,7 @@ internal static class SettingsMotionTests
             window.UpdateLayout();
             var rows = Field<Dictionary<AdjustmentKind, SettingsAdjustmentRow>>(window, "_adjustmentValues");
             var row = rows[AdjustmentKind.Diameter];
-            window.OpenAdjustment(AdjustmentKind.Diameter, row.Row);
+            row.Field.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var adjustment = Assert.IsType<SettingsAdjustmentFlyout>(window.ActiveAdjustment);
             WaitFor(window, () => adjustment.Presenter!.Opacity < 1, "adjustment fade");
             window.NavigateToAbout();

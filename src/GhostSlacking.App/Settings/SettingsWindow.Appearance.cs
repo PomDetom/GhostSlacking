@@ -25,7 +25,7 @@ namespace GhostSlacking.App;
 internal sealed partial class SettingsWindow : AppWindow
 {
 
-    private Control CreateResettable(Control editor, Action reset)
+    private Control CreateResettable(Control editor, Action reset, out Button resetButton)
     {
         editor.HorizontalAlignment = HorizontalAlignment.Stretch;
         var grid = new Grid();
@@ -33,7 +33,7 @@ internal sealed partial class SettingsWindow : AppWindow
         grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         grid.Children.Add(editor);
 
-        var resetButton = CreateIconButton(Symbol.Refresh, "resetSetting");
+        resetButton = CreateIconButton(Symbol.Refresh, "resetSetting");
         resetButton.Margin = new Thickness(8, 0, 0, 0);
         resetButton.Click += (_, _) => reset();
         Grid.SetColumn(resetButton, 1);

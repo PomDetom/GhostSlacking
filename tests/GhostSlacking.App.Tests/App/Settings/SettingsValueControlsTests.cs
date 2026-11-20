@@ -57,12 +57,12 @@ internal static class SettingsValueControlsTests
                 Settle(window, 250);
                 ScrollToRow(window, page, row);
                 Assert.True(row.Reset.IsEnabled);
-                Assert.Same(row.Row.Parent, row.Reset.Parent);
-                Assert.DoesNotContain(row.Reset, row.Row.GetLogicalDescendants());
-                Click(row.Row);
+                Assert.Same(row.Field.Parent, row.Reset.Parent);
+                Assert.DoesNotContain(row.Reset, row.Field.GetLogicalDescendants());
+                Click(row.Field);
                 var pending = window.ActiveAdjustment!;
                 Assert.True(pending.IsOpen);
-                Assert.Same(row.Row.Parent, pending.OverlayInputPassThroughElement);
+                Assert.Same(row.Field.Parent, pending.OverlayInputPassThroughElement);
                 Settle(window);
                 AssertHit(window, row.Reset, row.Reset);
                 if (pending.NumberEditor is not null) pending.NumberEditor.Value = SettingAdjustment.For(kind).Minimum;
@@ -82,8 +82,8 @@ internal static class SettingsValueControlsTests
 
             Navigate(navigation, "reveal");
             var diameter = rows[AdjustmentKind.Diameter];
-            diameter.Row.Focus(NavigationMethod.Tab);
-            diameter.Row.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
+            diameter.Field.Focus(NavigationMethod.Tab);
+            diameter.Field.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
             Assert.NotNull(window.ActiveAdjustment);
             Click(diameter.Reset);
             Assert.Null(window.ActiveAdjustment);
@@ -142,9 +142,17 @@ internal static class SettingsValueControlsTests
                 Assert.All(row.Value.TextLayout.TextLines, line => Assert.False(line.HasCollapsed, row.Value.Text));
                 Assert.Equal(SettingAdjustment.Format(Current(window), kind, language), row.Value.Text);
                 Assert.Contains(UiText.Text(language, "resetSetting"), AutomationProperties.GetName(row.Reset));
-                AssertHit(window, row.Row, row.Field);
+                var editors = Assert.IsType<Grid>(row.Field.Parent);
+                var layout = Assert.IsType<Grid>(editors.Parent);
+                var card = Assert.IsType<Border>(layout.Parent);
+                var copy = Assert.Single(layout.Children.OfType<StackPanel>());
+                foreach (var text in copy.Children)
+                    AssertHit(window, card, text, excluded: row.Field);
+                AssertHit(window, card, card, new Point(8, card.Bounds.Height / 2), excluded: row.Field);
+                AssertHit(window, card, editors, new Point(row.Field.Bounds.Right + 4, editors.Bounds.Height / 2), excluded: row.Field);
+                AssertHit(window, row.Field, row.Value);
                 AssertHit(window, row.Reset, row.Reset);
-                VerifyArrow(row.Field);
+                AssertHit(window, row.Field, VerifyArrow(row.Field));
                 Assert.NotNull(row.Field.Background);
                 Assert.NotNull(row.Field.BorderBrush);
             }
@@ -166,7 +174,7 @@ internal static class SettingsValueControlsTests
         }
     }
 
-    private static void VerifyArrow(Control control)
+    private static Border VerifyArrow(Control control)
     {
         var arrow = Assert.Single(control.GetVisualDescendants().OfType<Border>(), child => child.Name == "SettingsDropDownArrow");
         var path = Assert.IsType<Path>(arrow.Child);
@@ -175,6 +183,7 @@ internal static class SettingsValueControlsTests
         Assert.InRange(Math.Abs(path.Bounds.Center.X - arrow.Bounds.Width / 2), 0, 0.1);
         Assert.InRange(Math.Abs(path.Bounds.Center.Y - arrow.Bounds.Height / 2), 0, 0.1);
         Assert.NotNull(path.Stroke);
+        return arrow;
     }
 
     private static void VerifyComboKeyboard(SettingsWindow window, NavigationView navigation)
@@ -192,15 +201,23 @@ internal static class SettingsValueControlsTests
         Assert.NotEqual(previous, combo.SelectedIndex);
     }
 
-    private static void AssertHit(Window window, Control expected, Control area)
+    private static void AssertHit(Window window, Control expected, Control area, Point? position = null, Control? excluded = null)
     {
         // Layout and the renderer's hit-test scene are committed separately.
         // Wait for the scene instead of racing it after scrolling or navigation.
         var deadline = Stopwatch.StartNew();
         while (deadline.Elapsed < TimeSpan.FromSeconds(2))
         {
-            if (window.InputHitTest(InWindow(area, window).Center) is Visual hit &&
-                hit.GetVisualAncestors().Prepend(hit).Contains(expected)) return;
+            var point = position is { } local ? area.TranslatePoint(local, window)!.Value : InWindow(area, window).Center;
+            if (window.InputHitTest(point) is Visual hit)
+            {
+                var route = hit.GetSelfAndVisualAncestors();
+                if (route.Contains(expected))
+                {
+                    if (excluded is not null) Assert.DoesNotContain(excluded, route);
+                    return;
+                }
+            }
             Settle(window, 30);
         }
         Assert.Fail("Pointer did not reach " + AutomationProperties.GetName(expected));
@@ -212,7 +229,7 @@ internal static class SettingsValueControlsTests
     private static void ScrollToRow(Window window, ScrollViewer page, SettingsAdjustmentRow row)
     {
         // Put the row above the floating save bar as well as inside the viewport.
-        var top = row.Row.TranslatePoint(default, page)!.Value.Y + page.Offset.Y;
+        var top = row.Field.TranslatePoint(default, page)!.Value.Y + page.Offset.Y;
         page.Offset = new Vector(0, Math.Max(0, top - 40));
         Settle(window);
     }
