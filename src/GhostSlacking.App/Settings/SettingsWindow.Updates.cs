@@ -27,9 +27,7 @@ internal sealed partial class SettingsWindow : AppWindow
     internal void NavigateToAbout()
     {
         _navigation.SelectedItem = _aboutItem;
-        _selectedPage = AboutPage;
-        _pageHost.Content = _pages[AboutPage];
-        UpdatePageHeader(CurrentLanguage);
+        SelectPage(AboutPage);
     }
 
     private async void OnCheckUpdatesClicked(object? sender, RoutedEventArgs args)

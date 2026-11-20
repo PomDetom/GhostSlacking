@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Primitives;
 using Avalonia.Platform;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using System.Diagnostics;
 using System.Drawing;
@@ -71,6 +73,13 @@ internal sealed partial class GhostApplicationController : IDisposable
 
         return item;
     }
+
+    // Avalonia's Win32 tray presents NativeMenu.Items in a MenuFlyoutPresenter with this style key.
+    internal static Style CreateTrayMenuMotion(NativeMenu menu) => new(selector => selector
+        .OfType<MenuFlyoutPresenter>().PropertyEquals(ItemsControl.ItemsSourceProperty, menu.Items))
+    {
+        Setters = { new Setter(UiEntrance.DurationProperty, 145) }
+    };
 
     private void OnTrayIconClicked(object? sender, EventArgs args)
     {

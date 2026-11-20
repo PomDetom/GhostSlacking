@@ -271,6 +271,7 @@ internal sealed class SettingsAdjustmentFlyout : Flyout, IDisposable
         _presenter.FontSize = 14;
         _presenter.CornerRadius = new CornerRadius(18);
         _presenter.Padding = new Thickness(20);
+        _presenter.SetValue(UiEntrance.DurationProperty, UiEntrance.PopupDuration);
         ApplyPalette();
         return _presenter;
     }

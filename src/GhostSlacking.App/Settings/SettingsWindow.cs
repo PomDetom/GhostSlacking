@@ -136,15 +136,15 @@ internal sealed partial class SettingsWindow : AppWindow
         _openUpdateWindow = openUpdateWindow;
         _peekVirtualKey = settings.PeekVirtualKey;
 
-        ApplyThemePalette();
+        ApplyThemePalette(Application.Current?.ActualThemeVariant ?? ActualThemeVariant);
 
         Title = UiText.Text(settings.Language, "title");
-        Width = 840;
-        Height = 640;
-        MinWidth = 840;
-        MinHeight = 640;
+        // AppWindow can defer explicit Width and Height assignments until after the native window is shown.
+        MinWidth = MaxWidth = 840;
+        MinHeight = MaxHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = _canvasBrush;
+        TransparencyBackgroundFallback = _canvasBrush;
         CornerRadius = new CornerRadius(12);
         Icon = AppIcon.TitleBarImage;
 
@@ -263,6 +263,7 @@ internal sealed partial class SettingsWindow : AppWindow
         _navigation.MenuItems.Add(_experimentsItem);
         _navigation.FooterMenuItems.Add(_aboutItem);
         _navigation.SelectionChanged += OnNavigationSelectionChanged;
+        ConfigureNavigationMotion();
 
         PopulateChoices(settings);
         BuildPages(settings.Language);
@@ -301,6 +302,7 @@ internal sealed partial class SettingsWindow : AppWindow
 
     private void OnClosed(object? sender, EventArgs args)
     {
+        StopNavigationMotion();
         CloseAdjustment();
         if (_updates is not null)
         {

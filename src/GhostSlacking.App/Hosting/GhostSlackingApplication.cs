@@ -15,6 +15,12 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
     private IDisposable? _updateCheckRegistration;
     private Task _startupHandshake = Task.CompletedTask;
 
+    public GhostSlackingApplication() : this(new UiMotionSettings()) { }
+
+    internal GhostSlackingApplication(UiMotionSettings motionSettings) => MotionSettings = motionSettings;
+
+    internal UiMotionSettings MotionSettings { get; }
+
     public override void Initialize()
     {
         Styles.Add(new FluentAvaloniaTheme
@@ -96,5 +102,6 @@ internal sealed class GhostSlackingApplication : Avalonia.Application
 
         _controller?.Dispose();
         _controller = null;
+        MotionSettings.Dispose();
     }
 }

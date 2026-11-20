@@ -30,13 +30,11 @@ internal sealed partial class SettingsWindow : AppWindow
         root.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         root.RowDefinitions.Add(new RowDefinition(GridLength.Star));
 
-        var header = new StackPanel
-        {
-            Margin = new Thickness(26, 26, 26, 22),
-            Children = { _pageTitle, _pageDescription }
-        };
-        Grid.SetRow(header, 0);
-        root.Children.Add(header);
+        _pageHeader.Margin = new Thickness(26, 26, 26, 22);
+        _pageHeader.Children.Add(_pageTitle);
+        _pageHeader.Children.Add(_pageDescription);
+        Grid.SetRow(_pageHeader, 0);
+        root.Children.Add(_pageHeader);
 
         Grid.SetRow(_pageHost, 1);
         root.Children.Add(_pageHost);
@@ -335,16 +333,27 @@ internal sealed partial class SettingsWindow : AppWindow
 
     private void OnNavigationSelectionChanged(object? sender, NavigationViewSelectionChangedEventArgs args)
     {
-        CloseAdjustment();
         if (args.SelectedItem is not NavigationViewItem item || item.Tag is not string page || !_pages.ContainsKey(page))
         {
             return;
         }
 
+        SelectPage(page);
+    }
+
+    private void SelectPage(string page)
+    {
+        if (_selectedPage == page) return;
+
+        CloseAdjustment();
+        CancelKeyCapture();
+        FinishWindowEntrance();
+        UiMotionSettings.Current?.Refresh();
         _selectedPage = page;
         _pageHost.Content = _pages[page];
         UpdatePageHeader(CurrentLanguage);
-        CancelKeyCapture();
+        UpdateSelectionBackground();
+        if (IsVisible) _pageEntrance.Play(_pageHost, _pageHeader);
     }
 
     private void UpdatePageHeader(UiLanguage language)

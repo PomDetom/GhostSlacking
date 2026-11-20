@@ -19,7 +19,7 @@ namespace GhostSlacking.App.Tests;
 // Shares the application's single STA test fixture. Managers, settings and installers are all isolated.
 internal static class UpdatePresentationTests
 {
-    internal static void VerifyUi()
+    internal static void VerifyUi(Action<bool> setAnimationsEnabled)
     {
         About_action_tracks_update_state_without_saving_drafts();
         Update_menu_preserves_skip_resume_recheck_and_release_actions();
@@ -28,6 +28,7 @@ internal static class UpdatePresentationTests
         Verification_can_pause_but_install_handoff_disables_controls();
         Portable_and_current_copies_offer_only_valid_actions();
         Localized_windows_fit_and_release_notes_scroll();
+        More_menu_replays_motion_and_respects_reduced_motion(setAnimationsEnabled);
     }
 
     private static void About_action_tracks_update_state_without_saving_drafts()
@@ -337,6 +338,48 @@ internal static class UpdatePresentationTests
             point.Y + control.Bounds.Height <= window.Bounds.Height + 1, $"{control.GetType().Name}: {point}, {control.Bounds}, {window.Bounds}");
         foreach (var text in control.GetVisualDescendants().OfType<TextBlock>().Prepend(control as TextBlock).OfType<TextBlock>())
             Assert.All(text.TextLayout.TextLines, line => Assert.False(line.HasCollapsed, text.Text));
+    }
+
+    private static void More_menu_replays_motion_and_respects_reduced_motion(Action<bool> setAnimationsEnabled)
+    {
+        using var updates = AvailableUpdates();
+        var window = new UpdateWindow(updates, UiLanguage.English) { ShowActivated = false };
+        var more = Field<Button>(window, "_moreButton");
+        var menu = Assert.IsType<MenuFlyout>(more.Flyout);
+        var release = Field<MenuItem>(window, "_releaseItem");
+        try
+        {
+            window.Show();
+            Settle(window);
+            foreach (var enabled in new[] { true, true, false })
+            {
+                setAnimationsEnabled(enabled);
+                menu.ShowAt(more);
+                var presenter = Assert.Single(release.GetVisualAncestors().OfType<MenuFlyoutPresenter>());
+                Assert.Equal(UiEntrance.PopupDuration, presenter.GetValue(UiEntrance.DurationProperty));
+                if (enabled)
+                {
+                    UiSceneWait.Commit(window, TimeSpan.FromMilliseconds(30));
+                    Assert.True(presenter.IsAnimating(Visual.OpacityProperty));
+                    Assert.True(presenter.Opacity < 1);
+                    Assert.True(presenter.RenderTransform?.Value.M11 < 1);
+                }
+                else
+                {
+                    Assert.Equal(1, presenter.Opacity);
+                }
+
+                menu.Hide();
+                Assert.False(menu.IsOpen);
+                Assert.False(presenter.IsAnimating(Visual.OpacityProperty));
+            }
+        }
+        finally
+        {
+            setAnimationsEnabled(true);
+            UiMotionSettings.Current?.Refresh();
+            window.Close();
+        }
     }
 
     private static void Capture(Window window, string? output, string name)
