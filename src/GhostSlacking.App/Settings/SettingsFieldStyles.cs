@@ -1,6 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
+using Avalonia.Controls.Presenters;
+using Avalonia.Controls.Templates;
+using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
@@ -36,7 +39,7 @@ internal static class SettingsFieldStyles
         };
     }
 
-    internal static Border CreateValueField(TextBlock value, Button owner)
+    internal static Button CreateValueField(TextBlock value)
     {
         value.VerticalAlignment = VerticalAlignment.Center;
         value.Margin = new Thickness(12, 0, 0, 0);
@@ -46,18 +49,25 @@ internal static class SettingsFieldStyles
         var arrow = CreateArrow();
         Grid.SetColumn(arrow, 1);
         content.Children.Add(arrow);
-        var field = new Border
+        var field = new Button
         {
             Height = 36, CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1),
-            VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Child = content,
-            Margin = new Thickness(16, 0, 44, 0)
+            VerticalAlignment = VerticalAlignment.Center, Content = content,
+            Template = new FuncControlTemplate<Button>((_, _) => new ContentPresenter
+            {
+                [!ContentPresenter.ContentProperty] = new TemplateBinding(ContentControl.ContentProperty),
+                [!ContentPresenter.BackgroundProperty] = new TemplateBinding(Button.BackgroundProperty),
+                [!ContentPresenter.BorderBrushProperty] = new TemplateBinding(Button.BorderBrushProperty),
+                [!ContentPresenter.BorderThicknessProperty] = new TemplateBinding(Button.BorderThicknessProperty),
+                [!ContentPresenter.CornerRadiusProperty] = new TemplateBinding(Button.CornerRadiusProperty)
+            })
         };
         field.Classes.Add(ValueFieldClass);
-        AddValueStyle(owner, null, "ComboBoxBackground", "ComboBoxBorderBrush", "ComboBoxForeground");
-        AddValueStyle(owner, ":pointerover", "ComboBoxBackgroundPointerOver", "ComboBoxBorderBrushPointerOver", "ComboBoxForegroundPointerOver");
-        AddValueStyle(owner, ":pressed", "ComboBoxBackgroundPressed", "ComboBoxBorderBrushPressed", "ComboBoxForegroundPressed");
-        AddValueStyle(owner, ":focus-visible", "ComboBoxBackgroundFocused", "ComboBoxBackgroundBorderBrushFocused", "ComboBoxForegroundFocused");
-        AddValueStyle(owner, ":disabled", "ComboBoxBackgroundDisabled", "ComboBoxBorderBrushDisabled", "ComboBoxHeaderForegroundDisabled");
+        AddValueStyle(field, null, "ComboBoxBackground", "ComboBoxBorderBrush", "ComboBoxForeground");
+        AddValueStyle(field, ":pointerover", "ComboBoxBackgroundPointerOver", "ComboBoxBorderBrushPointerOver", "ComboBoxForegroundPointerOver");
+        AddValueStyle(field, ":pressed", "ComboBoxBackgroundPressed", "ComboBoxBorderBrushPressed", "ComboBoxForegroundPressed");
+        AddValueStyle(field, ":focus-visible", "ComboBoxBackgroundFocused", "ComboBoxBackgroundBorderBrushFocused", "ComboBoxForegroundFocused");
+        AddValueStyle(field, ":disabled", "ComboBoxBackgroundDisabled", "ComboBoxBorderBrushDisabled", "ComboBoxHeaderForegroundDisabled");
         return field;
     }
 
@@ -65,15 +75,14 @@ internal static class SettingsFieldStyles
     {
         owner.Styles.Add(new Style(selector =>
         {
-            var button = selector.OfType<Button>();
-            if (state is not null) button = button.Class(state);
-            return button.Descendant().OfType<Border>().Class(ValueFieldClass);
+            var button = selector.OfType<Button>().Class(ValueFieldClass);
+            return state is null ? button : button.Class(state);
         })
         {
             Setters =
             {
-                new Setter(Border.BackgroundProperty, new DynamicResourceExtension(background)),
-                new Setter(Border.BorderBrushProperty, new DynamicResourceExtension(border)),
+                new Setter(Button.BackgroundProperty, new DynamicResourceExtension(background)),
+                new Setter(Button.BorderBrushProperty, new DynamicResourceExtension(border)),
                 new Setter(TextElement.ForegroundProperty, new DynamicResourceExtension(foreground))
             }
         });

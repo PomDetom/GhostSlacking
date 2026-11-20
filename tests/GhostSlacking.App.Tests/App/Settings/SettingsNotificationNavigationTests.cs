@@ -43,7 +43,7 @@ internal static class SettingsNotificationNavigationTests
             var kinds = new[] { AdjustmentKind.NotificationRadius, AdjustmentKind.NotificationWidth,
                 AdjustmentKind.NotificationHeight, AdjustmentKind.NotificationHorizontal, AdjustmentKind.NotificationVertical };
             var notificationRows = pages["notifications"].GetLogicalDescendants().OfType<Button>().ToArray();
-            Assert.Equal(kinds.SelectMany(kind => new[] { adjustments[kind].Row, adjustments[kind].Reset }), notificationRows);
+            Assert.Equal(kinds.SelectMany(kind => new[] { adjustments[kind].Field, adjustments[kind].Reset }), notificationRows);
             foreach (var row in notificationRows)
             {
                 Assert.DoesNotContain(row, pages["general"].GetLogicalDescendants());
@@ -59,7 +59,7 @@ internal static class SettingsNotificationNavigationTests
             Assert.Same(notificationItem, navigation.SelectedItem);
             Assert.Equal(initial.Normalize(), Current(window).Normalize());
 
-            adjustments[AdjustmentKind.NotificationWidth].Row.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            adjustments[AdjustmentKind.NotificationWidth].Field.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var discarded = window.ActiveAdjustment!;
             discarded.NumberEditor!.Value = 200;
             navigation.SelectedItem = generalItem;
@@ -69,7 +69,7 @@ internal static class SettingsNotificationNavigationTests
             Assert.Equal(SettingsStatus.None, Field<SettingsEditState>(window, "_editState").Status);
 
             navigation.SelectedItem = notificationItem;
-            adjustments[AdjustmentKind.NotificationWidth].Row.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            adjustments[AdjustmentKind.NotificationWidth].Field.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             window.ActiveAdjustment!.NumberEditor!.Value = 200;
             window.ActiveAdjustment.Complete();
             Assert.Equal(200, Current(window).NotificationHud.Width);
