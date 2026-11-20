@@ -2,9 +2,11 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Styling;
 using FluentAvalonia.UI.Windowing;
 using GhostSlacking.Core;
 
@@ -12,6 +14,8 @@ namespace GhostSlacking.App;
 
 internal sealed class UpdateWindow : AppWindow
 {
+    private const string MoreMenuClass = "update-more-menu";
+
     private readonly IApplicationUpdateManager _updates;
     private readonly SolidColorBrush _canvasBrush = new();
     private readonly SolidColorBrush _surfaceBrush = new();
@@ -81,8 +85,13 @@ internal sealed class UpdateWindow : AppWindow
         _moreButton.Flyout = new MenuFlyout
         {
             Placement = PlacementMode.TopEdgeAlignedLeft,
+            FlyoutPresenterClasses = { MoreMenuClass },
             Items = { _releaseItem, _skipItem, new Separator(), _recheckItem, _stopItem }
         };
+        Styles.Add(new Style(selector => selector.OfType<MenuFlyoutPresenter>().Class(MoreMenuClass))
+        {
+            Setters = { new Setter(UiEntrance.DurationProperty, UiEntrance.PopupDuration) }
+        });
         _laterButton = new Button { MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
 
         _installButton.Click += OnInstallClicked;

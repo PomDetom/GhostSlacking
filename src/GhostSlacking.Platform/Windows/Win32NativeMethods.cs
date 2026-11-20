@@ -69,8 +69,10 @@ internal static class Win32NativeMethods
     internal const int ENUM_CURRENT_SETTINGS = -1;
     internal const uint DWMWA_SYSTEMBACKDROP_TYPE = 38;
     internal const uint DWMWA_NCRENDERING_POLICY = 2;
+    internal const uint DWMWA_TRANSITIONS_FORCEDISABLED = 3;
     internal const uint DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     internal const uint DWMWA_BORDER_COLOR = 34;
+    internal const uint DWMWA_CAPTION_COLOR = 35;
     internal const int DWMNCRP_USEWINDOWSTYLE = 0;
     internal const int DWMNCRP_DISABLED = 1;
     internal const int DWM_WINDOW_CORNER_DONOTROUND = 1;

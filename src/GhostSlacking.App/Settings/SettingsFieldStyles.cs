@@ -1,7 +1,10 @@
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.Controls.Presenters;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Layout;
@@ -25,18 +28,60 @@ internal static class SettingsFieldStyles
         combo.Padding = new Thickness(12, 0, 0, 0);
         combo.HorizontalAlignment = HorizontalAlignment.Stretch;
         combo.VerticalContentAlignment = VerticalAlignment.Center;
+        var rotation = new RotateTransform();
+        var transitions = new Transitions
+        {
+            new DoubleTransition
+            {
+                Property = RotateTransform.AngleProperty, Duration = TimeSpan.FromMilliseconds(UiEntrance.PopupDuration),
+                Easing = new CubicEaseOut()
+            }
+        };
+        UiMotionSettings? motion = null;
+        combo.AttachedToVisualTree += (_, _) =>
+        {
+            motion = UiMotionSettings.Current;
+            rotation.Angle = combo.IsDropDownOpen ? 180 : 0;
+            if (motion is not null)
+            {
+                motion.Refresh();
+                motion.Changed += OnMotionChanged;
+            }
+            OnMotionChanged(null, EventArgs.Empty);
+        };
+        combo.DetachedFromVisualTree += (_, _) =>
+        {
+            if (motion is not null) motion.Changed -= OnMotionChanged;
+            motion = null;
+            rotation.Transitions = null;
+        };
+        combo.PropertyChanged += (_, args) =>
+        {
+            if (args.Property != ComboBox.IsDropDownOpenProperty) return;
+            motion?.Refresh();
+            rotation.Angle = combo.IsDropDownOpen ? 180 : 0;
+        };
         combo.TemplateApplied += (_, args) =>
         {
+            if (args.NameScope.Find<Popup>("PART_Popup")?.Child is { } popupContent)
+            {
+                popupContent.SetValue(UiEntrance.DurationProperty, UiEntrance.PopupDuration);
+            }
+
             // Keep FluentAvalonia's selection, popup, focus and state brushes. Only
             // replace its font-dependent glyph inside the existing 32 DIP column.
             if (args.NameScope.Find<FontIcon>("DropDownGlyph") is not { Parent: Grid grid } glyph) return;
             glyph.IsVisible = false;
             var arrow = CreateArrow();
+            arrow.Child!.RenderTransform = rotation;
             arrow.Bind(TextElement.ForegroundProperty, glyph.GetObservable(FontIcon.ForegroundProperty));
             Grid.SetColumn(arrow, Grid.GetColumn(glyph));
             Grid.SetRow(arrow, Grid.GetRow(glyph));
             grid.Children.Add(arrow);
         };
+
+        void OnMotionChanged(object? sender, EventArgs args) =>
+            rotation.Transitions = motion?.Enabled == true ? transitions : null;
     }
 
     internal static Button CreateValueField(TextBlock value)

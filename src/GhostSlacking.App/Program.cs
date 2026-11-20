@@ -26,8 +26,8 @@ internal static class Program
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnExplicitShutdown);
     }
 
-    internal static AppBuilder BuildAvaloniaApp() =>
-        AppBuilder.Configure<GhostSlackingApplication>()
+    internal static AppBuilder BuildAvaloniaApp(Func<GhostSlackingApplication>? createApp = null) =>
+        AppBuilder.Configure(createApp ?? (() => new GhostSlackingApplication()))
             .UseWin32()
             .UseSkia();
 }

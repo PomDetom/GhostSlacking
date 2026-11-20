@@ -9,6 +9,22 @@ public sealed partial class Win32WindowApi : IWindowApi, IWindowEnvironmentApi
 {
     public bool IsWindow(nint hwnd) => hwnd != 0 && Win32NativeMethods.IsWindow(hwnd);
 
+    public static void ConfigureOwnedWindowCaptionForClientEntrance(nint hwnd, Color captionColor)
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) || hwnd == 0) return;
+        Win32NativeMethods.GetWindowThreadProcessId(hwnd, out var processId);
+        if (processId != (uint)Environment.ProcessId) return;
+
+        var color = ColorTranslator.ToWin32(captionColor);
+        if (Win32NativeMethods.DwmSetWindowAttribute(hwnd, Win32NativeMethods.DWMWA_CAPTION_COLOR, ref color, sizeof(int)) != 0)
+            return;
+
+        // DWM can expose the native caption before the client surface paints its first frame.
+        var disableTransitions = 1;
+        Win32NativeMethods.DwmSetWindowAttribute(
+            hwnd, Win32NativeMethods.DWMWA_TRANSITIONS_FORCEDISABLED, ref disableTransitions, sizeof(int));
+    }
+
     public WindowObservation? Observe(nint hwnd)
     {
         if (!IsWindow(hwnd) || !Win32NativeMethods.GetWindowRect(hwnd, out var rect))

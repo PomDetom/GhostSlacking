@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.Styling;
 using System.Diagnostics;
 using System.Drawing;
 using GhostSlacking.Core;
@@ -46,6 +47,7 @@ internal sealed partial class GhostApplicationController : IDisposable
     private readonly LowLevelKeyboardHook _keyboardHook;
     private readonly DispatcherTimer _timer;
     private readonly TrayIcon _trayIcon;
+    private readonly Style _trayMenuMotion;
     private readonly RevealEdgeOverlay _revealOverlay;
     private readonly NativeMenuItem _statusItem;
     private readonly NativeMenuItem _pickItem;
@@ -104,7 +106,7 @@ internal sealed partial class GhostApplicationController : IDisposable
         _restoreAllItem = CreateMenuItem(UiText.Text(_settings.Language, "restoreAll"), () => RestoreAll("tray"));
         _pickItem = CreateMenuItem(UiText.Text(_settings.Language, "pick"), BeginPicking);
         _toggleItem = CreateMenuItem(UiText.Text(_settings.Language, "toggle"), ToggleWindowVisibility);
-        _settingsItem = CreateMenuItem(UiText.Text(_settings.Language, "settings"), () => OpenSettings());
+        _settingsItem = CreateMenuItem(UiText.Text(_settings.Language, "settings"), OpenSettingsFromTray);
         _updateItem = CreateMenuItem(string.Empty, OpenUpdateWindow);
         _updateItem.IsVisible = false;
         _exitItem = CreateMenuItem(UiText.Text(_settings.Language, "exit"), ExitApplication);
@@ -125,6 +127,8 @@ internal sealed partial class GhostApplicationController : IDisposable
             }
         };
 
+        _trayMenuMotion = CreateTrayMenuMotion(menu);
+        Avalonia.Application.Current!.Styles.Add(_trayMenuMotion);
         _trayIcon = new TrayIcon
         {
             Icon = AppIcon.Instance,
@@ -289,6 +293,7 @@ internal sealed partial class GhostApplicationController : IDisposable
         _trayIcon.Clicked -= OnTrayIconClicked;
         _trayIcon.IsVisible = false;
         _trayIcon.Dispose();
+        Avalonia.Application.Current?.Styles.Remove(_trayMenuMotion);
 
         // A failed restore is intentionally not acknowledged as clean. Closing
         // the pipe leaves the last manifest for the watchdog timeout path. On a

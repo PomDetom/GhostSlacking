@@ -12,8 +12,11 @@ namespace GhostSlacking.App;
 internal sealed partial class GhostApplicationController : IDisposable
 {
 
+    private void OpenSettingsFromTray() => Dispatcher.UIThread.Post(() => OpenSettings(), DispatcherPriority.Background);
+
     private void OpenSettings(string? initialPage = null)
     {
+        if (_isExiting) return;
         CancelBackgroundInteraction();
         if (_settingsWindow is not null)
         {
@@ -44,8 +47,7 @@ internal sealed partial class GhostApplicationController : IDisposable
                 initialPage: initialPage);
             _settingsWindow = window;
             window.Closed += OnSettingsClosed;
-            window.Show();
-            window.Activate();
+            window.ShowWithEntrance();
         }
         catch (Exception exception)
         {

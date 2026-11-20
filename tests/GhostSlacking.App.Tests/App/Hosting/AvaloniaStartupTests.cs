@@ -30,7 +30,9 @@ public sealed class AvaloniaStartupTests
             {
                 // Functional UI probes keep real Win32 windows but avoid device/driver scheduling
                 // on the private test desktop. GPU and foreground compatibility need manual coverage.
-                Program.BuildAvaloniaApp()
+                var motionEnabled = true;
+                using var motionSettings = new UiMotionSettings(() => motionEnabled);
+                Program.BuildAvaloniaApp(() => new GhostSlackingApplication(motionSettings))
                     .With(new Avalonia.Win32PlatformOptions { RenderingMode = [Avalonia.Win32RenderingMode.Software] })
                     .SetupWithoutStarting();
                 stage = "settings and update windows";
@@ -46,10 +48,12 @@ public sealed class AvaloniaStartupTests
                 SettingsNotificationNavigationTests.VerifyUi();
                 stage = "settings value controls";
                 SettingsValueControlsTests.VerifyUi();
+                stage = "settings and tray motion";
+                SettingsMotionTests.VerifyUi(motionSettings, enabled => motionEnabled = enabled);
                 AssertPeekFrameRateSetting(settingsWindow);
                 AssertBackgroundInteractionSetting();
                 stage = "update presentation";
-                UpdatePresentationTests.VerifyUi();
+                UpdatePresentationTests.VerifyUi(enabled => motionEnabled = enabled);
                 stage = "settings theme and exports";
                 AssertThemePreviewLifecycle();
                 AssertSavedSettingsExport();
@@ -181,8 +185,10 @@ public sealed class AvaloniaStartupTests
         var shell = Assert.IsType<Grid>(saveBar.Parent);
         var content = Assert.IsAssignableFrom<Control>(settingsWindow.Content);
 
-        Assert.Equal(settingsWindow.MinWidth, settingsWindow.Width);
-        Assert.Equal(settingsWindow.MinHeight, settingsWindow.Height);
+        Assert.Equal(840, settingsWindow.MinWidth);
+        Assert.Equal(640, settingsWindow.MinHeight);
+        Assert.Equal(settingsWindow.MinWidth, settingsWindow.MaxWidth);
+        Assert.Equal(settingsWindow.MinHeight, settingsWindow.MaxHeight);
         Assert.False(navigation.IsPaneOpen);
         Assert.Equal(56, navigation.CompactPaneLength);
         Assert.Equal(184, navigation.OpenPaneLength);
@@ -196,7 +202,7 @@ public sealed class AvaloniaStartupTests
         Assert.Equal("导出日志", exportLogs.Content);
         Assert.Equal("导出配置", exportSettings.Content);
 
-        var size = new Avalonia.Size(settingsWindow.Width, settingsWindow.Height);
+        var size = new Avalonia.Size(settingsWindow.MinWidth, settingsWindow.MinHeight);
         content.Measure(size);
         content.Arrange(new Avalonia.Rect(size));
         var pageHost = GetPrivateField<ContentControl>(settingsWindow, "_pageHost");

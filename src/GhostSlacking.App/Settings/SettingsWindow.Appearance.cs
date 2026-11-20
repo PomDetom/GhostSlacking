@@ -10,6 +10,7 @@ using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using FluentAvalonia.UI.Windowing;
 using GhostSlacking.Core;
+using GhostSlacking.Platform;
 using System.Globalization;
 using Button = Avalonia.Controls.Button;
 using ComboBox = Avalonia.Controls.ComboBox;
@@ -261,15 +262,17 @@ internal sealed partial class SettingsWindow : AppWindow
         OnSettingsEdited();
     }
 
-    private void OnActualThemeVariantChanged(object? sender, EventArgs args) => ApplyThemePalette();
+    private void OnActualThemeVariantChanged(object? sender, EventArgs args) => ApplyThemePalette(ActualThemeVariant);
 
-    private void ApplyThemePalette()
+    private void ApplyThemePalette(Avalonia.Styling.ThemeVariant? variant)
     {
-        var dark = AppTheme.IsDark(ActualThemeVariant);
-        var palette = AppTheme.Palette(ActualThemeVariant);
+        var dark = AppTheme.IsDark(variant);
+        var palette = AppTheme.Palette(variant);
         _canvasBrush.Color = Color.Parse(dark ? "#161819" : "#F2F4F5");
         _panelBrush.Color = Color.Parse(dark ? "#202223" : "#FBFCFC");
-        _selectionBrush.Color = Color.Parse(dark ? "#25433E" : "#DCEFEB");
+        _selectionBrush.Color = Color.Parse(dark ? "#294B43" : "#D8EFE9");
+        _selectionOutlineBrush.Color = Color.Parse(dark ? "#467A6B" : "#A9D7CC");
+        _selectionBackground.BoxShadow = BoxShadows.Parse(dark ? "0 2 4 0 #50000000" : "0 2 4 0 #20304F47");
         _cardBrush.Color = palette.Surface;
         _fieldBrush.Color = Color.Parse(dark ? "#1E2021" : "#F6F8F8");
         _fieldBorderBrush.Color = palette.Border;
@@ -290,6 +293,13 @@ internal sealed partial class SettingsWindow : AppWindow
         TitleBar.ButtonPressedForegroundColor = _primaryBrush.Color;
         TitleBar.ButtonInactiveBackgroundColor = _canvasBrush.Color;
         TitleBar.ButtonInactiveForegroundColor = _secondaryBrush.Color;
+
+        if (TryGetPlatformHandle() is { Handle: var handle })
+        {
+            var canvas = _canvasBrush.Color;
+            Win32WindowApi.ConfigureOwnedWindowCaptionForClientEntrance(
+                handle, System.Drawing.Color.FromArgb(canvas.R, canvas.G, canvas.B));
+        }
     }
 
     private sealed record Choice<T>(T Value, string Display) where T : struct, Enum
